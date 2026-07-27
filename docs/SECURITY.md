@@ -1,6 +1,7 @@
 # Security
 
-Status: reflects stage E1 (auth + account perimeter). Updated whenever the
+Status: reflects stages E1 (auth + account perimeter) and E2 (song/
+recording upload, YouTube import, job queue). Updated whenever the
 perimeter changes (spec 14.1).
 
 ## Threat model, in scope for E1
@@ -12,8 +13,73 @@ perimeter changes (spec 14.1).
 - CSRF against the Google OAuth callback.
 - Account takeover via Google sign-in linking to an unverified email.
 
-Out of scope for E1 (nothing to attack yet): file upload handling, YouTube
-import, the ML pipeline, the job queue.
+## Threat model, in scope for E2
+
+- Malicious audio containers (crafted mp3/wav/m4a/flac/ogg exploiting a
+  parser bug downstream, or hiding non-audio payloads).
+- Resource exhaustion via oversized/overlong uploads, or many concurrent
+  analysis requests from one account.
+- SSRF-adjacent abuse of the YouTube import path as a generic URL fetcher.
+- Path traversal via a user-controlled filename.
+- Queue/rate-limit bypass (skipping the size/duration/queue-depth checks).
+
+Out of scope for E2 (nothing to attack yet): the ML pipeline itself
+(`worker/`), since it does not exist until E3.
+
+## File upload and YouTube import (E2, spec 11.3)
+
+- **Format validation is on content, never the filename or extension.**
+  `internal/media.Sniff` checks magic bytes (RIFF/WAVE, `fLaC`, `OggS`, ISO
+  base media `ftyp`, ID3/MPEG frame sync) before anything else runs.
+- **Size and duration are capped before expensive work happens.**
+  `http.MaxBytesReader` bounds the request body (`MAX_UPLOAD_MB`) before
+  multipart parsing even starts; `ffprobe` duration is checked
+  (`MAX_AUDIO_SECONDS`) before transcoding. For YouTube, duration comes from
+  `yt-dlp --skip-download` metadata *before* any bytes are downloaded (FR-12).
+- **Every file is re-encoded through ffmpeg to a canonical WAV before
+  anything else touches it** (`internal/media.Processor.Transcode`), which
+  is itself the sanitization step: a malformed or hostile container either
+  fails to transcode (rejected) or comes out the other side as plain PCM.
+  This applies uniformly to uploads and YouTube downloads -- yt-dlp's own
+  extraction output still goes through our own ffmpeg invocation afterward,
+  not just its own.
+- **External binaries (`ffmpeg`, `ffprobe`, `yt-dlp`) are invoked as fixed
+  argument lists** via `internal/sysproc.Runner` (`exec.CommandContext`),
+  never a shell string, each bounded by a context timeout. There is no
+  string interpolation between user input and a command line.
+- **Paths are never derived from user input.** `internal/storage.FileStore`
+  names every file after a server-generated UUID
+  (`song-<id>.wav`/`analysis-<id>.wav`); a submitted filename is never read.
+- **YouTube import is feature-flagged off by default in production**
+  (`FEATURE_YOUTUBE_IMPORT`, spec 11.4) and, when enabled, restricted to an
+  exact host allowlist (`youtube.com`, `www.youtube.com`, `m.youtube.com`,
+  `music.youtube.com`, `youtu.be`) with an exact (not suffix) match, so
+  `youtube.com.evil.example` is rejected -- yt-dlp itself understands
+  hundreds of sites, and without this allowlist the import endpoint would be
+  a generic URL-fetch oracle. A UI disclaimer before first use (spec 11.4)
+  is not yet applicable -- there is no UI until `web/` lands (E5).
+- **Memory limit on external processes** is enforced at the container/cgroup
+  level (`deploy.resources.limits.memory: 512M` on `go-api`, covering the Go
+  process and any spawned `ffmpeg`/`yt-dlp` child), not a per-process
+  `ulimit` -- `os/exec` cannot set one on a child without a shell. See
+  ADR-0007.
+
+## Job queue (E2, spec 10)
+
+- **Per-user rate limit**: `AnalysisRateLimiter` (sliding window over a
+  Redis sorted set, `USER_ANALYSES_PER_HOUR`) is checked before any
+  recording is even read off the wire.
+- **Queue depth cap**: `429 QUEUE_FULL` once `XLEN` reaches
+  `QUEUE_MAX_LENGTH`, checked before the recording is processed.
+- **Ownership**: every analysis read/cancel is scoped to
+  `(id, user_id)` at the repository query level (`AnalysisRepository.GetByID`/
+  `Cancel`), so a different user's analysis id looks like it doesn't exist
+  (spec 11: authorization checked on every resource).
+- **WebSocket auth**: the access token rides the connection's first message,
+  never a query parameter, so it never lands in a proxy access log
+  (spec 8.3). The `Origin` header is checked against `CORS_ALLOWED_ORIGIN`
+  at the WebSocket upgrade (`internal/transport/ws`, mirroring the HTTP
+  CORS policy).
 
 ## Authentication and sessions
 
@@ -87,12 +153,13 @@ import, the ML pipeline, the job queue.
 ## Dependencies
 
 - Go module versions are locked via `go.sum`.
+- `ffmpeg`/`yt-dlp` are pinned to exact `apk` package versions in the
+  production runtime image, not just an unpinned `apk add` (ADR-0007).
 - CI runs `govulncheck`, `gosec`, and a Trivy image scan on every PR
   (`.github/workflows/ci.yml`); critical/high findings fail the build.
 
 ## Not yet applicable
 
-Upload validation (magic bytes, size/duration limits, ffmpeg re-encoding),
-YouTube import's ToS/copyright disclaimer requirement, and queue-level rate
-limiting all apply starting in E2 and will be documented here when they
-land.
+- The YouTube import UI disclaimer (spec 11.4) -- no UI exists until `web/`
+  lands (E5); the feature flag defaults off in production in the meantime.
+- Everything in the (not yet built) ML pipeline's own threat surface -- E3.
