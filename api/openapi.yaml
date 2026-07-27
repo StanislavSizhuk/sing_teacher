@@ -3,8 +3,9 @@ info:
   title: AI Vocal Coach API
   version: "1.0.0"
   summary: >
-    Auth and account endpoints delivered in stage E1. Songs, analyses and
-    progress endpoints are added in later stages (E2-E5) in the same file.
+    Auth/account (E1) and song upload/YouTube import/analysis queue (E2).
+    Analysis results and progress endpoints are added in later stages
+    (E3-E5) in the same file.
 servers:
   - url: /api/v1
 paths:
@@ -221,6 +222,202 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /songs:
+    post:
+      operationId: addSong
+      summary: Add a song by file upload or YouTube link (FR-10, FR-11)
+      tags: [songs]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AddSongRequest"
+      responses:
+        "201":
+          description: >
+            Song ready to reference. `reused: true` means an identical song
+            (by content hash / YouTube video id) already existed and this
+            upload was deduplicated (spec 6.6, FR-13).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Song"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: YouTube import is disabled (spec 11.4).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "413":
+          description: Audio exceeds MAX_UPLOAD_MB.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /songs/{id}:
+    get:
+      operationId: getSong
+      summary: Get a song's reference preparation status (FR-14)
+      tags: [songs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The song.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Song"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No song with this id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /analyses:
+    post:
+      operationId: enqueueAnalysis
+      summary: Put a recording in the analysis queue (FR-22)
+      tags: [analyses]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/EnqueueAnalysisRequest"
+      responses:
+        "202":
+          description: Queued. Position updates follow over the WebSocket channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          description: Recording exceeds MAX_UPLOAD_MB.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /analyses/{id}:
+    get:
+      operationId: getAnalysis
+      summary: Get an analysis's current status, scoped to its owner
+      tags: [analyses]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The analysis.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No analysis with this id owned by the caller.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /analyses/{id}/cancel:
+    post:
+      operationId: cancelAnalysis
+      summary: Cancel an analysis while it is still queued (FR-25)
+      tags: [analyses]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Canceled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No analysis with this id owned by the caller.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The analysis is no longer queued (`ANALYSIS_NOT_QUEUED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /ws/analyses/{id}:
+    get:
+      operationId: watchAnalysisQueuePosition
+      summary: WebSocket status channel for one analysis (spec 8.3)
+      description: >
+        Upgrades to a WebSocket. The client's first message must be
+        `{"token": "<access_token>"}` (never a query parameter, so it never
+        lands in proxy logs); the server then pushes `{"type": "queued",
+        "position": N}` on every queue change. WebSocket is a status-only
+        transport -- the final result is always read back over REST
+        (fallback to polling GET /analyses/{id} if the socket drops).
+      tags: [analyses]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "101":
+          description: Switching Protocols to WebSocket.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /healthz:
     servers:
       - url: /
@@ -366,6 +563,103 @@ components:
         email_verified:
           type: boolean
         created_at:
+          type: string
+          format: date-time
+
+    AddSongRequest:
+      type: object
+      description: >
+        multipart/form-data. source_type selects the branch: `file` is
+        required and `artist` optional for `upload`; `youtube_url` is
+        required for `youtube` (title then falls back to the video's own
+        title if omitted).
+      required: [source_type]
+      properties:
+        source_type:
+          type: string
+          enum: [upload, youtube]
+        title:
+          type: string
+          maxLength: 200
+          description: Required for source_type=upload; optional override for youtube.
+        artist:
+          type: string
+          maxLength: 200
+        file:
+          type: string
+          format: binary
+          description: Required for source_type=upload. mp3/wav/m4a/flac/ogg, checked by magic bytes.
+        youtube_url:
+          type: string
+          maxLength: 2048
+          description: Required for source_type=youtube. Must be a youtube.com/youtu.be link.
+
+    Song:
+      type: object
+      required: [id, source_type, title, duration_sec, vocal_stem_processed, reused, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_type:
+          type: string
+          enum: [upload, youtube]
+        title:
+          type: string
+        artist:
+          type: string
+        duration_sec:
+          type: integer
+        vocal_stem_processed:
+          type: boolean
+          description: Reference separation+transcription status (FR-14). False until stage E3.
+        reused:
+          type: boolean
+          description: True if this submission deduplicated onto an existing song (spec 6.6, FR-13).
+        created_at:
+          type: string
+          format: date-time
+
+    EnqueueAnalysisRequest:
+      type: object
+      description: multipart/form-data.
+      required: [song_id, recording]
+      properties:
+        song_id:
+          type: string
+          format: uuid
+        recording:
+          type: string
+          format: binary
+          description: The user's recording. mp3/wav/m4a/flac/ogg, checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
+
+    Analysis:
+      type: object
+      required: [id, song_id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        song_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, processing, done, failed, canceled]
+        queue_position:
+          type: integer
+          description: 1-based position among currently queued jobs. Absent once no longer queued.
+        current_stage:
+          type: string
+          description: Set by the E3 worker once processing starts.
+        error_code:
+          type: string
+        overall_score:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
           type: string
           format: date-time
 

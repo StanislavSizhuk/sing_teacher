@@ -11,13 +11,16 @@ import (
 type RouterDeps struct {
 	Auth         *Handler
 	Health       *HealthHandler
+	Song         *SongHandler
+	Analysis     *AnalysisHandler
+	WS           http.HandlerFunc
 	Logger       *slog.Logger
 	CORSOrigin   string
 	AccessParser AccessTokenParser
 }
 
 // NewRouter builds the complete chi router for the API: middleware chain,
-// health checks, and every /api/v1 route implemented in E1.
+// health checks, and every /api/v1 route implemented through stage E2.
 func NewRouter(deps RouterDeps) http.Handler {
 	r := chi.NewRouter()
 
@@ -49,7 +52,23 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Use(authMiddleware(deps.Logger, deps.AccessParser))
 			r.Get("/me", deps.Auth.GetMe)
 			r.Delete("/me", deps.Auth.DeleteMe)
+
+			r.Route("/songs", func(r chi.Router) {
+				r.Post("/", deps.Song.Create)
+				r.Get("/{id}", deps.Song.Get)
+			})
+			r.Route("/analyses", func(r chi.Router) {
+				r.Post("/", deps.Analysis.Create)
+				r.Get("/{id}", deps.Analysis.Get)
+				r.Post("/{id}/cancel", deps.Analysis.Cancel)
+			})
 		})
+
+		// The WebSocket handshake carries no Authorization header (browsers
+		// don't support setting one on a WS connection); it authenticates
+		// itself via the first message instead (spec 8.3), so this route
+		// deliberately sits outside authMiddleware.
+		r.Get("/ws/analyses/{id}", deps.WS)
 	})
 
 	return r
