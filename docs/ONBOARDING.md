@@ -1,7 +1,7 @@
 # Onboarding
 
 Getting productive on this project from zero, in about a day. Updated once
-per stage (spec 14.1) -- this revision covers E1.
+per stage (spec 14.1) -- this revision covers E1-E2.
 
 ## 1. Read, in order (30-45 min)
 
@@ -24,8 +24,10 @@ if you're testing Google login specifically). Verification emails land in
 mailhog at `http://localhost:8025`, not a real inbox.
 
 Try the golden path with curl: register → read the code from mailhog →
-verify → login. `api/openapi.yaml` has the exact request/response shape for
-every endpoint.
+verify → login → add a song (`POST /songs`, multipart) → submit a recording
+(`POST /analyses`, multipart) → watch its position over
+`GET /ws/analyses/{id}`. `api/openapi.yaml` has the exact request/response
+shape for every endpoint.
 
 ## 3. Where things live
 
@@ -48,7 +50,9 @@ place.
 
 ## 5. What doesn't exist yet
 
-`worker/` (Python ML pipeline) and `web/` (React frontend) are empty --
-E1 only built the Go API, DB schema, and Docker Compose. Don't be surprised
-the repo has no ML code or UI yet; check `tech.md` section 18 for what each
-stage adds.
+`worker/` (Python ML pipeline, stage E3) and `web/` (React frontend, stage
+E5) are empty. That means: analysis jobs queue and sit at `status=queued`
+forever (nothing consumes the Redis Streams queue yet), `retry` isn't
+implemented (nothing can produce a `failed` job to retry), and there is no
+browser UI for recording (FR-20) -- only the API surface for it. Check
+`tech.md` section 18 for what each stage adds.

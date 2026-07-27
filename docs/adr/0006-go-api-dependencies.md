@@ -2,6 +2,10 @@
 
 - Status: Accepted
 - Date: 2026-07-27
+- Note: this ADR's library choices still stand. Its "distroless is possible"
+  consequence (below) is superseded by ADR-0007 -- stage E2 needs a shell
+  and package manager at runtime for `ffmpeg`/`yt-dlp`, which distroless
+  cannot host.
 
 ## Context
 

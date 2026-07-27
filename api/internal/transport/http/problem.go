@@ -90,6 +90,24 @@ func classify(err error) (status int, title, detail, code string) {
 		return http.StatusBadRequest, "Bad Request", "OAuth flow could not be verified. Please try again.", "OAUTH_STATE_MISMATCH"
 	case errors.Is(err, domain.ErrInvalidAccessToken):
 		return http.StatusUnauthorized, "Unauthorized", "Missing or invalid access token.", "UNAUTHORIZED"
+	case errors.Is(err, domain.ErrUnsupportedAudioFormat):
+		return http.StatusBadRequest, "Bad Request", "Unsupported audio format. Use mp3, wav, m4a, flac or ogg.", "UNSUPPORTED_AUDIO_FORMAT"
+	case errors.Is(err, domain.ErrAudioTooLarge):
+		return http.StatusRequestEntityTooLarge, "Payload Too Large", "Audio file exceeds the size limit.", "AUDIO_TOO_LARGE"
+	case errors.Is(err, domain.ErrAudioTooLong):
+		return http.StatusBadRequest, "Bad Request", "Audio exceeds the duration limit.", "AUDIO_TOO_LONG"
+	case errors.Is(err, domain.ErrYouTubeImportDisabled):
+		return http.StatusForbidden, "Forbidden", "YouTube import is currently disabled.", "YOUTUBE_IMPORT_DISABLED"
+	case errors.Is(err, domain.ErrInvalidYouTubeURL):
+		return http.StatusBadRequest, "Bad Request", "Not a valid YouTube URL.", "INVALID_YOUTUBE_URL"
+	case errors.Is(err, domain.ErrYouTubeVideoTooLong):
+		return http.StatusBadRequest, "Bad Request", "The YouTube video exceeds the duration limit.", "YOUTUBE_VIDEO_TOO_LONG"
+	case errors.Is(err, domain.ErrQueueFull):
+		return http.StatusTooManyRequests, "Too Many Requests", "Queue is full, try again in a few minutes.", "QUEUE_FULL"
+	case errors.Is(err, domain.ErrAnalysisRateLimited):
+		return http.StatusTooManyRequests, "Too Many Requests", "Too many analyses requested. Try again later.", "ANALYSIS_RATE_LIMITED"
+	case errors.Is(err, domain.ErrAnalysisNotQueued):
+		return http.StatusConflict, "Conflict", "This analysis can no longer be canceled.", "ANALYSIS_NOT_QUEUED"
 	default:
 		return http.StatusInternalServerError, "Internal Server Error", "Something went wrong. Please try again.", "INTERNAL"
 	}

@@ -74,6 +74,7 @@ services:
       - "8080:8080"
     volumes:
       - ../api:/src
+      - audio-tmp-dev:/data/audio-tmp
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,3 +85,4 @@ services:
 
 volumes:
   postgres-dev-data:
+  audio-tmp-dev:

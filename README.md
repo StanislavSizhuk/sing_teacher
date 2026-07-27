@@ -4,8 +4,9 @@ A web app that compares a user's singing to the original vocal of a song and
 reports pitch, rhythm, vibrato, breathing, dynamics and timbre. Analysis runs
 offline, not in real time.
 
-**Status:** stage E1 (auth, DB schema, Go API skeleton, Docker Compose). The
-ML pipeline, queue, and frontend land in later stages -- see
+**Status:** stages E1-E2 (auth, DB schema, song upload/YouTube import, the
+analysis job queue with live WebSocket position updates). The ML pipeline
+and frontend land in later stages -- see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
@@ -66,19 +67,25 @@ goose -dir migrations postgres "$POSTGRES_DSN" up
 
 | Path | Responsibility |
 |---|---|
-| `api/` | Go: REST API, auth, DB migrations |
+| `api/` | Go: REST + WebSocket API, auth, job queue, DB migrations |
 | `api/internal/domain/` | Entities and sentinel errors; no HTTP/SQL/Redis knowledge |
-| `api/internal/service/` | Business logic (auth flows); depends only on interfaces |
+| `api/internal/service/` | Business logic (auth, song ingestion, analysis queue); depends only on interfaces |
 | `api/internal/repository/` | Postgres and Redis implementations of those interfaces |
+| `api/internal/queue/` | Redis Streams job queue producer |
+| `api/internal/media/` | Audio format sniffing, ffprobe/ffmpeg wrapping |
+| `api/internal/youtube/` | yt-dlp metadata/download client |
+| `api/internal/storage/` | Audio file storage under server-generated paths |
+| `api/internal/sysproc/` | External-command runner (DI seam for exec) |
 | `api/internal/security/`, `mailer/`, `oauth/` | Password hashing, JWT, SMTP, Google OIDC |
 | `api/internal/transport/http/` | chi router, middleware, DTOs, handlers |
+| `api/internal/transport/ws/` | WebSocket status channel (analysis queue position) |
 | `api/migrations/` | goose SQL migrations, embedded into the binary |
 | `api/openapi.yaml` | API contract -- single source of truth |
 | `deploy/` | Compose files, Caddyfile, nightly backup script |
 | `docs/` | Architecture, security, runbook, ADRs |
 
-`worker/` (Python ML pipeline) and `web/` (React frontend) do not exist yet;
-they arrive in stages E3 and E2/E5 respectively.
+`worker/` (Python ML pipeline) does not exist yet; it arrives in stage E3.
+`web/` (React frontend, including browser recording) arrives in stage E5.
 
 ## Documentation
 
