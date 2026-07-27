@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - staticcheck
+    - revive
+    - gosec
+    - ineffassign
+    - bodyclose
+    - sqlclosecheck
+  exclusions:
+    paths:
+      - migrations

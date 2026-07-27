@@ -1,0 +1,104 @@
+# CI only -- deliberately no CD/deploy job in this workflow. E1 has no
+# server to deploy to yet; deployment automation is stage E6 (spec 16.2).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: api
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          working-directory: api
+          version: v2.12.2
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+      - name: Unit tests
+        run: go test ./...
+      - name: Integration tests (real Postgres/Redis via testcontainers)
+        run: go test -tags=integration ./...
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: gosec
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest ./...
+      - name: Build image for scanning
+        run: docker build -t vocalcoach-api:ci .
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: vocalcoach-api:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+  commit-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate commit messages in this PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r sha; do
+            msg="$(git log -1 --format=%B "$sha")"
+            if echo "$msg" | grep -qiE 'co-authored-by:.*(claude|copilot|gpt|gemini|assistant|bot)|generated (with|by)|ai-(assisted|generated)'; then
+              echo "::error::commit $sha carries a disallowed attribution trailer"
+              fail=1
+            fi
+            subject="$(echo "$msg" | head -1)"
+            if ! echo "$subject" | grep -qE '^(feat|fix|refactor|perf|test|docs|build|ci|chore)(\([a-z-]+\))?: .{1,72}$'; then
+              echo "::error::commit $sha subject '$subject' does not match '<type>(<scope>): <subject>'"
+              fail=1
+            fi
+          done < <(git rev-list "$BASE_SHA..$HEAD_SHA")
+          exit "$fail"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build go-api image
+        run: docker build -t vocalcoach-api:ci .

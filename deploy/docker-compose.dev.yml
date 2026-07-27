@@ -1,0 +1,86 @@
+# AI Vocal Coach -- local dev stack (spec 16.3): hot reload, mailhog instead
+# of a real SMTP relay, and DB/Redis ports published so a local client can
+# connect directly. Not hardened like docker-compose.yml -- this never faces
+# the internet.
+#
+# Usage: from the repo root, `cp .env.example .env` (only GOOGLE_CLIENT_ID/
+# GOOGLE_CLIENT_SECRET need real values to exercise Google login; everything
+# else below already has a working dev default), then:
+#   docker compose -f deploy/docker-compose.dev.yml up
+
+x-dev-env: &dev-env
+  APP_BASE_URL: http://localhost:8080
+  CORS_ALLOWED_ORIGIN: http://localhost:5173
+  JWT_SECRET: dev-only-insecure-secret-do-not-use-in-production-000000
+  POSTGRES_PASSWORD: dev-only-postgres-password
+  REDIS_PASSWORD: dev-only-redis-password
+  SMTP_HOST: mailhog
+  SMTP_PORT: "1025"
+  SMTP_FROM: dev@localhost
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      <<: *dev-env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    restart: unless-stopped
+    entrypoint: ["sh", "-c"]
+    command: ["exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
+    env_file:
+      - ../.env
+    environment:
+      <<: *dev-env
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1@sha256:8d76a3d4ffa32a3661311944007a415332c4bb855657f4f6c57996405c009bea
+    restart: unless-stopped
+    ports:
+      - "8025:8025" # web UI: view captured verification emails
+      - "1025:1025" # SMTP
+
+  go-api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+      target: dev
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      <<: *dev-env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../api:/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+
+volumes:
+  postgres-dev-data:

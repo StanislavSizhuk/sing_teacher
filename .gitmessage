@@ -1,0 +1,8 @@
+# <type>(<scope>): <subject>            # <= 72 chars, imperative, lowercase
+#
+# Why this change is needed (skip if obvious).
+#
+# Refs: FR-XX
+#
+# type:  feat fix refactor perf test docs build ci chore
+# scope: api worker web db deploy docs

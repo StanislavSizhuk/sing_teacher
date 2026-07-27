@@ -1,0 +1,39 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+
+# go
+api/*.exe
+api/vendor/
+api/coverage.out
+api/coverage.html
+api/tmp/
+
+# python (worker, future stages)
+worker/.venv/
+worker/__pycache__/
+worker/*.pyc
+worker/.pytest_cache/
+worker/.mypy_cache/
+worker/.ruff_cache/
+
+# node (web, future stages)
+web/node_modules/
+web/dist/
+web/coverage/
+
+# runtime data, never committed
+/backups/
+audio-tmp/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

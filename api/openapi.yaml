@@ -1,0 +1,389 @@
+openapi: 3.1.0
+info:
+  title: AI Vocal Coach API
+  version: "1.0.0"
+  summary: >
+    Auth and account endpoints delivered in stage E1. Songs, analyses and
+    progress endpoints are added in later stages (E2-E5) in the same file.
+servers:
+  - url: /api/v1
+paths:
+  /auth/register:
+    post:
+      operationId: registerWithEmail
+      summary: Register with email and password
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "202":
+          description: >
+            Accepted. The response never reveals whether the email was
+            already registered (spec 9.1).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /auth/verify:
+    post:
+      operationId: verifyEmail
+      summary: Confirm an email address with its 6-digit code
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyRequest"
+      responses:
+        "200":
+          description: Email verified.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "400":
+          description: Code invalid or expired.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/verify/resend:
+    post:
+      operationId: resendVerificationCode
+      summary: Resend the verification code (max 1/60s, 5/day)
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResendRequest"
+      responses:
+        "200":
+          description: Sent, if the account exists and is unverified.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/login:
+    post:
+      operationId: login
+      summary: Log in with email and password
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: >
+            Authenticated. Sets the refresh token as an httpOnly cookie
+            scoped to /api/v1/auth; the response body carries only the
+            access token.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          description: Invalid credentials, or correct password but email not verified.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate the refresh token and mint a new access token
+      tags: [auth]
+      security:
+        - refreshCookie: []
+      responses:
+        "200":
+          description: New access token issued; refresh cookie rotated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          description: Refresh token missing, expired, or reused (forces re-login).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Log out of the current session
+      tags: [auth]
+      security:
+        - refreshCookie: []
+      responses:
+        "200":
+          description: Logged out; refresh cookie cleared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /auth/google:
+    get:
+      operationId: startGoogleLogin
+      summary: Start the Google OAuth2/PKCE flow
+      tags: [auth]
+      security: []
+      responses:
+        "302":
+          description: Redirect to Google's consent screen.
+
+  /auth/google/callback:
+    get:
+      operationId: googleLoginCallback
+      summary: Google OAuth2 callback
+      tags: [auth]
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: >
+            Redirect to APP_BASE_URL with the refresh cookie set. The access
+            token is never placed in the URL; the frontend calls
+            /auth/refresh on load to mint its first one.
+        "400":
+          description: OAuth state mismatch or missing PKCE cookies.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /me:
+    get:
+      operationId: getProfile
+      summary: Get the authenticated user's profile
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteAccount
+      summary: Delete the authenticated user's account and all their data
+      tags: [account]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Account and every session revoked; cascades to owned data.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /healthz:
+    servers:
+      - url: /
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [ops]
+      security: []
+      responses:
+        "200":
+          description: Process is up.
+
+  /readyz:
+    servers:
+      - url: /
+    get:
+      operationId: readyz
+      summary: Readiness probe (Postgres + Redis reachable)
+      tags: [ops]
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic.
+        "503":
+          description: A dependency is unavailable.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+
+  responses:
+    BadRequest:
+      description: The request failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Missing or invalid access token.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    TooManyRequests:
+      description: Rate limit or lockout in effect.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            description: Seconds until the next attempt may succeed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password, display_name]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 10
+          maxLength: 256
+          description: Rejected if under 10 characters or one of the most common passwords.
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+
+    VerifyRequest:
+      type: object
+      required: [email, code]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          pattern: "^[0-9]{6}$"
+
+    ResendRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    MessageResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    SessionResponse:
+      type: object
+      required: [access_token, expires_in_seconds]
+      properties:
+        access_token:
+          type: string
+        expires_in_seconds:
+          type: integer
+
+    User:
+      type: object
+      required: [id, email, display_name, email_verified, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        email_verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Problem:
+      type: object
+      description: RFC 9457 application/problem+json body.
+      required: [type, title, status, detail, code, request_id]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+          description: Stable machine-readable error code; frontend localizes on this.
+        request_id:
+          type: string

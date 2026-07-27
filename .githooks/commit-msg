@@ -1,0 +1,13 @@
+#!/bin/sh
+# Validate commit message format and reject third-party attribution trailers.
+msg_file="$1"
+
+if grep -qiE 'co-authored-by:.*(claude|copilot|gpt|gemini|assistant|bot)|generated (with|by)|ai-(assisted|generated)' "$msg_file"; then
+  echo "commit-msg: attribution trailer is not allowed" >&2
+  exit 1
+fi
+
+if ! head -1 "$msg_file" | grep -qE '^(feat|fix|refactor|perf|test|docs|build|ci|chore)(\([a-z-]+\))?: .{1,72}$'; then
+  echo "commit-msg: expected '<type>(<scope>): <subject>' with subject <= 72 chars" >&2
+  exit 1
+fi
