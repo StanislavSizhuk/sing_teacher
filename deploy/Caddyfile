@@ -1,0 +1,16 @@
+{$APP_BASE_URL} {
+	encode gzip
+
+	# Perimeter security headers (spec 11.2). Centralized here, not in go-api:
+	# Caddy is the only service with a published port, and once web/ exists it
+	# will serve both the SPA and the proxied API from this one origin.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "microphone=(self)"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+	}
+
+	reverse_proxy go-api:8080
+}
