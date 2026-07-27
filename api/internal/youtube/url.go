@@ -4,13 +4,11 @@
 package youtube
 
 import (
-	"errors"
 	"net/url"
 	"strings"
-)
 
-// ErrInvalidURL means the input is not an https youtube.com/youtu.be link.
-var ErrInvalidURL = errors.New("not a youtube url")
+	"ai-vocal-coach/api/internal/domain"
+)
 
 // allowedHosts restricts yt-dlp -- which itself understands hundreds of
 // sites -- to YouTube only, so this ingestion path can never become a
@@ -29,7 +27,7 @@ var allowedHosts = map[string]bool{
 func ValidateURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "https" || !allowedHosts[strings.ToLower(u.Host)] {
-		return "", ErrInvalidURL
+		return "", domain.ErrInvalidYouTubeURL
 	}
 	return u.String(), nil
 }

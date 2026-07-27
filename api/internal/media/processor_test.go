@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"ai-vocal-coach/api/internal/domain"
 	"ai-vocal-coach/api/internal/media"
 )
 
@@ -40,7 +41,7 @@ func TestProcessor_Probe_ParsesDurationFromAudioStream(t *testing.T) {
 	require.Contains(t, runner.gotArgs, "/audio/song-x.raw")
 }
 
-func TestProcessor_Probe_NoAudioStream_ReturnsErrNoAudioStream(t *testing.T) {
+func TestProcessor_Probe_NoAudioStream_ReturnsErrUnsupportedAudioFormat(t *testing.T) {
 	runner := &fakeRunner{stdout: []byte(`{
 		"streams": [{"codec_type": "video"}],
 		"format": {"duration": "10.0"}
@@ -48,7 +49,7 @@ func TestProcessor_Probe_NoAudioStream_ReturnsErrNoAudioStream(t *testing.T) {
 	p := media.NewProcessor(runner, "ffmpeg", "ffprobe")
 
 	_, err := p.Probe(context.Background(), "/audio/video-only.raw")
-	require.ErrorIs(t, err, media.ErrNoAudioStream)
+	require.ErrorIs(t, err, domain.ErrUnsupportedAudioFormat)
 }
 
 func TestProcessor_Probe_RunnerError_Wrapped(t *testing.T) {

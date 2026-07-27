@@ -3,12 +3,12 @@ package media
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"ai-vocal-coach/api/internal/domain"
 	"ai-vocal-coach/api/internal/sysproc"
 )
 
@@ -20,10 +20,6 @@ const (
 	probeTimeout     = 20 * time.Second
 	transcodeTimeout = 120 * time.Second
 )
-
-// ErrNoAudioStream means ffprobe found no audio stream in the container --
-// e.g. a video-only MP4, or a corrupt/empty file.
-var ErrNoAudioStream = errors.New("no audio stream found")
 
 // Processor validates and canonicalizes audio via ffprobe/ffmpeg, invoked as
 // argument lists through sysproc.Runner (spec 11.3).
@@ -56,9 +52,9 @@ type probeResult struct {
 	} `json:"format"`
 }
 
-// Probe returns the audio duration in seconds. It returns ErrNoAudioStream
-// if the container has no audio stream, so a video-only or corrupt file is
-// rejected before any further processing.
+// Probe returns the audio duration in seconds. It returns
+// domain.ErrUnsupportedAudioFormat if the container has no audio stream, so
+// a video-only or corrupt file is rejected before any further processing.
 func (p *Processor) Probe(ctx context.Context, path string) (seconds float64, err error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -86,7 +82,7 @@ func (p *Processor) Probe(ctx context.Context, path string) (seconds float64, er
 		}
 	}
 	if !hasAudio {
-		return 0, ErrNoAudioStream
+		return 0, domain.ErrUnsupportedAudioFormat
 	}
 
 	seconds, err = strconv.ParseFloat(res.Format.Duration, 64)

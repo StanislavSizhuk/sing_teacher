@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"ai-vocal-coach/api/internal/domain"
 	"ai-vocal-coach/api/internal/storage"
 )
 
@@ -35,13 +36,13 @@ func TestFileStore_WriteTemp_WritesContent(t *testing.T) {
 	require.Equal(t, "hello audio bytes", string(got))
 }
 
-func TestFileStore_WriteTemp_ExceedsMax_ReturnsErrTooLarge(t *testing.T) {
+func TestFileStore_WriteTemp_ExceedsMax_ReturnsErrAudioTooLarge(t *testing.T) {
 	dir := t.TempDir()
 	s, err := storage.NewFileStore(dir)
 	require.NoError(t, err)
 
 	_, err = s.WriteTemp(strings.NewReader("this is definitely more than five bytes"), 5)
-	require.ErrorIs(t, err, storage.ErrTooLarge)
+	require.ErrorIs(t, err, domain.ErrAudioTooLarge)
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)

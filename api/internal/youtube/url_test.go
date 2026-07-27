@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"ai-vocal-coach/api/internal/domain"
 	"ai-vocal-coach/api/internal/youtube"
 )
 
@@ -31,7 +32,7 @@ func TestValidateURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := youtube.ValidateURL(tt.raw)
 			if tt.wantErr {
-				require.ErrorIs(t, err, youtube.ErrInvalidURL)
+				require.ErrorIs(t, err, domain.ErrInvalidYouTubeURL)
 			} else {
 				require.NoError(t, err)
 			}

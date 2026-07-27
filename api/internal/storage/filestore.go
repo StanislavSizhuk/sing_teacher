@@ -5,7 +5,6 @@
 package storage
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,10 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-)
 
-// ErrTooLarge means the reader produced more than the caller's declared cap.
-var ErrTooLarge = errors.New("file exceeds the size limit")
+	"ai-vocal-coach/api/internal/domain"
+)
 
 // FileStore reads and writes audio under one directory, shared with the
 // (future, E3) ML worker via a Docker volume (spec 5.2 "audio-tmp").
@@ -50,7 +48,7 @@ func (s *FileStore) WriteTemp(r io.Reader, maxBytes int64) (path string, err err
 	}
 	if n > maxBytes {
 		_ = os.Remove(f.Name())
-		return "", ErrTooLarge
+		return "", domain.ErrAudioTooLarge
 	}
 	return f.Name(), nil
 }
