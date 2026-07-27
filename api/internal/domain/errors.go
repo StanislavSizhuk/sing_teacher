@@ -60,4 +60,35 @@ var (
 	// ErrInvalidAccessToken means the JWT is missing, malformed, expired, or
 	// signed with a key we do not recognize.
 	ErrInvalidAccessToken = errors.New("invalid or expired access token")
+
+	// ErrUnsupportedAudioFormat means the uploaded bytes did not match any
+	// supported audio format's magic bytes (spec 11.3 -- checked on content,
+	// never on the filename extension).
+	ErrUnsupportedAudioFormat = errors.New("unsupported audio format")
+
+	// ErrAudioTooLarge means the audio exceeds MAX_UPLOAD_MB (spec NFR-05).
+	ErrAudioTooLarge = errors.New("audio file is too large")
+
+	// ErrAudioTooLong means the audio's duration exceeds MAX_AUDIO_SECONDS (spec NFR-05).
+	ErrAudioTooLong = errors.New("audio is too long")
+
+	// ErrYouTubeImportDisabled means FEATURE_YOUTUBE_IMPORT is off (spec 11.4).
+	ErrYouTubeImportDisabled = errors.New("youtube import is disabled")
+
+	// ErrInvalidYouTubeURL means the URL is not a youtube.com/youtu.be link.
+	ErrInvalidYouTubeURL = errors.New("not a valid youtube url")
+
+	// ErrYouTubeVideoTooLong means the video's duration (checked before
+	// download, FR-12) exceeds MAX_AUDIO_SECONDS.
+	ErrYouTubeVideoTooLong = errors.New("youtube video exceeds the duration limit")
+
+	// ErrQueueFull means the analysis queue is at QUEUE_MAX_LENGTH (spec 10, FR-24).
+	ErrQueueFull = errors.New("analysis queue is full")
+
+	// ErrAnalysisRateLimited means the caller hit USER_ANALYSES_PER_HOUR (spec 10, FR-24).
+	ErrAnalysisRateLimited = errors.New("too many analyses requested, try again later")
+
+	// ErrAnalysisNotQueued means a cancel was requested for an analysis that
+	// is no longer (or never was) in the queued state (FR-25).
+	ErrAnalysisNotQueued = errors.New("analysis is not in the queued state")
 )
