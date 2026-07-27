@@ -21,12 +21,20 @@ import (
 
 	"ai-vocal-coach/api/internal/config"
 	"ai-vocal-coach/api/internal/mailer"
+	"ai-vocal-coach/api/internal/media"
 	"ai-vocal-coach/api/internal/oauth"
+	"ai-vocal-coach/api/internal/queue"
 	"ai-vocal-coach/api/internal/repository/postgres"
 	"ai-vocal-coach/api/internal/repository/redisrepo"
 	"ai-vocal-coach/api/internal/security"
+	"ai-vocal-coach/api/internal/service/analysis"
 	"ai-vocal-coach/api/internal/service/auth"
+	"ai-vocal-coach/api/internal/service/song"
+	"ai-vocal-coach/api/internal/storage"
+	"ai-vocal-coach/api/internal/sysproc"
 	httptransport "ai-vocal-coach/api/internal/transport/http"
+	"ai-vocal-coach/api/internal/transport/ws"
+	"ai-vocal-coach/api/internal/youtube"
 	"ai-vocal-coach/api/migrations"
 )
 
@@ -36,6 +44,24 @@ const cleanupInterval = time.Hour
 // shutdownGrace bounds how long in-flight requests get to finish once a
 // termination signal arrives.
 const shutdownGrace = 20 * time.Second
+
+// audioStorageDir is the shared volume songs and recordings are canonicalized
+// into (spec 5.2 "audio-tmp"), mounted by deploy/docker-compose*.yml. It is a
+// fixed container path, not operator config -- the E3 worker will read from
+// the exact same path.
+const audioStorageDir = "/data/audio-tmp"
+
+// audioSweepInterval is how often the interim TTL sweep runs (FR-43, spec
+// 7.2) until the E3 worker exists to tie deletion to actual processing completion.
+const audioSweepInterval = time.Minute
+
+// ffmpegPath, ffprobePath and ytDlpPath are resolved via PATH; the runtime
+// image (deploy/Dockerfile) installs all three (spec 11.3).
+const (
+	ffmpegPath  = "ffmpeg"
+	ffprobePath = "ffprobe"
+	ytDlpPath   = "yt-dlp"
+)
 
 func main() {
 	// distroless has no shell, so Docker's HEALTHCHECK runs this binary
@@ -96,6 +122,10 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if err := checkMediaBinaries(cfg); err != nil {
+		return fmt.Errorf("check media binaries: %w", err)
+	}
+
 	if err := applyMigrations(cfg); err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
@@ -125,15 +155,34 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("build auth service: %w", err)
 	}
 
+	files, err := storage.NewFileStore(audioStorageDir)
+	if err != nil {
+		return fmt.Errorf("open audio storage: %w", err)
+	}
+	go runAudioSweepTicker(ctx, logger, files, time.Duration(cfg.Limits.AudioTTLSeconds)*time.Second)
+
+	queueProducer := queue.NewProducer(redisClient)
+	if err := queueProducer.EnsureGroup(ctx); err != nil {
+		return fmt.Errorf("prepare analysis queue: %w", err)
+	}
+
+	songSvc, analysisSvc := buildSongAndAnalysisServices(cfg, pool, redisClient, files, queueProducer)
+	hub := ws.NewHub()
+	accessParser := security.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
+	wsHandler := ws.NewHandler(hub, analysisSvc, accessParser, cfg.CORSOrigin)
+
 	handler := httptransport.NewHandler(svc, logger, cfg.CookieSecure, cfg.AppBaseURL.String(),
 		cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
 	health := httptransport.NewHealthHandler(pool, redisClient)
 	router := httptransport.NewRouter(httptransport.RouterDeps{
 		Auth:         handler,
 		Health:       health,
+		Song:         httptransport.NewSongHandler(songSvc, logger, cfg.Limits.MaxUploadBytes),
+		Analysis:     httptransport.NewAnalysisHandler(analysisSvc, hub, logger, cfg.Limits.MaxUploadBytes),
+		WS:           wsHandler.ServeAnalysis,
 		Logger:       logger,
 		CORSOrigin:   cfg.CORSOrigin,
-		AccessParser: security.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL),
+		AccessParser: accessParser,
 	})
 
 	server := &http.Server{
@@ -190,6 +239,68 @@ func applyMigrations(cfg *config.Config) error {
 		return fmt.Errorf("goose up: %w", err)
 	}
 	return nil
+}
+
+// checkMediaBinaries fails fast if ffmpeg/ffprobe are missing, and yt-dlp
+// too when YouTube import is enabled -- instead of only discovering it on
+// the first upload (spec 12.1: fail fast with a clear message).
+func checkMediaBinaries(cfg *config.Config) error {
+	if err := media.CheckBinaries(ffmpegPath, ffprobePath); err != nil {
+		return err
+	}
+	if cfg.Features.YouTubeImport {
+		if err := youtube.CheckBinary(ytDlpPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// buildSongAndAnalysisServices wires the E2 song-ingestion and
+// analysis-queue services to their Postgres/Redis/filesystem/exec dependencies.
+func buildSongAndAnalysisServices(
+	cfg *config.Config,
+	pool *pgxpool.Pool,
+	redisClient *redis.Client,
+	files *storage.FileStore,
+	queueProducer *queue.Producer,
+) (*song.Service, *analysis.Service) {
+	runner := sysproc.NewExecRunner()
+	processor := media.NewProcessor(runner, ffmpegPath, ffprobePath)
+	ytClient := youtube.NewClient(runner, ytDlpPath)
+
+	songRepo := postgres.NewSongRepository(pool)
+	songSvc := song.NewService(songRepo, processor, files, ytClient,
+		cfg.Limits.MaxUploadBytes, cfg.Limits.MaxAudioSeconds, cfg.Features.YouTubeImport)
+
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+	rateLimiter := redisrepo.NewAnalysisRateLimiter(redisClient, cfg.Limits.UserAnalysesPerHour, time.Hour)
+	analysisSvc := analysis.NewService(analysisRepo, songRepo, processor, files, rateLimiter, queueProducer,
+		cfg.Limits.MaxUploadBytes, cfg.Limits.MaxAudioSeconds, cfg.Limits.QueueMaxLength)
+
+	return songSvc, analysisSvc
+}
+
+// runAudioSweepTicker drives the interim audio-retention safety net (FR-43)
+// until ctx is canceled.
+func runAudioSweepTicker(ctx context.Context, logger *slog.Logger, files *storage.FileStore, maxAge time.Duration) {
+	ticker := time.NewTicker(audioSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			removed, err := files.Sweep(maxAge)
+			if err != nil {
+				logger.Error("audio sweep failed", "error", err.Error())
+				continue
+			}
+			if removed > 0 {
+				logger.Info("swept stale audio files", "count", removed)
+			}
+		}
+	}
 }
 
 func buildAuthService(cfg *config.Config, pool *pgxpool.Pool, redisClient *redis.Client) (*auth.Service, error) {
