@@ -48,8 +48,17 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    # Bounds the whole container -- Go process plus any spawned ffmpeg/yt-dlp
+    # child (same cgroup) -- standing in for a per-process ulimit, which
+    # os/exec cannot set for a child without a shell (spec 11.3, 5.3).
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     tmpfs:
       - /tmp
+    volumes:
+      - audio-tmp:/data/audio-tmp
     read_only: true
     cap_drop: [ALL]
     security_opt:
@@ -150,3 +159,4 @@ volumes:
   postgres-data:
   caddy-data:
   caddy-config:
+  audio-tmp:
