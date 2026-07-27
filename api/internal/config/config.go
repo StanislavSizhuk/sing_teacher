@@ -26,6 +26,23 @@ type Config struct {
 	Redis    Redis
 	Auth     Auth
 	SMTP     SMTP
+	Limits   Limits
+	Features Features
+}
+
+// Limits holds every numeric threshold spec 20.5 mandates come from config,
+// never a magic number in code (spec 12.1).
+type Limits struct {
+	MaxUploadBytes      int64
+	MaxAudioSeconds     int
+	QueueMaxLength      int
+	UserAnalysesPerHour int
+	AudioTTLSeconds     int
+}
+
+// Features gates functionality that is off by default in production (spec 11.4).
+type Features struct {
+	YouTubeImport bool
 }
 
 // Postgres holds connection settings for the primary database.
@@ -130,6 +147,25 @@ func Load() (*Config, error) {
 		}
 		return def
 	}
+	optBool := func(name string, def bool) bool {
+		v := os.Getenv(name)
+		if v == "" {
+			return def
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			problems = append(problems, name+" must be a boolean: "+err.Error())
+			return def
+		}
+		return b
+	}
+	posInt := func(name string, def int) int {
+		n := optInt(name, def)
+		if n <= 0 {
+			problems = append(problems, name+" must be a positive integer")
+		}
+		return n
+	}
 
 	appEnv := optString("APP_ENV", "development")
 	if appEnv != "development" && appEnv != "production" {
@@ -188,6 +224,16 @@ func Load() (*Config, error) {
 			User:     optString("SMTP_USER", ""),
 			Password: optString("SMTP_PASSWORD", ""),
 			From:     req("SMTP_FROM"),
+		},
+		Limits: Limits{
+			MaxUploadBytes:      int64(posInt("MAX_UPLOAD_MB", 15)) * 1024 * 1024,
+			MaxAudioSeconds:     posInt("MAX_AUDIO_SECONDS", 360),
+			QueueMaxLength:      posInt("QUEUE_MAX_LENGTH", 20),
+			UserAnalysesPerHour: posInt("USER_ANALYSES_PER_HOUR", 10),
+			AudioTTLSeconds:     posInt("AUDIO_TTL_SECONDS", 300),
+		},
+		Features: Features{
+			YouTubeImport: optBool("FEATURE_YOUTUBE_IMPORT", false),
 		},
 	}
 
