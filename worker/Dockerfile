@@ -3,10 +3,20 @@
 # Debian, not Alpine (unlike api/Dockerfile): torch/demucs/whisper ship
 # manylinux wheels built against glibc, not musl -- Alpine would mean
 # building them from source, which is what image bloat and CI minutes look
-# like. ffmpeg is pinned to the exact bookworm package version, mirroring
-# how api/Dockerfile pins Alpine's.
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
-ARG FFMPEG_VERSION=7:5.1.9-0+deb12u1
+# like. ffmpeg is pinned to the exact package version, mirroring how
+# api/Dockerfile pins Alpine's.
+#
+# trixie (13), not bookworm (12): trixie is Debian's current stable and
+# gets priority security backports; bookworm now trails it as the older
+# release (verified: 67 unpatched CRITICAL/HIGH CVEs in bookworm's base
+# packages vs 88 on the same day, `docker run python:3.12-slim-bookworm
+# cat /etc/os-release` vs `python:3.12-slim`, the latter already
+# repointed at trixie upstream). CI's Trivy step still runs
+# --ignore-unfixed regardless -- neither release has zero *fixable*
+# findings as of this writing, this is about carrying fewer currently-
+# unpatched CVEs in the image, not about removing that flag.
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+ARG FFMPEG_VERSION=7:7.1.5-0+deb13u1
 ARG UV_VERSION=0.11.33
 
 FROM ${PYTHON_IMAGE} AS dev

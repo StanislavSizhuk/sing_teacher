@@ -274,9 +274,11 @@ jobs:
           image-ref: vocalcoach-worker:ci
           severity: CRITICAL,HIGH
           exit-code: "1"
-          # As of this writing every CRITICAL/HIGH finding in the base
-          # image (ffmpeg, glib, libxml2, perl, ...) has no Debian bookworm
-          # package build yet -- Trivy reports them as affected/
+          # worker/Dockerfile pins Debian trixie specifically because it
+          # trails fewer unpatched CVEs than bookworm, but even trixie's
+          # base packages (ffmpeg, glib, libxml2, perl, ...) still have
+          # some CRITICAL/HIGH findings with no Debian package build yet
+          # as of this writing -- Trivy reports them as affected/
           # fix_deferred/will_not_fix with an empty "Fixed Version", not
           # something a dependency bump here can resolve. Blocking every
           # merge on upstream's timeline defeats the scan's purpose;
