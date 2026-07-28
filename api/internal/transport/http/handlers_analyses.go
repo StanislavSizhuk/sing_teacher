@@ -17,6 +17,7 @@ import (
 type AnalysisQueuer interface {
 	Enqueue(ctx context.Context, userID, songID uuid.UUID, recording io.Reader) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
 	Cancel(ctx context.Context, id, userID uuid.UUID) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
+	Retry(ctx context.Context, id, userID uuid.UUID) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
 	GetByID(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
 }
 
@@ -124,4 +125,26 @@ func (h *AnalysisHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	h.hub.BroadcastPositions(positions)
 	writeJSON(w, http.StatusOK, newAnalysisResponse(result))
+}
+
+// Retry handles POST /analyses/{id}/retry: restarts a failed analysis
+// without asking for the recording again (FR-26).
+func (h *AnalysisHandler) Retry(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeServiceError(h.logger, w, r, domain.ErrInvalidAccessToken)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		badRequest(w, r, "invalid analysis id")
+		return
+	}
+	result, positions, err := h.svc.Retry(r.Context(), id, userID)
+	if err != nil {
+		writeServiceError(h.logger, w, r, err)
+		return
+	}
+	h.hub.BroadcastPositions(positions)
+	writeJSON(w, http.StatusAccepted, newAnalysisResponse(result))
 }

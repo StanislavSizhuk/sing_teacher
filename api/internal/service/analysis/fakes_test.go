@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -14,13 +15,14 @@ import (
 
 // --- fakeAnalysisRepository ------------------------------------------------
 
-// fakeAnalysisRepository keeps insertion order to stand in for queue_seq,
-// so RecalculatePositions can reproduce the real FIFO/shift-on-cancel
-// behavior the Postgres implementation provides.
+// fakeAnalysisRepository hands out a monotonic queue_seq per row, mirroring
+// the Postgres BIGSERIAL/sequence Create and Retry draw from, so
+// RecalculatePositions can reproduce the real FIFO/shift-on-cancel/
+// back-of-queue-on-retry behavior the Postgres implementation provides.
 type fakeAnalysisRepository struct {
 	mu        sync.Mutex
 	byID      map[uuid.UUID]*domain.Analysis
-	order     []uuid.UUID
+	nextSeq   int64
 	createErr error
 }
 
@@ -42,9 +44,9 @@ func (f *fakeAnalysisRepository) Create(_ context.Context, a *domain.Analysis) e
 		return err
 	}
 	a.CreatedAt = time.Now()
-	a.QueueSeq = int64(len(f.order) + 1)
+	f.nextSeq++
+	a.QueueSeq = f.nextSeq
 	f.byID[a.ID] = cloneAnalysis(a)
-	f.order = append(f.order, a.ID)
 	return nil
 }
 
@@ -84,17 +86,44 @@ func (f *fakeAnalysisRepository) Cancel(_ context.Context, id, userID uuid.UUID)
 	return cloneAnalysis(a), nil
 }
 
+func (f *fakeAnalysisRepository) Retry(_ context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.byID[id]
+	if !ok || a.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	if a.Status != domain.AnalysisStatusFailed {
+		return nil, domain.ErrAnalysisNotFailed
+	}
+	a.Status = domain.AnalysisStatusQueued
+	a.ErrorCode = nil
+	a.CurrentStage = nil
+	a.QueuePosition = nil
+	a.QueueStreamID = nil
+	f.nextSeq++
+	a.QueueSeq = f.nextSeq
+	return cloneAnalysis(a), nil
+}
+
 func (f *fakeAnalysisRepository) RecalculatePositions(_ context.Context) (map[uuid.UUID]int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	changed := map[uuid.UUID]int{}
-	pos := 0
-	for _, id := range f.order {
-		a := f.byID[id]
-		if a.Status != domain.AnalysisStatusQueued {
-			continue
+
+	var queuedIDs []uuid.UUID
+	for id, a := range f.byID {
+		if a.Status == domain.AnalysisStatusQueued {
+			queuedIDs = append(queuedIDs, id)
 		}
-		pos++
+	}
+	sort.Slice(queuedIDs, func(i, j int) bool {
+		return f.byID[queuedIDs[i]].QueueSeq < f.byID[queuedIDs[j]].QueueSeq
+	})
+
+	changed := map[uuid.UUID]int{}
+	for i, id := range queuedIDs {
+		pos := i + 1
+		a := f.byID[id]
 		if a.QueuePosition == nil || *a.QueuePosition != pos {
 			p := pos
 			a.QueuePosition = &p

@@ -391,6 +391,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /analyses/{id}/retry:
+    post:
+      operationId: retryAnalysis
+      summary: Restart a failed analysis without re-uploading the recording (FR-26)
+      tags: [analyses]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: Re-queued. Position updates follow over the WebSocket channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analysis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No analysis with this id owned by the caller.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The analysis is not in the failed state (`ANALYSIS_NOT_FAILED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
   /ws/analyses/{id}:
     get:
       operationId: watchAnalysisQueuePosition

@@ -119,6 +119,76 @@ func TestAnalysisRepository_Cancel_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrNotFound)
 }
 
+func TestAnalysisRepository_Retry_FailedAnalysis_Succeeds(t *testing.T) {
+	pool := setupPostgres(t)
+	ctx := context.Background()
+	userRepo := postgres.NewUserRepository(pool)
+	songRepo := postgres.NewSongRepository(pool)
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+
+	user := newTestUser(fmt.Sprintf("retry-%s@example.com", uuid.NewString()))
+	require.NoError(t, userRepo.Create(ctx, user))
+	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	require.NoError(t, analysisRepo.Create(ctx, a))
+	require.NoError(t, analysisRepo.SetQueueStreamID(ctx, a.ID, "1234-0"))
+
+	_, err = pool.Exec(ctx, `UPDATE analyses SET status = 'failed', error_code = 'INTERNAL', current_stage = 'pitch' WHERE id = $1`, a.ID)
+	require.NoError(t, err)
+
+	retried, err := analysisRepo.Retry(ctx, a.ID, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusQueued, retried.Status)
+	require.Nil(t, retried.ErrorCode)
+	require.Nil(t, retried.CurrentStage)
+	require.Nil(t, retried.QueueStreamID)
+	require.Greater(t, retried.QueueSeq, a.QueueSeq, "retry must draw a fresh, later queue_seq so it goes to the back of the FIFO")
+}
+
+func TestAnalysisRepository_Retry_NotFailed_ReturnsErrAnalysisNotFailed(t *testing.T) {
+	pool := setupPostgres(t)
+	ctx := context.Background()
+	userRepo := postgres.NewUserRepository(pool)
+	songRepo := postgres.NewSongRepository(pool)
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+
+	user := newTestUser(fmt.Sprintf("retry-not-failed-%s@example.com", uuid.NewString()))
+	require.NoError(t, userRepo.Create(ctx, user))
+	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	require.NoError(t, analysisRepo.Create(ctx, a))
+
+	_, err = analysisRepo.Retry(ctx, a.ID, user.ID)
+	require.ErrorIs(t, err, domain.ErrAnalysisNotFailed)
+}
+
+func TestAnalysisRepository_Retry_WrongOwner_ReturnsErrNotFound(t *testing.T) {
+	pool := setupPostgres(t)
+	ctx := context.Background()
+	userRepo := postgres.NewUserRepository(pool)
+	songRepo := postgres.NewSongRepository(pool)
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+
+	owner := newTestUser(fmt.Sprintf("retry-owner-%s@example.com", uuid.NewString()))
+	stranger := newTestUser(fmt.Sprintf("retry-stranger-%s@example.com", uuid.NewString()))
+	require.NoError(t, userRepo.Create(ctx, owner))
+	require.NoError(t, userRepo.Create(ctx, stranger))
+	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	require.NoError(t, analysisRepo.Create(ctx, a))
+	_, err = pool.Exec(ctx, `UPDATE analyses SET status = 'failed' WHERE id = $1`, a.ID)
+	require.NoError(t, err)
+
+	_, err = analysisRepo.Retry(ctx, a.ID, stranger.ID)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
 func TestAnalysisRepository_SetQueueStreamID_Persists(t *testing.T) {
 	pool := setupPostgres(t)
 	ctx := context.Background()

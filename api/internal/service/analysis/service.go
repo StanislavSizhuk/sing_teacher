@@ -12,10 +12,10 @@ import (
 // never a user-supplied filename (spec 11.3).
 const filePrefix = "analysis"
 
-// Service implements queuing, canceling and reading back analysis jobs.
-// Retry (FR-26) is deliberately not implemented in this stage: nothing can
-// produce a failed analysis without the E3 worker, so there is no reachable
-// precondition to build or test it against yet (see docs/DEV_LOG.md).
+// Service implements queuing, canceling, retrying and reading back analysis
+// jobs. Retry (FR-26) has no reachable precondition end-to-end until the E3
+// worker exists to ever produce a failed analysis, but the logic is built
+// and unit-tested now so E3 only has to wire a worker into it.
 type Service struct {
 	analyses        Repository
 	songs           SongRepository

@@ -20,6 +20,9 @@ type Repository interface {
 	SetQueueStreamID(ctx context.Context, id uuid.UUID, streamEntryID string) error
 	GetByID(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
 	Cancel(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
+	// Retry moves a failed analysis back to queued, at the back of the FIFO
+	// order, without touching its stored recording (FR-26).
+	Retry(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
 	// RecalculatePositions reassigns FIFO queue_position to every queued
 	// analysis and returns only the ids whose position changed -- the set
 	// the caller needs to push over WebSocket (spec 10).

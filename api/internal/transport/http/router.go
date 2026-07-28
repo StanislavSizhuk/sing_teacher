@@ -61,6 +61,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 				r.Post("/", deps.Analysis.Create)
 				r.Get("/{id}", deps.Analysis.Get)
 				r.Post("/{id}/cancel", deps.Analysis.Cancel)
+				r.Post("/{id}/retry", deps.Analysis.Retry)
 			})
 		})
 

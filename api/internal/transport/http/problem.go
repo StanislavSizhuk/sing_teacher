@@ -108,6 +108,8 @@ func classify(err error) (status int, title, detail, code string) {
 		return http.StatusTooManyRequests, "Too Many Requests", "Too many analyses requested. Try again later.", "ANALYSIS_RATE_LIMITED"
 	case errors.Is(err, domain.ErrAnalysisNotQueued):
 		return http.StatusConflict, "Conflict", "This analysis can no longer be canceled.", "ANALYSIS_NOT_QUEUED"
+	case errors.Is(err, domain.ErrAnalysisNotFailed):
+		return http.StatusConflict, "Conflict", "Only a failed analysis can be retried.", "ANALYSIS_NOT_FAILED"
 	default:
 		return http.StatusInternalServerError, "Internal Server Error", "Something went wrong. Please try again.", "INTERNAL"
 	}
