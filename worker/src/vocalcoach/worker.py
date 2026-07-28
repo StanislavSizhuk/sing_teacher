@@ -17,6 +17,7 @@ from vocalcoach.logging_setup import configure_logging
 from vocalcoach.pipeline.base import PipelineStage
 from vocalcoach.pipeline.registry import ModelRegistry
 from vocalcoach.pipeline.runner import PipelineRunner
+from vocalcoach.pipeline.stages.aggregate import AggregateStage
 from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.breath import BreathStage
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
@@ -48,7 +49,7 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 def build_stages(
     settings: Settings, registry: ModelRegistry, songs: SongRepository
 ) -> list[PipelineStage]:
-    """Stages 1-10 in spec 6.2 order (stage 11 is E4 scope, tech.md section 18)."""
+    """Stages 1-11 in spec 6.2 order."""
     return [
         PreprocessStage(ffmpeg_path=FFMPEG_PATH),
         SeparateReferenceStage(
@@ -63,6 +64,7 @@ def build_stages(
         DynamicsStage(),
         TimbreStage(),
         BreathStage(),
+        AggregateStage(settings.scoring_weights, settings.scoring_version),
     ]
 
 

@@ -27,6 +27,14 @@ def test_pitch_matching_signals_score_near_perfect(tmp_path: Path, wav_writer) -
     assert result.data["mean_abs_cents"] < 15
     assert songs.saved_pitch_curve is not None  # cache warmed for future analyses of this song
 
+    piano_roll = result.data["piano_roll"]
+    keys = ("user_hz", "reference_hz", "deviation_cents", "off_pitch")
+    assert len({len(piano_roll[key]) for key in keys}) == 1
+    # Matching signals: most frames should land a real (non-null) comparison,
+    # and a near-perfect match should not flag many off-pitch frames.
+    assert sum(1 for c in piano_roll["deviation_cents"] if c is not None) > 0
+    assert sum(piano_roll["off_pitch"]) < len(piano_roll["off_pitch"]) * 0.1
+
 
 def test_pitch_caches_reference_curve_and_reuses_it_when_warm(tmp_path: Path, wav_writer) -> None:
     recording = wav_writer("recording.wav", sine_wave(4.0, 44100, 300.0), 44100)

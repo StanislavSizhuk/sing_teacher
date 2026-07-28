@@ -7,7 +7,7 @@ import pytest
 
 from vocalcoach.config import load_settings
 from vocalcoach.errors import NoVoiceDetected
-from vocalcoach.models.audio import PitchCurve
+from vocalcoach.models.audio import PianoRollData
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.runner import RunOutcome
@@ -33,7 +33,8 @@ class FakeAnalysisRepo:
         self.marked_done: list[tuple[str, dict[str, Any]]] = []
         self.marked_failed: list[tuple[str, str]] = []
         self.saved_scores: list[tuple[str, str, float]] = []
-        self.saved_pitch_curves: list[tuple[str, PitchCurve]] = []
+        self.saved_piano_rolls: list[tuple[str, PianoRollData]] = []
+        self.saved_scoring_results: list[tuple[str, float, str, str]] = []
 
     def get_by_id(self, analysis_id):
         return self._record
@@ -41,8 +42,13 @@ class FakeAnalysisRepo:
     def save_aspect_score(self, analysis_id, aspect, score):
         self.saved_scores.append((analysis_id, aspect, score))
 
-    def save_pitch_curve(self, analysis_id, curve):
-        self.saved_pitch_curves.append((analysis_id, curve))
+    def save_piano_roll(self, analysis_id, data):
+        self.saved_piano_rolls.append((analysis_id, data))
+
+    def save_scoring_result(self, analysis_id, overall_score, feedback_text, scoring_version):
+        self.saved_scoring_results.append(
+            (analysis_id, overall_score, feedback_text, scoring_version)
+        )
 
     def mark_done(self, analysis_id, model_versions):
         self.marked_done.append((analysis_id, model_versions))
@@ -118,17 +124,36 @@ def test_handle_success_deletes_recording_and_cached_song_source(settings, tmp_p
     assert not song_path.exists()  # already cached -> original upload no longer needed
 
 
-def test_handle_success_denormalizes_scores_and_pitch_curve(settings, tmp_path: Path) -> None:
-    curve = PitchCurve(hop_seconds=0.01, hz=[440.0, None, 441.5])
+def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
+    settings, tmp_path: Path
+) -> None:
+    piano_roll = PianoRollData(
+        hop_seconds=0.01,
+        user_hz=[440.0, None, 441.5],
+        reference_hz=[440.0, None, 440.0],
+        deviation_cents=[0.0, None, 5.9],
+        off_pitch=[False, False, False],
+    )
     stages = {
         "pitch": StageResult(
             stage="pitch",
             status=StageStatus.DONE,
             duration_ms=1,
-            data={"score": 87.5, "user_pitch_curve": curve.model_dump(mode="json")},
+            data={"score": 87.5, "piano_roll": piano_roll.model_dump(mode="json")},
         ),
         "rhythm": StageResult(
             stage="rhythm", status=StageStatus.DONE, duration_ms=1, data={"score": 91.0}
+        ),
+        "aggregate": StageResult(
+            stage="aggregate",
+            status=StageStatus.DONE,
+            duration_ms=1,
+            data={
+                "overall_score": 88.4,
+                "feedback_text": "Overall score: 88/100.",
+                "scoring_version": "1.0",
+                "aspect_scores": {"pitch": 87.5, "rhythm": 91.0},
+            },
         ),
         # Not every stage necessarily carries a "score" key -- must not crash on one that doesn't.
         "align": StageResult(stage="align", status=StageStatus.DONE, duration_ms=1, data={}),
@@ -148,7 +173,8 @@ def test_handle_success_denormalizes_scores_and_pitch_curve(settings, tmp_path: 
     assert ("a5", "pitch", 87.5) in analyses.saved_scores
     assert ("a5", "rhythm", 91.0) in analyses.saved_scores
     assert len(analyses.saved_scores) == 2  # "align" has no "score" key, nothing else does either
-    assert analyses.saved_pitch_curves == [("a5", curve)]
+    assert analyses.saved_piano_rolls == [("a5", piano_roll)]
+    assert analyses.saved_scoring_results == [("a5", 88.4, "Overall score: 88/100.", "1.0")]
     # Score persistence must happen before mark_done, not after -- a reader
     # that sees status="done" should already find every score in place.
     assert analyses.marked_done == [("a5", {})]

@@ -13,7 +13,7 @@ from typing import Protocol
 from vocalcoach.audio.paths import analysis_work_dir, recording_source_path, song_source_path
 from vocalcoach.config import ASPECTS, Settings
 from vocalcoach.errors import PipelineError
-from vocalcoach.models.audio import PitchCurve
+from vocalcoach.models.audio import PianoRollData
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
@@ -46,7 +46,10 @@ class HandlerAnalysisRepository(Protocol):
 
     def get_by_id(self, analysis_id: str) -> AnalysisRecord: ...
     def save_aspect_score(self, analysis_id: str, aspect: str, score: float) -> None: ...
-    def save_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None: ...
+    def save_piano_roll(self, analysis_id: str, data: PianoRollData) -> None: ...
+    def save_scoring_result(
+        self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
+    ) -> None: ...
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None: ...
     def mark_failed(self, analysis_id: str, error_code: str) -> None: ...
 
@@ -129,8 +132,10 @@ class AnalysisJobHandler:
         """Denormalizes each aspect stage's `data["score"]` out of
         `stages_json` into its own column (`analyses.pitch_score`, etc.) --
         stage names equal `config.ASPECTS` exactly by construction, so no
-        separate mapping table is needed. `pitch`'s `user_pitch_curve` goes
-        into `analyses.pitch_curve_json` the same way (spec 7, FR-31).
+        separate mapping table is needed. `pitch`'s `piano_roll` goes into
+        `analyses.pitch_curve_json` the same way (spec 7, FR-31), and
+        stage 11's `overall_score`/`feedback_text`/`scoring_version` go into
+        their own columns (spec 6.4, FR-32).
 
         `PipelineRunner` never does this itself: it stays agnostic of which
         stages happen to produce a score, so adding a stage there never
@@ -144,9 +149,19 @@ class AnalysisJobHandler:
                 self._analyses.save_aspect_score(analysis_id, aspect, float(result.data["score"]))
 
         pitch_result = record.stages.get("pitch")
-        if pitch_result is not None and "user_pitch_curve" in pitch_result.data:
-            curve = PitchCurve.model_validate(pitch_result.data["user_pitch_curve"])
-            self._analyses.save_pitch_curve(analysis_id, curve)
+        if pitch_result is not None and "piano_roll" in pitch_result.data:
+            piano_roll = PianoRollData.model_validate(pitch_result.data["piano_roll"])
+            self._analyses.save_piano_roll(analysis_id, piano_roll)
+
+        aggregate_result = record.stages.get("aggregate")
+        if aggregate_result is not None:
+            data = aggregate_result.data
+            self._analyses.save_scoring_result(
+                analysis_id,
+                overall_score=float(data["overall_score"]),
+                feedback_text=str(data["feedback_text"]),
+                scoring_version=str(data["scoring_version"]),
+            )
 
     def _build_context(self, analysis_id: str, user_id: str, song: SongRecord) -> AnalysisContext:
         return AnalysisContext(
