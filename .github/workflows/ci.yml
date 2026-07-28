@@ -274,6 +274,16 @@ jobs:
           image-ref: vocalcoach-worker:ci
           severity: CRITICAL,HIGH
           exit-code: "1"
+          # As of this writing every CRITICAL/HIGH finding in the base
+          # image (ffmpeg, glib, libxml2, perl, ...) has no Debian bookworm
+          # package build yet -- Trivy reports them as affected/
+          # fix_deferred/will_not_fix with an empty "Fixed Version", not
+          # something a dependency bump here can resolve. Blocking every
+          # merge on upstream's timeline defeats the scan's purpose;
+          # ignore-unfixed keeps it blocking on the CVEs it's actually
+          # possible to act on. Revisit if this ever needs finer-grained
+          # exceptions (a .trivyignore) instead of the blanket flag.
+          ignore-unfixed: "true"
 
   build-worker:
     runs-on: ubuntu-latest

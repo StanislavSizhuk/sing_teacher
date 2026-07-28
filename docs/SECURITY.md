@@ -223,12 +223,16 @@ that queue). Updated whenever the perimeter changes (spec 14.1).
 - CI runs `govulncheck`, `gosec`, and a Trivy image scan on the API,
   `npm audit --audit-level=high` on `web/`, and `pip-audit` plus a Trivy
   image scan on `worker/`, on every PR (`.github/workflows/ci.yml`);
-  critical/high findings fail the build. `react-router` is deliberately
-  not a `web/` dependency yet: every published 7.12+ release carries an
-  open high-severity CSRF advisory (RSC mode, which this app never
-  enables) that `npm audit` would flag regardless of reachability, and
-  older releases carry several unrelated ones instead -- see
-  `docs/ARCHITECTURE.md`.
+  critical/high findings with an available fix fail the build.
+  `worker/`'s Trivy step runs `--ignore-unfixed`: its base image
+  (`python:3.12-slim-bookworm`) carries OS-package CVEs Debian has not yet
+  shipped a patch for, and blocking every merge on an upstream timeline no
+  PR here can affect defeats the scan's purpose -- a fixable finding still
+  fails the build. `react-router` is deliberately not a `web/` dependency
+  yet: every published 7.12+ release carries an open high-severity CSRF
+  advisory (RSC mode, which this app never enables) that `npm audit` would
+  flag regardless of reachability, and older releases carry several
+  unrelated ones instead -- see `docs/ARCHITECTURE.md`.
 
 ## Not yet applicable
 

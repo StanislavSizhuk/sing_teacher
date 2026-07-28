@@ -101,7 +101,13 @@ check_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." (this directory, worker/) makes `from tests.conftest import ...` /
+# `from tests.helpers import ...` resolve `tests` as a package -- pytest's
+# default import mode only adds tests/ itself to sys.path (no
+# tests/__init__.py), not its parent. Worked locally under `python -m
+# pytest` only because `-m` itself prepends the cwd to sys.path; `uv run
+# pytest` (what CI actually runs) does not do that.
+pythonpath = ["src", "."]
 markers = [
     "integration: needs a real Postgres/Redis (CI runs these separately from unit tests)",
 ]
