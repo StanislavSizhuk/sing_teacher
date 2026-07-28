@@ -1,0 +1,21 @@
+@import 'tailwindcss';
+
+/* Minimalist black/white/gray palette (spec FR-40). Design tokens live only
+   here -- components use these Tailwind classes, never arbitrary values. */
+@theme {
+  --color-ink-950: #0a0a0a;
+  --color-ink-900: #171717;
+  --color-ink-700: #404040;
+  --color-ink-500: #737373;
+  --color-ink-300: #d4d4d4;
+  --color-ink-200: #e5e5e5;
+  --color-ink-100: #f5f5f5;
+  --color-ink-0: #ffffff;
+
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+}
+
+body {
+  @apply bg-ink-0 text-ink-950 antialiased;
+}
