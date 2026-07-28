@@ -1,10 +1,6 @@
 # AI Vocal Coach -- production stack (spec 5.3, 16.2).
 # Bring-up: from the repo root, `cp .env.example .env`, fill it in, then
 # `docker compose -f deploy/docker-compose.yml up -d`.
-#
-# python-worker is intentionally absent: it lands in stage E3 together with
-# worker/. Adding an empty service pointing at a Dockerfile that doesn't
-# exist yet would just break `up` for no benefit today.
 
 services:
   caddy:
@@ -74,6 +70,61 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  python-worker:
+    build:
+      context: ../worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    # NFR-07: worker peak RAM <= 6 GB (Demucs and Whisper are never
+    # resident together, spec 6.5); this is the enforced ceiling, not just
+    # a target -- an OOM here must not be able to take Postgres down with it.
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+    # Graceful shutdown finishes the current stage and saves progress
+    # before exiting (spec 10.1); 120s covers the slowest single stage
+    # (separate_reference, 300s timeout) with margin for a typical case.
+    stop_grace_period: 120s
+    tmpfs:
+      - /tmp
+    volumes:
+      - audio-tmp:/data/audio-tmp
+      - song-stems:/data/song-stems
+      - model-weights:/data/model-weights
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # No HTTP server to probe (spec 5.2: no public port) -- a background
+      # thread touches this file on an interval independent of job
+      # progress, so a multi-minute stage in flight is never mistaken for
+      # a hung process (worker.py's _heartbeat_loop).
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import pathlib,sys,time; p=pathlib.Path('/tmp/vocalcoach-worker-heartbeat'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime<30 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -160,3 +211,10 @@ volumes:
   caddy-data:
   caddy-config:
   audio-tmp:
+  # Separate from audio-tmp deliberately: audio-tmp is swept by age (FR-43,
+  # <=5min after processing), but a separated reference vocal stem is
+  # cached for as long as its song row exists (spec 6.6, 7.2).
+  song-stems:
+  # Demucs/Whisper weights, fetched once and reused across restarts so the
+  # worker never re-downloads them on every container start (spec 5.4).
+  model-weights:

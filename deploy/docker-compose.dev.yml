@@ -83,6 +83,29 @@ services:
       mailhog:
         condition: service_started
 
+  python-worker:
+    build:
+      context: ../worker
+      dockerfile: Dockerfile
+      target: dev
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      <<: *dev-env
+    volumes:
+      - ../worker:/src
+      - audio-tmp-dev:/data/audio-tmp
+      - song-stems-dev:/data/song-stems
+      - model-weights-dev:/data/model-weights
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres-dev-data:
   audio-tmp-dev:
+  song-stems-dev:
+  model-weights-dev:
