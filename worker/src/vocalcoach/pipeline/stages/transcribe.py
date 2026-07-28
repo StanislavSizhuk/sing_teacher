@@ -44,7 +44,13 @@ class TranscribeStage(PipelineStage):
 
         stem_path = Path(context.result("separate_reference").data["stem_path"])
         samples, sample_rate = read_mono(stem_path)
-        lyrics = self._transcriber.transcribe(samples, sample_rate)
+        try:
+            lyrics = self._transcriber.transcribe(samples, sample_rate)
+        finally:
+            # Whisper's memory footprint is exactly what spec 6.5 says must
+            # never coexist with Demucs'; release it as soon as this stage
+            # is done rather than waiting for process exit.
+            self._transcriber.release()
         self._songs.save_lyrics(context.song_id, lyrics)
 
         return StageResult(

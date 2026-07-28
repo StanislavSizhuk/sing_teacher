@@ -56,7 +56,13 @@ class SeparateReferenceStage(PipelineStage):
         sample_rate = int(preprocess["sample_rate_hz"])
 
         mixture, _sample_rate = read_mono(reference_path)
-        vocals = self._separator.separate_vocals(mixture, sample_rate)
+        try:
+            vocals = self._separator.separate_vocals(mixture, sample_rate)
+        finally:
+            # Demucs' memory footprint is exactly what spec 6.5 says must
+            # never coexist with Whisper's; release it the moment this
+            # stage is done with it rather than waiting for process exit.
+            self._separator.release()
         normalized, raw_loudness = measure_and_normalize(vocals, sample_rate, TARGET_LOUDNESS_LUFS)
 
         if raw_loudness < MIN_VOCAL_LOUDNESS_LUFS:

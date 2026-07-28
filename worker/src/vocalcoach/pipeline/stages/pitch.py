@@ -66,8 +66,12 @@ class PitchStage(PipelineStage):
         preprocess = context.result("preprocess").data
         sample_rate = int(preprocess["sample_rate_hz"])
 
-        user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
-        user_hz = self._detector.detect(user_samples, sample_rate, PITCH_HOP_SECONDS)
+        try:
+            user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
+            user_hz = self._detector.detect(user_samples, sample_rate, PITCH_HOP_SECONDS)
+            reference_curve = self._reference_pitch_curve(context, sample_rate)
+        finally:
+            self._detector.release()
 
         voiced_fraction = _voiced_fraction(user_hz)
         if voiced_fraction < MIN_VOICED_FRACTION:
@@ -75,8 +79,6 @@ class PitchStage(PipelineStage):
                 f"only {voiced_fraction:.1%} of the recording is voiced, "
                 f"below the {MIN_VOICED_FRACTION:.0%} floor"
             )
-
-        reference_curve = self._reference_pitch_curve(context, sample_rate)
 
         time_map = TimeMap.from_align_stage_data(context.result("align").data)
         deviations = _cents_deviations(user_hz, reference_curve.hz, time_map)

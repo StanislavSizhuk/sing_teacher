@@ -7,6 +7,21 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def song_source_path(audio_storage_dir: Path, song_id: str) -> Path:
+    """Where the Go API wrote the song's canonical upload (`service/song`,
+    `filePrefix = "song"`) -- the worker only ever reads this file.
+    """
+    return audio_storage_dir / f"song-{song_id}.wav"
+
+
+def recording_source_path(audio_storage_dir: Path, analysis_id: str) -> Path:
+    """Where the Go API wrote the user's canonical recording
+    (`service/analysis`, `filePrefix = "analysis"`) -- the worker only ever
+    reads this file.
+    """
+    return audio_storage_dir / f"analysis-{analysis_id}.wav"
+
+
 def song_stem_path(song_stems_dir: Path, song_id: str) -> Path:
     """Where the reference song's separated vocal stem is cached (spec 6.6),
     stable across every analysis of that song.
