@@ -1,7 +1,7 @@
 # Onboarding
 
 Getting productive on this project from zero, in about a day. Updated once
-per stage (spec 14.1) -- this revision covers E1-E3.
+per stage (spec 14.1) -- this revision covers E1-E4.
 
 ## 1. Read, in order (30-45 min)
 
@@ -74,11 +74,9 @@ in `repositories/interfaces.py`.
 
 ## 5. What doesn't exist yet
 
-Stage 11 -- the weighted aggregation of the six aspect scores into
-`overall_score`, the text report, `scoring_version` stamping -- and the
-piano-roll UI are E4. Stages 1-10 already compute and persist everything
-E4 needs (`docs/ML_PIPELINE.md`); `web/` has no results/report screen yet
-to show it. No progress chart either (E5), and `web/` isn't wired into
-Caddy/compose for production -- it runs as its own dev server. Google
-sign-in has a working backend flow but no button/redirect target in
-`web/`. Check `tech.md` section 18 for what each stage adds.
+History with pagination (FR-34) and the progress-over-time chart (FR-35,
+G4) are E5, along with the adaptive/mobile UI pass and a WCAG AA audit.
+`web/` isn't wired into Caddy/compose for production either -- it runs as
+its own dev server; that's deploy/CD work (E6). Google sign-in has a
+working backend flow but no button/redirect target in `web/`. Check
+`tech.md` section 18 for what each stage adds.

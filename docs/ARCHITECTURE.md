@@ -1,8 +1,8 @@
 # Architecture
 
-Status: reflects stages E1-E3, including `web/`. Components and flows
-planned for later stages (score aggregation, the report, piano-roll, Caddy
-serving the built SPA) are noted as such, not described as if they existed.
+Status: reflects stages E1-E4, including `web/`. Components and flows
+planned for later stages (Caddy serving the built SPA, Google sign-in UI,
+progress history) are noted as such, not described as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -256,10 +256,6 @@ applied with `goose`) -- there is no separate migrate step or container.
 
 ## Not yet built
 
-- Stage 11 (weighted score aggregation into `overall_score`, the text
-  report, `scoring_version` stamping) and the piano-roll UI -- E4. Stages
-  1-10 already compute and persist all six aspect scores and the pitch
-  curve (`docs/ML_PIPELINE.md`); E4 combines them.
 - Caddy serving the built `web/` static output from the same origin as
   `go-api` (spec 5.2's target end-state). `web/` currently runs as its own
   Vite dev server pointed at `go-api` directly; wiring it into
@@ -268,9 +264,10 @@ applied with `goose`) -- there is no separate migrate step or container.
 - Google sign-in has no button/redirect target in `web/` yet -- the backend
   flow (`/auth/google`, `/auth/google/callback`) is E1 work with no E2 UI on
   top of it.
-- `web/`'s results/report screen -- there is no score/report data to show
-  until E4 builds stage 11; `QueueStatus.tsx` shows `current_stage` and
-  terminal status only.
+- History with pagination (FR-34) and the progress-over-time chart
+  (FR-35, G4) -- E5 scope. `QueueStatus.tsx` only shows the most recent
+  analysis it just submitted; there is no `GET /analyses` (history) or
+  `GET /progress` screen yet.
 
 ## Audio retention (spec 7.2, FR-43)
 

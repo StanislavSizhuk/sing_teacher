@@ -66,3 +66,28 @@ against real singing (spec 19 already expects this). Never run against
 real Demucs/Whisper inference end-to-end here (weight-download cost);
 tests fake those two stages by design (spec 15.2) -- worth a manual smoke
 test on real hardware before E4.
+
+## 2026-07-29 -- E4
+
+**Done:** Stage 11 (`aggregate`) weighted-sums the six aspect scores into
+`overall_score` and builds the FR-32 text report from the same stage
+data, both persisted alongside `scoring_version`. Pitch stage now also
+resamples the reference curve onto the user's time grid and precomputes
+per-frame cents deviation + an off-pitch flag (FR-31). `go-api` exposes
+all of it (aspect scores, report, piano-roll) on the existing analysis
+endpoints. `web/` shows the score breakdown and a canvas piano-roll whose
+cursor tracks the recording's own playback (FR-33), played back from the
+client-side Blob since the server deletes the file within minutes
+(FR-43). New worker/Go/web tests all green; CI unchanged (still no CD).
+
+**Next:** E5 -- history with pagination (FR-34), the progress-over-time
+chart (FR-35), and the adaptive/mobile UI + WCAG AA pass.
+
+**Blockers:** none.
+
+**Risks:** the feedback-tier thresholds and the off-pitch cents threshold
+are starting values, uncalibrated against real singers, same caveat as
+E3's own thresholds. The report text is English-only and does not route
+through the i18n system yet (FR-41) -- deferred, see
+`docs/ML_PIPELINE.md`. Spec 6.9's non-vocal-energy warning still has no
+owning stage.

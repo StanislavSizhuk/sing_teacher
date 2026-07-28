@@ -4,12 +4,13 @@ A web app that compares a user's singing to the original vocal of a song and
 reports pitch, rhythm, vibrato, breathing, dynamics and timbre. Analysis runs
 offline, not in real time.
 
-**Status:** stages E1-E3 (auth, DB schema, song upload/YouTube import, the
-analysis job queue with live WebSocket status updates, a web UI covering
-all of that, and the Python ML pipeline: Demucs separation, Whisper
-transcription, DTW alignment, and pitch/rhythm/vibrato/dynamics/timbre/
-breath scoring). Score aggregation, the text report and the piano-roll UI
-land in stage E4 -- see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+**Status:** stages E1-E4 (auth, DB schema, song upload/YouTube import, the
+analysis job queue with live WebSocket status updates, the Python ML
+pipeline -- Demucs separation, Whisper transcription, DTW alignment,
+pitch/rhythm/vibrato/dynamics/timbre/breath scoring, weighted score
+aggregation and a text report -- and a web UI covering all of that,
+including a synced piano-roll). Progress history and the adaptive UI pass
+land in stage E5 -- see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md).
 
 ## Quick start
