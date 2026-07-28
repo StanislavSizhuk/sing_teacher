@@ -102,3 +102,74 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build go-api image
         run: docker build -t vocalcoach-api:ci .
+
+  lint-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: tsc --noEmit
+        run: npm run typecheck
+      - name: eslint
+        run: npm run lint
+      - name: prettier
+        run: npm run format
+      - name: openapi.yaml -> src/api/schema.gen.ts is up to date
+        run: |
+          npm run generate:api
+          npx prettier --write src/api/schema.gen.ts
+          git diff --exit-code -- src/api/schema.gen.ts
+
+  test-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  security-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+  build-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build
