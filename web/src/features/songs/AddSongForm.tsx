@@ -104,6 +104,10 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
         </>
       ) : (
         <>
+          <p className="border-ink-300 bg-ink-100 text-ink-700 rounded border px-3 py-2 text-xs">
+            For personal, non-commercial use only. Downloading audio from YouTube may conflict with
+            its Terms of Service and the rights of the song's owner.
+          </p>
           <TextField
             label="YouTube URL"
             type="url"
