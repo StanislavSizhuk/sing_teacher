@@ -121,9 +121,7 @@ def run() -> None:
     consumer.install_signal_handlers()
 
     heartbeat_stop = threading.Event()
-    heartbeat_thread = threading.Thread(
-        target=_heartbeat_loop, args=(heartbeat_stop,), daemon=True
-    )
+    heartbeat_thread = threading.Thread(target=_heartbeat_loop, args=(heartbeat_stop,), daemon=True)
     heartbeat_thread.start()
 
     try:

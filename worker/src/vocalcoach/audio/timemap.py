@@ -22,9 +22,7 @@ class TimeMap:
     reference_times: np.ndarray
 
     @classmethod
-    def from_warping_path(
-        cls, index1: list[int], index2: list[int], hop_seconds: float
-    ) -> TimeMap:
+    def from_warping_path(cls, index1: list[int], index2: list[int], hop_seconds: float) -> TimeMap:
         return cls(
             user_times=np.asarray(index1, dtype=np.float64) * hop_seconds,
             reference_times=np.asarray(index2, dtype=np.float64) * hop_seconds,

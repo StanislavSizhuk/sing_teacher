@@ -63,9 +63,7 @@ class TimbreStage(PipelineStage):
         last_index = len(reference_mfcc) - 1
         for i, user_vector in enumerate(user_mfcc):
             reference_time = time_map.user_to_reference(i * ENVELOPE_HOP_SECONDS)
-            reference_index = min(
-                max(round(reference_time / ENVELOPE_HOP_SECONDS), 0), last_index
-            )
+            reference_index = min(max(round(reference_time / ENVELOPE_HOP_SECONDS), 0), last_index)
             similarities.append(_cosine_similarity(user_vector, reference_mfcc[reference_index]))
 
         mean_similarity = sum(similarities) / len(similarities) if similarities else 0.0

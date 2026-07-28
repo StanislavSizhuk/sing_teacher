@@ -33,6 +33,7 @@ class JobHandler(Protocol):
 
     def mark_permanently_failed(self, analysis_id: str) -> None: ...
 
+
 STREAM_NAME = "analyses:queue"
 GROUP_NAME = "analyses:workers"
 BLOCK_MS = 5000
