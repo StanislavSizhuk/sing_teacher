@@ -436,10 +436,17 @@ paths:
       description: >
         Upgrades to a WebSocket. The client's first message must be
         `{"token": "<access_token>"}` (never a query parameter, so it never
-        lands in proxy logs); the server then pushes `{"type": "queued",
-        "position": N}` on every queue change. WebSocket is a status-only
-        transport -- the final result is always read back over REST
-        (fallback to polling GET /analyses/{id} if the socket drops).
+        lands in proxy logs); the server then pushes one JSON event per
+        status change, each with a `type` field: `{"type": "queued",
+        "position": N}` while queued; `{"type": "stage", "name": "pitch",
+        "index": 5, "total": 10}` once the E3 worker picks the job up, one
+        push per stage started; `{"type": "done", "analysis_id": "..."}` on
+        success; `{"type": "failed", "error_code": "...", "message": "..."}`
+        on failure (spec 6.8 error codes). `stage`/`done`/`failed` events
+        are relayed from the worker over Redis Pub/Sub (ADR-0010) and are
+        best-effort -- WebSocket is a status-only transport, the final
+        result is always read back over REST (fallback to polling
+        GET /analyses/{id} if the socket drops or an event is missed).
       tags: [analyses]
       security:
         - bearerAuth: []

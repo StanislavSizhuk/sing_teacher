@@ -170,6 +170,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	hub := ws.NewHub()
 	accessParser := security.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
 	wsHandler := ws.NewHandler(hub, analysisSvc, accessParser, cfg.CORSOrigin)
+	go relayWorkerEvents(ctx, redisClient, hub, logger)
 
 	handler := httptransport.NewHandler(svc, logger, cfg.CookieSecure, cfg.AppBaseURL.String(),
 		cfg.Auth.AccessTokenTTL, cfg.Auth.RefreshTokenTTL)
@@ -279,6 +280,16 @@ func buildSongAndAnalysisServices(
 		cfg.Limits.MaxUploadBytes, cfg.Limits.MaxAudioSeconds, cfg.Limits.QueueMaxLength)
 
 	return songSvc, analysisSvc
+}
+
+// relayWorkerEvents forwards the E3 worker's live stage/done/failed events
+// (spec 8.3, ADR-0010) into the WS hub until ctx is canceled. Runs for the
+// life of the process; a relay error is logged, never fatal -- REST stays
+// the fallback of record regardless (spec 8.3).
+func relayWorkerEvents(ctx context.Context, redisClient *redis.Client, hub *ws.Hub, logger *slog.Logger) {
+	if err := queue.RelayEvents(ctx, redisClient, hub, logger); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Error("worker event relay stopped", "error", err.Error())
+	}
 }
 
 // runAudioSweepTicker drives the interim audio-retention safety net (FR-43)
