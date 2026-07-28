@@ -43,3 +43,26 @@ from the interim age-based sweep to real processing completion.
 Vite dev server pointed at go-api directly; that's deploy/CD work. Google
 sign-in has no UI yet. YouTube import untested against the real service (no
 live network calls in tests, by design) -- worth a manual smoke test.
+
+## 2026-07-28 -- E3
+
+**Done:** Python ML worker, 10 stages (Demucs, Whisper, DTW align, pitch/
+rhythm/vibrato/dynamics/timbre/breath), each its own child process for a
+real per-stage timeout and Demucs/Whisper never resident together
+(ADR-0012). Redis Streams consumer with reclaim/give-up (spec 10.1),
+Postgres repositories, Redis Pub/Sub relay into `go-api`'s WS channel
+(ADR-0010). Retry (FR-26) reachable end-to-end for the first time. 68
+Python tests + 8 new Go tests, all green; CI gained worker jobs. 3 new
+ADRs, `docs/ML_PIPELINE.md`.
+
+**Next:** E4 -- stage 11 (weighted `overall_score`, `scoring_version`), the
+text report, piano-roll UI.
+
+**Blockers:** none.
+
+**Risks:** every empirical threshold (alignment ceiling, vibrato/breath
+detection, quiet-reference floor) is a starting value, not one calibrated
+against real singing (spec 19 already expects this). Never run against
+real Demucs/Whisper inference end-to-end here (weight-download cost);
+tests fake those two stages by design (spec 15.2) -- worth a manual smoke
+test on real hardware before E4.

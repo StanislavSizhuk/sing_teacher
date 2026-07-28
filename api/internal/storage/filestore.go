@@ -1,7 +1,8 @@
 // Package storage persists audio files under a server-generated path,
-// never a user-supplied filename (spec 11.3), and provides the interim
-// time-based deletion safety net for spec 7.2/FR-43 until stage E3's worker
-// ties deletion to actual processing completion.
+// never a user-supplied filename (spec 11.3), and provides an orphaned-file
+// safety net (Sweep) -- the E3 worker is what actually enforces spec
+// 7.2/FR-43's "<=5 min after processing ends" by deleting a file the
+// moment it's done with it.
 package storage
 
 import (
@@ -17,7 +18,7 @@ import (
 )
 
 // FileStore reads and writes audio under one directory, shared with the
-// (future, E3) ML worker via a Docker volume (spec 5.2 "audio-tmp").
+// E3 ML worker via a Docker volume (spec 5.2 "audio-tmp").
 type FileStore struct {
 	dir string
 }
@@ -70,10 +71,10 @@ func (s *FileStore) Remove(path string) error {
 }
 
 // Sweep deletes every file directly under the store older than maxAge and
-// reports how many were removed (spec 7.2, FR-43: audio deleted no later
-// than 5 minutes after processing ends). This stage has no worker yet to
-// signal "processing ended", so age-since-write is used as an interim,
-// conservative stand-in.
+// reports how many were removed -- an orphan safety net (main.go's
+// orphanedAudioMaxAge), not the primary enforcement of spec 7.2/FR-43's
+// retention window, which the E3 worker satisfies directly by deleting a
+// file precisely when it's done with it.
 func (s *FileStore) Sweep(maxAge time.Duration) (removed int, err error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {

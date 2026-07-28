@@ -173,3 +173,126 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  lint-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.33"
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - run: uv sync --all-groups
+      - name: ruff check
+        run: uv run ruff check .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: mypy --strict
+        run: uv run mypy .
+
+  test-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: vocalcoach
+          POSTGRES_USER: vocalcoach
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vocalcoach -d vocalcoach"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+      - name: Apply migrations (schema the worker's repositories read/write)
+        working-directory: api
+        run: |
+          go run github.com/pressly/goose/v3/cmd/goose@v3.27.3 postgres \
+            "host=localhost port=5432 dbname=vocalcoach user=vocalcoach password=testpass sslmode=disable" \
+            -dir migrations up
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.33"
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - run: uv sync --all-groups
+      - name: Unit tests
+        run: uv run pytest -m "not integration"
+      - name: Integration tests (real Postgres/Redis)
+        env:
+          TEST_POSTGRES_HOST: localhost
+          TEST_POSTGRES_PORT: "5432"
+          TEST_POSTGRES_DB: vocalcoach
+          TEST_POSTGRES_USER: vocalcoach
+          TEST_POSTGRES_PASSWORD: testpass
+          TEST_REDIS_HOST: localhost
+          TEST_REDIS_PORT: "6379"
+          TEST_REDIS_PASSWORD: ""
+        run: uv run pytest -m integration
+
+  security-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.33"
+          enable-cache: true
+          cache-dependency-glob: worker/uv.lock
+      - run: uv sync --all-groups
+      - name: pip-audit
+        run: uv run --with pip-audit pip-audit
+      - name: Build image for scanning
+        run: docker build -t vocalcoach-worker:ci .
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: vocalcoach-worker:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          # worker/Dockerfile pins Debian trixie specifically because it
+          # trails fewer unpatched CVEs than bookworm, but even trixie's
+          # base packages (ffmpeg, glib, libxml2, perl, ...) still have
+          # some CRITICAL/HIGH findings with no Debian package build yet
+          # as of this writing -- Trivy reports them as affected/
+          # fix_deferred/will_not_fix with an empty "Fixed Version", not
+          # something a dependency bump here can resolve. Blocking every
+          # merge on upstream's timeline defeats the scan's purpose;
+          # ignore-unfixed keeps it blocking on the CVEs it's actually
+          # possible to act on. Revisit if this ever needs finer-grained
+          # exceptions (a .trivyignore) instead of the blanket flag.
+          ignore-unfixed: "true"
+
+  build-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build python-worker image
+        run: docker build -t vocalcoach-worker:ci .
