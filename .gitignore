@@ -10,13 +10,15 @@ api/coverage.out
 api/coverage.html
 api/tmp/
 
-# python (worker, future stages)
+# python (worker)
 worker/.venv/
-worker/__pycache__/
-worker/*.pyc
+worker/**/__pycache__/
+worker/**/*.pyc
 worker/.pytest_cache/
 worker/.mypy_cache/
 worker/.ruff_cache/
+worker/.coverage
+worker/htmlcov/
 
 # node (web, future stages)
 web/node_modules/
