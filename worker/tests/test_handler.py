@@ -7,7 +7,9 @@ import pytest
 
 from vocalcoach.config import load_settings
 from vocalcoach.errors import NoVoiceDetected
+from vocalcoach.models.audio import PitchCurve
 from vocalcoach.models.records import AnalysisRecord, SongRecord
+from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.runner import RunOutcome
 from vocalcoach.queue.handler import AnalysisJobHandler
 
@@ -30,9 +32,17 @@ class FakeAnalysisRepo:
         self._record = record
         self.marked_done: list[tuple[str, dict[str, Any]]] = []
         self.marked_failed: list[tuple[str, str]] = []
+        self.saved_scores: list[tuple[str, str, float]] = []
+        self.saved_pitch_curves: list[tuple[str, PitchCurve]] = []
 
     def get_by_id(self, analysis_id):
         return self._record
+
+    def save_aspect_score(self, analysis_id, aspect, score):
+        self.saved_scores.append((analysis_id, aspect, score))
+
+    def save_pitch_curve(self, analysis_id, curve):
+        self.saved_pitch_curves.append((analysis_id, curve))
 
     def mark_done(self, analysis_id, model_versions):
         self.marked_done.append((analysis_id, model_versions))
@@ -106,6 +116,42 @@ def test_handle_success_deletes_recording_and_cached_song_source(settings, tmp_p
     assert events.done == ["a1"]
     assert not recording_path.exists()  # FR-43: done -> recording deleted now
     assert not song_path.exists()  # already cached -> original upload no longer needed
+
+
+def test_handle_success_denormalizes_scores_and_pitch_curve(settings, tmp_path: Path) -> None:
+    curve = PitchCurve(hop_seconds=0.01, hz=[440.0, None, 441.5])
+    stages = {
+        "pitch": StageResult(
+            stage="pitch",
+            status=StageStatus.DONE,
+            duration_ms=1,
+            data={"score": 87.5, "user_pitch_curve": curve.model_dump(mode="json")},
+        ),
+        "rhythm": StageResult(
+            stage="rhythm", status=StageStatus.DONE, duration_ms=1, data={"score": 91.0}
+        ),
+        # Not every stage necessarily carries a "score" key -- must not crash on one that doesn't.
+        "align": StageResult(stage="align", status=StageStatus.DONE, duration_ms=1, data={}),
+    }
+    analysis = AnalysisRecord(
+        id="a5", user_id="u1", song_id="s1", status="processing", stages=stages
+    )
+    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=True)
+    runner = FakeRunner(outcome=RunOutcome.COMPLETED)
+    analyses = FakeAnalysisRepo(analysis)
+    handler = AnalysisJobHandler(runner, analyses, FakeSongRepo(song), FakeEvents(), settings, {})
+    _touch(settings.audio_storage_dir / "analysis-a5.wav")
+    _touch(settings.audio_storage_dir / "song-s1.wav")
+
+    handler.handle("a5", should_stop=lambda: False)
+
+    assert ("a5", "pitch", 87.5) in analyses.saved_scores
+    assert ("a5", "rhythm", 91.0) in analyses.saved_scores
+    assert len(analyses.saved_scores) == 2  # "align" has no "score" key, nothing else does either
+    assert analyses.saved_pitch_curves == [("a5", curve)]
+    # Score persistence must happen before mark_done, not after -- a reader
+    # that sees status="done" should already find every score in place.
+    assert analyses.marked_done == [("a5", {})]
 
 
 def test_handle_failure_keeps_recording_for_retry(settings, tmp_path: Path) -> None:

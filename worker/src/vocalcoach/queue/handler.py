@@ -11,8 +11,9 @@ from collections.abc import Callable
 from typing import Protocol
 
 from vocalcoach.audio.paths import analysis_work_dir, recording_source_path, song_source_path
-from vocalcoach.config import Settings
+from vocalcoach.config import ASPECTS, Settings
 from vocalcoach.errors import PipelineError
+from vocalcoach.models.audio import PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
@@ -37,11 +38,15 @@ class Runner(Protocol):
 
 class HandlerAnalysisRepository(Protocol):
     """The narrow slice of `AnalysisRepository` the handler needs: reading
-    a job's current state and recording its terminal outcome. Per-stage
-    progress is `PipelineRunner`'s own concern (`RunnerAnalysisRepository`).
+    a job's current state, denormalizing each aspect stage's score out of
+    `stages_json` into its own column once the run completes, and recording
+    the terminal outcome. Per-stage progress is `PipelineRunner`'s own
+    concern (`RunnerAnalysisRepository`).
     """
 
     def get_by_id(self, analysis_id: str) -> AnalysisRecord: ...
+    def save_aspect_score(self, analysis_id: str, aspect: str, score: float) -> None: ...
+    def save_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None: ...
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None: ...
     def mark_failed(self, analysis_id: str, error_code: str) -> None: ...
 
@@ -103,6 +108,7 @@ class AnalysisJobHandler:
         if outcome is RunOutcome.INTERRUPTED:
             return False
 
+        self._persist_scores(analysis_id)
         self._analyses.mark_done(analysis_id, self._model_versions)
         self._events.publish_done(analysis_id)
         self._cleanup(context, recording_done=True)
@@ -118,6 +124,29 @@ class AnalysisJobHandler:
         self._events.publish_failed(
             analysis_id, "INTERNAL", "worker repeatedly failed to process this job"
         )
+
+    def _persist_scores(self, analysis_id: str) -> None:
+        """Denormalizes each aspect stage's `data["score"]` out of
+        `stages_json` into its own column (`analyses.pitch_score`, etc.) --
+        stage names equal `config.ASPECTS` exactly by construction, so no
+        separate mapping table is needed. `pitch`'s `user_pitch_curve` goes
+        into `analyses.pitch_curve_json` the same way (spec 7, FR-31).
+
+        `PipelineRunner` never does this itself: it stays agnostic of which
+        stages happen to produce a score, so adding a stage there never
+        needs a runner change (spec 12.3 Open/Closed) -- this is where that
+        stage-specific knowledge is allowed to live instead.
+        """
+        record = self._analyses.get_by_id(analysis_id)
+        for aspect in ASPECTS:
+            result = record.stages.get(aspect)
+            if result is not None and "score" in result.data:
+                self._analyses.save_aspect_score(analysis_id, aspect, float(result.data["score"]))
+
+        pitch_result = record.stages.get("pitch")
+        if pitch_result is not None and "user_pitch_curve" in pitch_result.data:
+            curve = PitchCurve.model_validate(pitch_result.data["user_pitch_curve"])
+            self._analyses.save_pitch_curve(analysis_id, curve)
 
     def _build_context(self, analysis_id: str, user_id: str, song: SongRecord) -> AnalysisContext:
         return AnalysisContext(
