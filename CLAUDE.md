@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Working rules for this repository. Extracted from `TZ_AI_Vocal_Coach_v1.0.md`
+Working rules for this repository. Extracted from `tech.md`
 (sections 5, 7, 11, 12, 13, 14, 15). The spec wins on any conflict; section
 numbers are given so the source can be checked.
 
