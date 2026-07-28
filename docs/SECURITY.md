@@ -56,8 +56,10 @@ Out of scope for E2 (nothing to attack yet): the ML pipeline itself
   `music.youtube.com`, `youtu.be`) with an exact (not suffix) match, so
   `youtube.com.evil.example` is rejected -- yt-dlp itself understands
   hundreds of sites, and without this allowlist the import endpoint would be
-  a generic URL-fetch oracle. A UI disclaimer before first use (spec 11.4)
-  is not yet applicable -- there is no UI until `web/` lands (E5).
+  a generic URL-fetch oracle. `web/`'s YouTube tab shows the spec-11.4
+  disclaimer before the URL field, every time that tab is selected (not
+  just once) -- the feature flag defaulting off in production is the real
+  control; the disclaimer is belt-and-suspenders for when it's on.
 - **Memory limit on external processes** is enforced at the container/cgroup
   level (`deploy.resources.limits.memory: 512M` on `go-api`, covering the Go
   process and any spawned `ffmpeg`/`yt-dlp` child), not a per-process
@@ -132,7 +134,10 @@ Out of scope for E2 (nothing to attack yet): the ML pipeline itself
 - HSTS, CSP, `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
   `Permissions-Policy: microphone=(self)` are set once, at Caddy
   (`deploy/Caddyfile`) -- not duplicated in go-api, since Caddy is the only
-  internet-facing hop and will also serve the static frontend once it exists.
+  internet-facing hop and will also serve `web/`'s static build once that
+  wiring lands (see `docs/ARCHITECTURE.md`'s "Not yet built"). In the
+  meantime `web/` runs as its own Vite dev server with no production
+  deployment path yet, so these headers don't apply to it in practice.
 - CORS is enforced in go-api (`CORS_ALLOWED_ORIGIN`), not Caddy: it is
   request/response negotiation tied to the API's own cookie policy, not a
   generic perimeter header.
@@ -152,14 +157,19 @@ Out of scope for E2 (nothing to attack yet): the ML pipeline itself
 
 ## Dependencies
 
-- Go module versions are locked via `go.sum`.
+- Go module versions are locked via `go.sum`; `web/` dependencies via
+  `package-lock.json`.
 - `ffmpeg`/`yt-dlp` are pinned to exact `apk` package versions in the
   production runtime image, not just an unpinned `apk add` (ADR-0007).
-- CI runs `govulncheck`, `gosec`, and a Trivy image scan on every PR
+- CI runs `govulncheck`, `gosec`, and a Trivy image scan on the API, and
+  `npm audit --audit-level=high` on `web/`, on every PR
   (`.github/workflows/ci.yml`); critical/high findings fail the build.
+  `react-router` is deliberately not a `web/` dependency yet: every
+  published 7.12+ release carries an open high-severity CSRF advisory
+  (RSC mode, which this app never enables) that `npm audit` would flag
+  regardless of reachability, and older releases carry several
+  unrelated ones instead -- see `docs/ARCHITECTURE.md`.
 
 ## Not yet applicable
 
-- The YouTube import UI disclaimer (spec 11.4) -- no UI exists until `web/`
-  lands (E5); the feature flag defaults off in production in the meantime.
 - Everything in the (not yet built) ML pipeline's own threat surface -- E3.

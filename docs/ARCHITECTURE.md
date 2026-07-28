@@ -1,8 +1,8 @@
 # Architecture
 
-Status: reflects stages E1-E2. Components and flows planned for later
-stages (ML pipeline, frontend) are noted as such, not described as if
-they existed.
+Status: reflects stages E1-E2, including `web/`. Components and flows
+planned for later stages (the ML pipeline, Caddy serving the built SPA) are
+noted as such, not described as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -31,10 +31,13 @@ they existed.
 ```
 
 Built in E1: `caddy`, `go-api` (auth), `postgres`, `redis`, `backup`. Built
-in E2: song upload/YouTube import, the Redis Streams job queue, and the
-WebSocket status channel -- all in `go-api`, since `python-worker` does not
-exist yet. `python-worker` itself, and everything in `docs/ML_PIPELINE.md`,
-land in E3.
+in E2: song upload/YouTube import, the Redis Streams job queue, the
+WebSocket status channel (all in `go-api`, since `python-worker` does not
+exist yet), and `web/`, the React SPA that exercises all of it. `web/` runs
+as its own Vite dev server for now (`npm run dev`, talking to `go-api`
+directly); Caddy serving the built static SPA from the same origin as the
+API is still open -- see "Not yet built". `python-worker` itself, and
+everything in `docs/ML_PIPELINE.md`, land in E3.
 
 ## go-api internal layers
 
@@ -59,9 +62,13 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
   never re-downloads.
 - `service/analysis`: `Enqueue` validates the recording the same way, then
   creates the analysis row, publishes it to the Redis Streams queue, and
-  recomputes every queued job's position (spec 10, FR-22). `Cancel` does the
-  same recompute after removing a job. Retry (FR-26) is not implemented
-  yet -- nothing can produce a `failed` analysis without the E3 worker.
+  recomputes every queued job's position (spec 10, FR-22). `Cancel` and
+  `Retry` (FR-25, FR-26) both do the same recompute after changing one job's
+  state. `Retry` moves a `failed` job back to `queued` at the back of the
+  FIFO (a fresh `queue_seq` from the same Postgres sequence `Create` uses)
+  without touching the stored recording -- built and unit-tested now even
+  though nothing can produce a `failed` analysis end-to-end until the E3
+  worker exists.
 - `repository/postgres`: `UserRepository`, `SongRepository` (dedup via
   `GetOrCreate`), `AnalysisRepository` (ownership-scoped `GetByID`/`Cancel`,
   and `RecalculatePositions`, a single `ROW_NUMBER()` query that reassigns
@@ -111,6 +118,39 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
    (spec 8.3).
 4. `POST /analyses/{id}/cancel` (FR-25) is the only way an analysis leaves
    the queue in this stage -- there is no worker yet to pick jobs up.
+   `POST /analyses/{id}/retry` (FR-26) exists at the API layer for the same
+   reason `Retry` does in the service (see above): nothing reaches `failed`
+   without E3, so this path is unit-tested but not reachable end-to-end yet.
+
+## Web app (E2)
+
+`web/` is a React 19 + TypeScript (`strict: true`) + Tailwind v4 SPA built
+with Vite. One network layer per spec 12.4: `src/api/schema.gen.ts` is
+generated from `api/openapi.yaml` (`npm run generate:api`, checked for
+drift in CI), consumed through `openapi-fetch`; `src/api/client.ts` wraps
+that in the only place the app touches the raw client -- it injects the
+bearer token, retries once after a silent `/auth/refresh` on `401`
+(concurrent 401s share one in-flight refresh), and turns RFC 9457
+`problem+json` bodies into a typed `ApiError`. Server state lives in
+TanStack Query; the access token lives in a small module-level store
+outside React (`sessionStore.ts`, read via `useSyncExternalStore`) because
+the network layer needs synchronous access to it outside any component
+tree -- the one exception spec 12.4 allows without an ADR.
+
+`features/analysis/QueueStatus.tsx` follows spec 8.3 exactly: a REST poll
+(`useAnalysisStatus`, stopping once the job is terminal) is the source of
+truth and fallback transport; `useAnalysisQueueSocket` layers a WebSocket
+with capped exponential-backoff reconnect on top purely for low-latency
+position pushes -- if it never connects, the poll alone keeps the UI
+correct. `features/analysis/useMediaRecorder.ts` wraps `MediaRecorder`
+for FR-20 (record/preview/re-record) with an upload fallback for FR-21.
+
+`react-router` is deliberately not a dependency (ADR-0009): every published
+7.12+ release has an open high-severity CSRF advisory in its RSC mode
+(which this app doesn't use), and pre-7.12 releases carry several older
+ones. E2's screen count is small enough that plain component state covers
+the whole flow (auth -> add song -> record -> queue); revisit once more
+screens need real URL routing.
 
 ## Why Redis for sessions, not just Postgres
 
@@ -140,8 +180,9 @@ descended from that login (spec 9.1's reuse detection).
 Linking Google to an existing email+password account only happens when
 Google itself reports that email as verified. The callback sets the refresh
 cookie and redirects to `APP_BASE_URL`; it never puts a token in a URL. The
-SPA (once `web/` exists) mints its first access token by calling
-`/auth/refresh` on load.
+SPA mints its first access token by calling `/auth/refresh` on load
+(`restoreSession` in `web/src/api/client.ts`) -- the email+password path is
+wired up in `web/`; the Google button/redirect target is not built yet.
 
 ## Deployment boundary
 
@@ -153,12 +194,19 @@ applied with `goose`) -- there is no separate migrate step or container.
 ## Not yet built
 
 - `worker/` (Python ML pipeline) -- E3. Nothing consumes the Redis Streams
-  queue yet; jobs stay `queued` until canceled. `songs.vocal_stem_processed`
-  stays `false` forever until E3 sets it.
-- `web/` (React frontend, including the MediaRecorder-based browser
-  recording UI, FR-20) -- E5.
-- Retry (FR-26) -- deferred until E3, since nothing can produce a `failed`
-  analysis without a worker to fail.
+  queue yet; jobs stay `queued` until canceled or retried.
+  `songs.vocal_stem_processed` stays `false` forever until E3 sets it.
+- Retry (FR-26) is implemented end-to-end in the code (API + `web/`) but not
+  reachable in a running system, since nothing can produce a `failed`
+  analysis without the E3 worker.
+- Caddy serving the built `web/` static output from the same origin as
+  `go-api` (spec 5.2's target end-state). `web/` currently runs as its own
+  Vite dev server pointed at `go-api` directly; wiring it into
+  `deploy/docker-compose*.yml` and the `Caddyfile` is deploy/CD work, not
+  covered by this (CI-only) stage.
+- Google sign-in has no button/redirect target in `web/` yet -- the backend
+  flow (`/auth/google`, `/auth/google/callback`) is E1 work with no E2 UI on
+  top of it.
 - Everything in `docs/ML_PIPELINE.md` -- created when the pipeline exists.
 
 ## Known gap: audio retention without a worker (interim, until E3)
