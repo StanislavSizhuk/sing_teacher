@@ -29,7 +29,7 @@ dependencies = [
 dev = [
     "ruff>=0.7,<1",
     "mypy>=1.13,<2",
-    "pytest>=8.3,<9",
+    "pytest>=9.0.3,<10",  # >=9.0.3: PYSEC-2026-1845 fixed here, pip-audit flags earlier 8.x/9.x
     "pytest-cov>=6.0,<7",
 ]
 
