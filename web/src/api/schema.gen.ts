@@ -405,14 +405,37 @@ export interface components {
       status: 'queued' | 'processing' | 'done' | 'failed' | 'canceled'
       /** @description 1-based position among currently queued jobs. Absent once no longer queued. */
       queue_position?: number
-      /** @description Set by the E3 worker once processing starts. */
+      /** @description Set by the worker once processing starts. */
       current_stage?: string
       error_code?: string
+      pitch_score?: number
+      rhythm_score?: number
+      vibrato_score?: number
+      breath_score?: number
+      dynamics_score?: number
+      timbre_score?: number
+      /** @description Weighted sum of the six aspect scores (spec 6.4), set by stage 11. */
       overall_score?: number
+      /** @description Readable per-aspect report with concrete advice (FR-32). */
+      feedback_text?: string
+      /** @description Which SCORING_WEIGHTS this analysis was scored under (spec 6.4). */
+      scoring_version?: string
+      piano_roll?: components['schemas']['PianoRoll']
       /** Format: date-time */
       created_at: string
       /** Format: date-time */
       completed_at?: string
+    }
+    /** @description FR-31 overlay data: the user's pitch curve and the reference curve already resampled onto the user's own time grid, frame for frame, so the client never needs to redo the DTW alignment (spec 6.3.4/6.3.5) to draw the two curves together. */
+    PianoRoll: {
+      /** @description Seconds between consecutive frames; frame i's time is i * hop_seconds. */
+      hop_seconds: number
+      user_hz: (number | null)[]
+      reference_hz: (number | null)[]
+      /** @description Signed cents deviation per frame, null wherever either side is unvoiced. */
+      deviation_cents: (number | null)[]
+      /** @description deviation_cents already thresholded against PIANO_ROLL_OFF_PITCH_CENTS. */
+      off_pitch: boolean[]
     }
     /** @description RFC 9457 application/problem+json body. */
     Problem: {

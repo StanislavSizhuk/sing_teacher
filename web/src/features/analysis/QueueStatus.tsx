@@ -3,11 +3,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { cancelAnalysis, retryAnalysis, type Analysis } from '../../api/client'
 import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
+import { AnalysisResult } from './AnalysisResult'
 import { useAnalysisQueueSocket } from './useAnalysisQueueSocket'
 import { analysisQueryKey, useAnalysisStatus } from './useAnalysisStatus'
 
 interface QueueStatusProps {
   analysisId: string
+  /** The recording the user just submitted, kept in memory for the FR-33
+   * synced playback once the analysis is done (see AnalysisResult). */
+  recording: File | Blob
 }
 
 const STATUS_LABEL: Record<Analysis['status'], string> = {
@@ -20,7 +24,7 @@ const STATUS_LABEL: Record<Analysis['status'], string> = {
 
 /** FR-22..26: shows the live queue position (WS, REST-poll fallback) and
  * lets the owner cancel a queued job or retry a failed one. */
-export function QueueStatus({ analysisId }: QueueStatusProps) {
+export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
   const queryClient = useQueryClient()
   const { data: analysis, error, isLoading } = useAnalysisStatus(analysisId)
   useAnalysisQueueSocket(analysisId, true)
@@ -35,7 +39,7 @@ export function QueueStatus({ analysisId }: QueueStatusProps) {
   })
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-4">
+    <div className="flex w-full max-w-2xl flex-col gap-4">
       <h1 className="text-ink-950 text-lg font-semibold">Analysis status</h1>
       <ErrorAlert error={error} />
 
@@ -54,11 +58,10 @@ export function QueueStatus({ analysisId }: QueueStatusProps) {
           {analysis.status === 'failed' && analysis.errorCode && (
             <p className="text-danger">Error: {analysis.errorCode}</p>
           )}
-          {analysis.status === 'done' && analysis.overallScore !== undefined && (
-            <p className="text-ink-700">Overall score: {analysis.overallScore}</p>
-          )}
         </div>
       )}
+
+      {analysis?.status === 'done' && <AnalysisResult analysis={analysis} recording={recording} />}
 
       <ErrorAlert error={cancel.error ?? retry.error} />
       <div className="flex gap-2">

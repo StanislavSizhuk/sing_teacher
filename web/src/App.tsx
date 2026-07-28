@@ -11,14 +11,17 @@ import { useIsAuthenticated } from './features/auth/useSession'
 import { AddSongForm } from './features/songs/AddSongForm'
 
 type Step =
-  { kind: 'song' } | { kind: 'record'; song: Song } | { kind: 'queue'; analysisId: string }
+  | { kind: 'song' }
+  | { kind: 'record'; song: Song }
+  | { kind: 'queue'; analysisId: string; recording: File | Blob }
 
 function AuthenticatedApp() {
   const [step, setStep] = useState<Step>({ kind: 'song' })
   const enqueue = useMutation({
     mutationFn: (input: { songId: string; recording: File | Blob }) =>
       enqueueAnalysis(input.songId, input.recording),
-    onSuccess: (analysis) => setStep({ kind: 'queue', analysisId: analysis.id }),
+    onSuccess: (analysis, variables) =>
+      setStep({ kind: 'queue', analysisId: analysis.id, recording: variables.recording }),
   })
 
   return (
@@ -50,7 +53,7 @@ function AuthenticatedApp() {
 
       {step.kind === 'queue' && (
         <>
-          <QueueStatus analysisId={step.analysisId} />
+          <QueueStatus analysisId={step.analysisId} recording={step.recording} />
           <Button variant="secondary" onClick={() => setStep({ kind: 'song' })}>
             Analyze another song
           </Button>
