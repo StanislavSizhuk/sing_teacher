@@ -8,17 +8,52 @@ from __future__ import annotations
 import logging
 import shutil
 from collections.abc import Callable
+from typing import Protocol
 
 from vocalcoach.audio.paths import analysis_work_dir, recording_source_path, song_source_path
 from vocalcoach.config import Settings
 from vocalcoach.errors import PipelineError
 from vocalcoach.models.context import AnalysisContext
-from vocalcoach.models.records import SongRecord
+from vocalcoach.models.records import AnalysisRecord, SongRecord
+from vocalcoach.models.results import StageResult
 from vocalcoach.pipeline.events import EventPublisher
-from vocalcoach.pipeline.runner import PipelineRunner, RunOutcome
-from vocalcoach.repositories.interfaces import AnalysisRepository, SongRepository
+from vocalcoach.pipeline.runner import RunOutcome
 
 logger = logging.getLogger(__name__)
+
+
+class Runner(Protocol):
+    """The narrow slice of `PipelineRunner` the handler needs -- just
+    enough to drive one job's stages and learn how it ended."""
+
+    def run(
+        self,
+        analysis_id: str,
+        initial_context: AnalysisContext,
+        already_done: dict[str, StageResult],
+        should_stop: Callable[[], bool],
+    ) -> RunOutcome: ...
+
+
+class HandlerAnalysisRepository(Protocol):
+    """The narrow slice of `AnalysisRepository` the handler needs: reading
+    a job's current state and recording its terminal outcome. Per-stage
+    progress is `PipelineRunner`'s own concern (`RunnerAnalysisRepository`).
+    """
+
+    def get_by_id(self, analysis_id: str) -> AnalysisRecord: ...
+    def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None: ...
+    def mark_failed(self, analysis_id: str, error_code: str) -> None: ...
+
+
+class HandlerSongRepository(Protocol):
+    """The narrow slice of `SongRepository` the handler needs -- just
+    enough to build the `AnalysisContext` and check the cache flag during
+    cleanup. Writing the cache (`save_lyrics`/`mark_vocal_stem_processed`)
+    is each stage's own concern.
+    """
+
+    def get_by_id(self, song_id: str) -> SongRecord: ...
 
 
 class AnalysisJobHandler:
@@ -29,9 +64,9 @@ class AnalysisJobHandler:
 
     def __init__(
         self,
-        runner: PipelineRunner,
-        analyses: AnalysisRepository,
-        songs: SongRepository,
+        runner: Runner,
+        analyses: HandlerAnalysisRepository,
+        songs: HandlerSongRepository,
         events: EventPublisher,
         settings: Settings,
         model_versions: dict[str, str],

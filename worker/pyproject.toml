@@ -58,6 +58,15 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S", "BLE"]
 
+[tool.ruff.lint.per-file-ignores]
+# pytest's assertion rewriting is exactly what plain `assert` is for; S101
+# is only meaningful for asserts on the request path (api/ has no such rule
+# to mirror since Go has no assert at all).
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vocalcoach", "tests"]
+
 [tool.mypy]
 strict = true
 python_version = "3.12"
@@ -79,6 +88,16 @@ module = [
     "scipy.*",
 ]
 ignore_missing_imports = true
+
+# Full strict mode fights pytest's own conventions (fixtures injected by
+# parameter name, generator fixtures typed as their yielded value, small
+# local helper functions) for no correctness benefit -- the product code
+# under test in src/ is where strict typing earns its keep (spec 12.3).
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from multiprocessing import get_context
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from vocalcoach.constants import MAX_STAGE_RETRIES, RETRY_BACKOFF_BASE_SECONDS
 from vocalcoach.errors import (
@@ -32,12 +32,26 @@ from vocalcoach.errors import (
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult
 from vocalcoach.pipeline.events import EventPublisher
-from vocalcoach.repositories.interfaces import AnalysisRepository
 
 if TYPE_CHECKING:
     from vocalcoach.pipeline.base import PipelineStage
 
 logger = logging.getLogger(__name__)
+
+
+class RunnerAnalysisRepository(Protocol):
+    """The narrow slice of `AnalysisRepository` the runner itself needs
+    (spec 12.2's "interfaces declared by the consumer" applied to Python):
+    tracking which stage is running and persisting each one's result.
+    Everything else on the full repository (scores, terminal states) is the
+    job handler's concern, not the runner's.
+    """
+
+    def mark_processing(self, analysis_id: str, first_stage: str) -> None: ...
+
+    def save_stage_progress(
+        self, analysis_id: str, result: StageResult, next_stage: str | None
+    ) -> None: ...
 
 
 class RunOutcome(StrEnum):
@@ -101,7 +115,7 @@ class PipelineRunner:
     def __init__(
         self,
         stages: Sequence[PipelineStage],
-        analyses: AnalysisRepository,
+        analyses: RunnerAnalysisRepository,
         events: EventPublisher,
     ) -> None:
         self._stages = list(stages)

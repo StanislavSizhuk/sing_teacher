@@ -12,17 +12,26 @@ from __future__ import annotations
 import logging
 import signal
 import socket
+from collections.abc import Callable
 from types import FrameType
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, Protocol, cast
 
 import redis
 
 from vocalcoach.constants import MAX_CLAIM_ATTEMPTS, PENDING_CLAIM_MIN_IDLE
 
-if TYPE_CHECKING:
-    from vocalcoach.queue.handler import AnalysisJobHandler
-
 logger = logging.getLogger(__name__)
+
+
+class JobHandler(Protocol):
+    """The narrow slice of `AnalysisJobHandler` the consumer needs -- it
+    orchestrates Redis, not analysis lifecycle, so it only calls in
+    (spec 12.2's "interfaces declared by the consumer" applied to Python).
+    """
+
+    def handle(self, analysis_id: str, should_stop: Callable[[], bool]) -> bool: ...
+
+    def mark_permanently_failed(self, analysis_id: str) -> None: ...
 
 STREAM_NAME = "analyses:queue"
 GROUP_NAME = "analyses:workers"
@@ -46,7 +55,7 @@ class Consumer:
     def __init__(
         self,
         client: redis.Redis,
-        handler: AnalysisJobHandler,
+        handler: JobHandler,
         consumer_name: str | None = None,
     ) -> None:
         self._client = client

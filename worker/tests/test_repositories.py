@@ -1,0 +1,133 @@
+"""Integration tests: a real, migrated Postgres is required (spec 15.1).
+CI applies `api/migrations` with goose before running these; see the
+`test-worker` job in `.github/workflows/ci.yml`.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+from collections.abc import Generator
+from typing import Any, cast
+
+import psycopg
+import pytest
+
+from vocalcoach.models.audio import Lyrics, LyricsWord, PitchCurve
+from vocalcoach.models.results import StageResult, StageStatus
+from vocalcoach.repositories.postgres import PostgresAnalysisRepository, PostgresSongRepository
+
+pytestmark = pytest.mark.integration
+
+
+def _fetchone(cur: Any) -> tuple[Any, ...]:
+    row = cur.fetchone()
+    assert row is not None, "expected a row -- an empty RETURNING means the INSERT failed"
+    return cast("tuple[Any, ...]", row)
+
+
+@pytest.fixture
+def conn() -> Generator[psycopg.Connection, None, None]:
+    connection = psycopg.connect(
+        host=os.environ.get("TEST_POSTGRES_HOST", "localhost"),
+        port=int(os.environ.get("TEST_POSTGRES_PORT", "5432")),
+        dbname=os.environ.get("TEST_POSTGRES_DB", "vocalcoach"),
+        user=os.environ.get("TEST_POSTGRES_USER", "vocalcoach"),
+        password=os.environ.get("TEST_POSTGRES_PASSWORD", ""),
+    )
+    yield connection
+    connection.close()
+
+
+@pytest.fixture
+def seeded_ids(conn: psycopg.Connection) -> tuple[str, str, str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (id, email, password_hash, display_name, email_verified) "
+            "VALUES (gen_random_uuid(), %s, 'x', 'Test', true) RETURNING id",
+            (f"{uuid.uuid4()}@example.com",),
+        )
+        (user_id,) = _fetchone(cur)
+        cur.execute(
+            "INSERT INTO songs (id, source_type, content_hash, title, duration_sec) "
+            "VALUES (gen_random_uuid(), 'upload', %s, 'Test Song', 180) RETURNING id",
+            (str(uuid.uuid4()),),
+        )
+        (song_id,) = _fetchone(cur)
+        cur.execute(
+            "INSERT INTO analyses (id, user_id, song_id, status) "
+            "VALUES (gen_random_uuid(), %s, %s, 'queued') RETURNING id",
+            (user_id, song_id),
+        )
+        (analysis_id,) = _fetchone(cur)
+    conn.commit()
+    return str(user_id), str(song_id), str(analysis_id)
+
+
+def test_song_repository_round_trip(
+    conn: psycopg.Connection, seeded_ids: tuple[str, str, str]
+) -> None:
+    _user_id, song_id, _analysis_id = seeded_ids
+    repo = PostgresSongRepository(conn)
+
+    song = repo.get_by_id(song_id)
+    assert song.vocal_stem_processed is False
+    assert song.lyrics is None
+
+    lyrics = Lyrics(language="en", words=[LyricsWord(word="la", start=0.0, end=0.2)])
+    repo.save_lyrics(song_id, lyrics)
+    song = repo.get_by_id(song_id)
+    assert song.lyrics == lyrics
+    assert song.vocal_stem_processed is False  # save_lyrics alone never flips the cache flag
+
+    curve = PitchCurve(hop_seconds=0.01, hz=[440.0, None, 441.5])
+    repo.mark_vocal_stem_processed(song_id, curve)
+    song = repo.get_by_id(song_id)
+    assert song.vocal_stem_processed is True
+    assert song.reference_pitch == curve
+
+
+def test_analysis_repository_progress_and_terminal_states(
+    conn: psycopg.Connection, seeded_ids: tuple[str, str, str]
+) -> None:
+    _user_id, _song_id, analysis_id = seeded_ids
+    repo = PostgresAnalysisRepository(conn)
+
+    repo.mark_processing(analysis_id, "preprocess")
+    assert repo.get_by_id(analysis_id).status == "processing"
+
+    repo.save_stage_progress(
+        analysis_id,
+        StageResult(stage="preprocess", status=StageStatus.DONE, duration_ms=10, data={"a": 1}),
+        next_stage="align",
+    )
+    repo.save_stage_progress(
+        analysis_id,
+        StageResult(stage="align", status=StageStatus.DONE, duration_ms=20, data={}),
+        next_stage="pitch",
+    )
+    record = repo.get_by_id(analysis_id)
+    # Both entries must survive -- this is the jsonb `||` merge resumability depends on.
+    assert set(record.stages.keys()) == {"preprocess", "align"}
+    assert record.stages["preprocess"].duration_ms == 10
+
+    repo.save_aspect_score(analysis_id, "pitch", 87.5)
+    with conn.cursor() as cur:
+        cur.execute("SELECT pitch_score FROM analyses WHERE id = %s", (analysis_id,))
+        (score,) = _fetchone(cur)
+    assert float(score) == 87.5
+
+    with pytest.raises(ValueError, match="unknown aspect"):
+        repo.save_aspect_score(analysis_id, "not_a_real_aspect", 1.0)
+
+    repo.mark_done(analysis_id, {"demucs": "htdemucs"})
+    assert repo.get_by_id(analysis_id).status == "done"
+
+
+def test_mark_failed(conn: psycopg.Connection, seeded_ids: tuple[str, str, str]) -> None:
+    _user_id, _song_id, analysis_id = seeded_ids
+    repo = PostgresAnalysisRepository(conn)
+
+    repo.mark_failed(analysis_id, "NO_VOICE_DETECTED")
+
+    assert repo.get_by_id(analysis_id).status == "failed"
