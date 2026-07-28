@@ -47,3 +47,36 @@ tagged yet.
 - go-api runtime moved to Alpine for `ffmpeg`/`yt-dlp` (ADR-0007).
 - CI: `web` lint (tsc/eslint/prettier + OpenAPI-types drift check), test
   (vitest), security (`npm audit --audit-level=high`) and build jobs.
+
+## [Unreleased] -- E3
+
+### Added
+
+- `worker/`: the Python ML pipeline. Stages 1-10 (spec 6.2) --
+  preprocessing, Demucs vocal separation (cached per song), Whisper
+  transcription (cached per song), DTW alignment, and pitch/rhythm/
+  vibrato/dynamics/timbre/breath scoring against the reference, each
+  persisted to `analyses.stages_json` as it completes. Stage 11 (weighted
+  `overall_score`, the text report) is E4 scope (tech.md section 18).
+- Every stage runs in its own spawned child process: a real, enforceable
+  per-stage timeout, and the mechanism that satisfies spec 6.5's "Demucs
+  and Whisper never resident together" (ADR-0012).
+- Redis Streams consumer (`XREADGROUP`/`XACK`, reclaim of a stuck job past
+  15 minutes idle, giving up after repeated claims -- spec 10.1). Retry
+  (FR-26) is reachable end-to-end now that a worker can actually produce a
+  `failed` analysis.
+- `go-api`: `Hub.BroadcastStage`/`BroadcastDone`/`BroadcastFailed` and a
+  Redis Pub/Sub relay (`queue.RelayEvents`) forwarding the worker's events
+  onto the existing WS channel (ADR-0010).
+- `go-api`'s interim audio-retention sweep is now a 24h orphan safety net,
+  not the primary FR-43 mechanism -- the worker deletes each file
+  precisely when it's done with it.
+- Docker Compose: `python-worker` service (prod: 6GB memory ceiling per
+  NFR-07, 120s graceful-shutdown grace period; dev: source bind-mounted).
+  New `song-stems` (persistent vocal-stem cache) and `model-weights`
+  volumes.
+- CI: `worker` lint (ruff, mypy --strict), test (unit + integration against
+  real Postgres/Redis), security (`pip-audit`, Trivy image scan) and build
+  jobs.
+- ADRs 0010-0012 (worker events over Redis Pub/Sub, worker dependency
+  choices, per-stage subprocess isolation); `docs/ML_PIPELINE.md`.

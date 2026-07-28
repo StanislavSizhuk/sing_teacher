@@ -1,7 +1,7 @@
 # Onboarding
 
 Getting productive on this project from zero, in about a day. Updated once
-per stage (spec 14.1) -- this revision covers E1-E2.
+per stage (spec 14.1) -- this revision covers E1-E3.
 
 ## 1. Read, in order (30-45 min)
 
@@ -25,9 +25,13 @@ mailhog at `http://localhost:8025`, not a real inbox.
 
 Try the golden path with curl: register → read the code from mailhog →
 verify → login → add a song (`POST /songs`, multipart) → submit a recording
-(`POST /analyses`, multipart) → watch its position over
-`GET /ws/analyses/{id}`. `api/openapi.yaml` has the exact request/response
-shape for every endpoint.
+(`POST /analyses`, multipart) → watch it move from `queued` through each
+pipeline stage to `done`/`failed` over `GET /ws/analyses/{id}`
+(`GET /analyses/{id}` if you'd rather poll). `api/openapi.yaml` has the
+exact request/response shape for every endpoint. The first analysis of a
+new song is slow (Demucs + Whisper run cold, and the first-ever run also
+downloads their weights into `model-weights-dev`); a second analysis of
+the same song is much faster (spec 6.6's cache).
 
 Or drive the same flow from the browser:
 
@@ -48,10 +52,20 @@ by the consumer (`service`), implemented by the infrastructure package
 next to its implementation instead of next to its caller, it's in the wrong
 place.
 
+The same rule applies in `worker/`, via `typing.Protocol` instead of a Go
+interface: `PipelineRunner` depends on `RunnerAnalysisRepository` (just
+`mark_processing`/`save_stage_progress`), not the full `AnalysisRepository`
+`repositories/postgres.py` implements -- each consumer's own file declares
+exactly the narrow slice it calls. If you're adding a call from, say,
+`AnalysisJobHandler` to a repository method it didn't need before, widen
+`HandlerAnalysisRepository` in `queue/handler.py`, not the shared interface
+in `repositories/interfaces.py`.
+
 ## 4. Before your first PR
 
 - `cd api && go test ./... && go test -tags=integration ./... && gofmt -l . && go vet ./... && golangci-lint run`
 - `cd web && npm run typecheck && npm run lint && npm run format && npm test && npm run build`
+- `cd worker && uv run pytest -m "not integration" && uv run pytest -m integration && uv run ruff check . && uv run ruff format --check . && uv run mypy .`
 - Read `docs/REVIEW_CHECKLIST.md` -- that's what gets checked.
 - Commit format is enforced by `.githooks/commit-msg`
   (`git config core.hooksPath .githooks` after cloning -- do this before your
@@ -60,11 +74,11 @@ place.
 
 ## 5. What doesn't exist yet
 
-`worker/` (Python ML pipeline, stage E3) is empty. That means: analysis jobs
-queue and sit at `status=queued` forever, since nothing consumes the Redis
-Streams queue yet. Retry (FR-26) is implemented in both `api/` and `web/`
-but has no reachable precondition until E3 can actually produce a `failed`
-job. `web/` covers E1-E2 (auth, songs, recording, queue); it has no results
-page yet (piano-roll and scores are E4), no progress chart (E5), and isn't
-wired into Caddy/compose for production -- it runs as its own dev server.
-Check `tech.md` section 18 for what each stage adds.
+Stage 11 -- the weighted aggregation of the six aspect scores into
+`overall_score`, the text report, `scoring_version` stamping -- and the
+piano-roll UI are E4. Stages 1-10 already compute and persist everything
+E4 needs (`docs/ML_PIPELINE.md`); `web/` has no results/report screen yet
+to show it. No progress chart either (E5), and `web/` isn't wired into
+Caddy/compose for production -- it runs as its own dev server. Google
+sign-in has a working backend flow but no button/redirect target in
+`web/`. Check `tech.md` section 18 for what each stage adds.

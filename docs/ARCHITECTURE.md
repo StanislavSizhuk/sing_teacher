@@ -1,8 +1,8 @@
 # Architecture
 
-Status: reflects stages E1-E2, including `web/`. Components and flows
-planned for later stages (the ML pipeline, Caddy serving the built SPA) are
-noted as such, not described as if they existed.
+Status: reflects stages E1-E3, including `web/`. Components and flows
+planned for later stages (score aggregation, the report, piano-roll, Caddy
+serving the built SPA) are noted as such, not described as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -16,28 +16,31 @@ noted as such, not described as if they existed.
                     └─────┬──────┘
                           │
                     ┌─────▼──────┐        ┌──────────┐
-                    │   go-api   │◄──────►│  redis   │  sessions, throttles, queue
-                    │  REST + WS │        └────┬─────┘
-                    └─────┬──────┘             │ XADD/XLEN/XDEL
+                    │   go-api   │◄──────►│  redis   │  sessions, throttles,
+                    │  REST + WS │        └────┬─────┘  queue, event relay
+                    └─────┬──────┘             │ XADD/XREADGROUP/pub-sub
                           │                ┌───▼──────────┐
                     ┌─────▼──────┐         │ python-worker│  ML pipeline (E3)
-                    │  postgres  │◄────────┤              │
-                    └────────────┘         └──────────────┘
-                    ┌───────────┐          ┌────────────────────┐
-                    │  backup   │          │ docker volume:     │
-                    │ nightly   │          │ audio-tmp (5.2)    │
-                    │ pg_dump   │          └────────────────────┘
-                    └───────────┘
+                    │  postgres  │◄────────┤  (1 replica) │
+                    └────────────┘         └───┬──────────┘
+                    ┌───────────┐   ┌──────────▼───────────┬──────────────┐
+                    │  backup   │   │ audio-tmp: recording/│ song-stems,  │
+                    │ nightly   │   │ reference, shared     │ model-weights│
+                    │ pg_dump   │   │ w/ go-api (spec 7.2)  │ (persistent) │
+                    └───────────┘   └───────────────────────┴──────────────┘
 ```
 
 Built in E1: `caddy`, `go-api` (auth), `postgres`, `redis`, `backup`. Built
 in E2: song upload/YouTube import, the Redis Streams job queue, the
-WebSocket status channel (all in `go-api`, since `python-worker` does not
-exist yet), and `web/`, the React SPA that exercises all of it. `web/` runs
-as its own Vite dev server for now (`npm run dev`, talking to `go-api`
-directly); Caddy serving the built static SPA from the same origin as the
-API is still open -- see "Not yet built". `python-worker` itself, and
-everything in `docs/ML_PIPELINE.md`, land in E3.
+WebSocket status channel, and `web/`, the React SPA that exercises all of
+it. Built in E3: `python-worker` -- everything in
+`docs/ML_PIPELINE.md` -- and the Redis Pub/Sub relay
+(`internal/queue.RelayEvents`, ADR-0010) that lets `go-api` push the
+worker's stage/done/failed events onward over the same WS channel E2 built
+for queue position. `web/` runs as its own Vite dev server for now
+(`npm run dev`, talking to `go-api` directly); Caddy serving the built
+static SPA from the same origin as the API is still open -- see "Not yet
+built".
 
 ## go-api internal layers
 
@@ -78,7 +81,12 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
   throttles, and `AnalysisRateLimiter` (sliding window, `USER_ANALYSES_PER_HOUR`).
 - `queue`: Redis Streams producer (`XADD`/`XLEN`/`XDEL`), per ADR-0002.
   `job_id = analysis_id` so redelivery can never duplicate an analysis; the
-  E3 worker owns the consumer-group side.
+  worker (below) owns the consumer-group side. Also, since E3,
+  `RelayEvents`: a Redis Pub/Sub subscriber (`analyses:events`, ADR-0010)
+  forwarding the worker's stage/done/failed events into `transport/ws.Hub`
+  -- the worker and `go-api` are separate processes, so this is the only
+  channel the worker has to reach a connected browser without polling
+  Postgres.
 - `media`: magic-byte format detection and ffprobe/ffmpeg wrapping (duration
   probe, canonical-WAV re-encode) -- the spec 11.3 sanitization step, shared
   by both upload and YouTube ingestion.
@@ -97,9 +105,60 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
   client's first message carries the access token (never a query param);
   `Hub.BroadcastPositions` is called by the HTTP handlers after a
   successful `Enqueue`/`Cancel`, the same pattern as auth's handler-level
-  cookie-setting after a service call.
+  cookie-setting after a service call. `Hub.BroadcastStage`/`BroadcastDone`/
+  `BroadcastFailed` (E3) are instead called by `queue.RelayEvents`, since
+  the events they carry originate in the worker process, not an HTTP
+  handler in this one.
 
-## Song upload / YouTube import / queue flow (E2)
+## python-worker internal layers (E3)
+
+```
+queue/consumer.py  →  queue/handler.py  →  pipeline/runner.py  →  pipeline/stages/*
+  (Redis Streams)      (job lifecycle)      (orchestration)        (DSP, one file each)
+                                                    ↓
+                                          repositories/postgres.py
+```
+
+- `worker.py`: the entrypoint, wiring config → Postgres/Redis connections →
+  repositories → `ModelRegistry` → the 10 stages → `PipelineRunner` →
+  `AnalysisJobHandler` → `Consumer`, then blocking in the consumer loop
+  until SIGTERM/SIGINT.
+- `pipeline/base.py`/`pipeline/stages/`: `PipelineStage` is the Open/Closed
+  seam spec 12.3 asks for -- a new stage is a new class plus one line in
+  `worker.build_stages`, nothing else changes. See `docs/ML_PIPELINE.md`
+  for what each of the 10 stages does.
+- `pipeline/runner.py`: `PipelineRunner` orchestrates order, per-stage
+  timeout, transient retry, and progress persistence -- and nothing else
+  (spec 12.3: "нічого не знає про DSP"). Every stage runs in its own
+  spawned child process (ADR-0012), which is what makes a timeout
+  enforceable at all and what satisfies spec 6.5's "Demucs and Whisper
+  never resident together" as a consequence rather than a special case.
+- `pipeline/registry.py`: `ModelRegistry` lazily constructs Demucs/Whisper/
+  CREPE/pYIN behind narrow `Protocol`s a stage takes as a constructor
+  dependency -- unit tests inject a fake instead of downloading model
+  weights (spec 15.2).
+- `queue/consumer.py`: `XREADGROUP` delivery, `XACK` once a job reaches a
+  terminal state, and a startup reclaim sweep over `XPENDING` for a job
+  whose worker died mid-stage (spec 10.1) -- mirrors `api/internal/queue`'s
+  producer side of the same Redis Stream (`StreamName`/`GroupName` must
+  match exactly, ADR-0002).
+- `queue/handler.py`: `AnalysisJobHandler` builds the per-job
+  `AnalysisContext` from current DB state, drives the runner, and on
+  success denormalizes each aspect stage's score out of `stages_json` into
+  its own column (`analyses.pitch_score`, etc.) before `mark_done` --
+  `PipelineRunner` itself stays agnostic of which stages happen to produce
+  a score. Also does the FR-43 cleanup: the scratch work dir always, the
+  recording only once the job is durably `done` (a retryable failure must
+  leave it in place -- see `service/analysis/retry.go`'s "canonical
+  recording... untouched" contract), and the song's original upload once
+  `vocal_stem_processed` is true.
+- `queue/events.py`: `RedisEventPublisher`, the other end of `go-api`'s
+  `queue.RelayEvents` (ADR-0010).
+- `repositories/postgres.py`: `PostgresAnalysisRepository`/
+  `PostgresSongRepository`, parameterised SQL only, `stages_json` updated
+  via a `jsonb ||` merge so one stage's write can never clobber another's.
+
+## Song upload / recording / analysis flow (E2 + E3)
 
 1. `POST /songs` (multipart): the audio (uploaded or yt-dlp-downloaded) is
    sniffed by magic bytes, probed for duration, and re-encoded to a
@@ -113,14 +172,18 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
    (`429 QUEUE_FULL` past `QUEUE_MAX_LENGTH`). On success: a `queued`
    `analyses` row, an `XADD` to the Redis Streams queue, and every queued
    job's position recomputed.
-3. `GET /ws/analyses/{id}` pushes `{"type":"queued","position":N}` on every
-   change; `GET /analyses/{id}` is the REST fallback/final-result path
-   (spec 8.3).
-4. `POST /analyses/{id}/cancel` (FR-25) is the only way an analysis leaves
-   the queue in this stage -- there is no worker yet to pick jobs up.
-   `POST /analyses/{id}/retry` (FR-26) exists at the API layer for the same
-   reason `Retry` does in the service (see above): nothing reaches `failed`
-   without E3, so this path is unit-tested but not reachable end-to-end yet.
+3. `python-worker`'s consumer picks the job up (`XREADGROUP`), runs stages
+   1-10 (`docs/ML_PIPELINE.md`), and persists progress after each one.
+4. `GET /ws/analyses/{id}` pushes `{"type":"queued","position":N}` while
+   queued, then `{"type":"stage",...}` per stage, then `{"type":"done"}` or
+   `{"type":"failed",...}` (spec 8.3); `GET /analyses/{id}` is the REST
+   fallback/final-result path regardless.
+5. `POST /analyses/{id}/cancel` (FR-25) works while `queued`.
+   `POST /analyses/{id}/retry` (FR-26) is reachable end-to-end now that E3
+   can actually produce a `failed` analysis: it resets status/error/queue
+   bookkeeping and re-enqueues, without touching the stored recording or
+   `stages_json` -- the worker resumes from the first stage that row
+   doesn't already have (spec 6.8).
 
 ## Web app (E2)
 
@@ -193,12 +256,10 @@ applied with `goose`) -- there is no separate migrate step or container.
 
 ## Not yet built
 
-- `worker/` (Python ML pipeline) -- E3. Nothing consumes the Redis Streams
-  queue yet; jobs stay `queued` until canceled or retried.
-  `songs.vocal_stem_processed` stays `false` forever until E3 sets it.
-- Retry (FR-26) is implemented end-to-end in the code (API + `web/`) but not
-  reachable in a running system, since nothing can produce a `failed`
-  analysis without the E3 worker.
+- Stage 11 (weighted score aggregation into `overall_score`, the text
+  report, `scoring_version` stamping) and the piano-roll UI -- E4. Stages
+  1-10 already compute and persist all six aspect scores and the pitch
+  curve (`docs/ML_PIPELINE.md`); E4 combines them.
 - Caddy serving the built `web/` static output from the same origin as
   `go-api` (spec 5.2's target end-state). `web/` currently runs as its own
   Vite dev server pointed at `go-api` directly; wiring it into
@@ -207,16 +268,23 @@ applied with `goose`) -- there is no separate migrate step or container.
 - Google sign-in has no button/redirect target in `web/` yet -- the backend
   flow (`/auth/google`, `/auth/google/callback`) is E1 work with no E2 UI on
   top of it.
-- Everything in `docs/ML_PIPELINE.md` -- created when the pipeline exists.
+- `web/`'s results/report screen -- there is no score/report data to show
+  until E4 builds stage 11; `QueueStatus.tsx` shows `current_stage` and
+  terminal status only.
 
-## Known gap: audio retention without a worker (interim, until E3)
+## Audio retention (spec 7.2, FR-43)
 
-Spec 7.2 ties audio deletion to "5 minutes after processing ends." With no
-worker yet, "processing ends" never happens, so `storage.FileStore.Sweep`
-(run every minute from `main.go`) instead deletes anything under
-`audio-tmp` older than `AUDIO_TTL_SECONDS` from *creation*, regardless of
-whether it was ever used. Consequence: a song's canonical audio can be swept
-before E3 exists to read it, leaving a `songs` row whose `GetOrCreate` dedup
-hit no longer has a backing file. This is expected and harmless at this
-stage (nothing reads that file yet); E3's worker should switch the trigger
-to actual processing completion when it lands.
+The E3 worker (`AnalysisJobHandler._cleanup`) deletes a recording the
+moment its analysis reaches `done`, and a song's original upload the
+moment its vocal stem is cached (`vocal_stem_processed`) -- both well
+inside FR-43's 5-minute bound, since neither waits for a timer.
+`storage.FileStore.Sweep` (`main.go`'s `runAudioSweepTicker`,
+`orphanedAudioMaxAge = 24h`) is a safety net underneath that, not the
+primary mechanism it was in E1/E2: it only catches a file that somehow
+never got the worker's precise cleanup (a crash between upload and the
+analysis row's insert, or a worker that died before its own cleanup ran
+and the job was never retried). The 24-hour age is deliberately far longer
+than `AUDIO_TTL_SECONDS` (5 min) specifically so it can never delete a
+file a legitimately queued job is still waiting to use -- `QUEUE_MAX_LENGTH`
+(20) jobs at spec 6.2's worst-case per-stage timeouts can leave a job
+waiting well past 5 minutes before the worker even starts on it.

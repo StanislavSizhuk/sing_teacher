@@ -1,8 +1,8 @@
 # Security
 
-Status: reflects stages E1 (auth + account perimeter) and E2 (song/
-recording upload, YouTube import, job queue). Updated whenever the
-perimeter changes (spec 14.1).
+Status: reflects stages E1 (auth + account perimeter), E2 (song/recording
+upload, YouTube import, job queue) and E3 (the ML worker that now consumes
+that queue). Updated whenever the perimeter changes (spec 14.1).
 
 ## Threat model, in scope for E1
 
@@ -23,8 +23,21 @@ perimeter changes (spec 14.1).
 - Path traversal via a user-controlled filename.
 - Queue/rate-limit bypass (skipping the size/duration/queue-depth checks).
 
-Out of scope for E2 (nothing to attack yet): the ML pipeline itself
-(`worker/`), since it does not exist until E3.
+## Threat model, in scope for E3
+
+- A hostile or malformed reference/recording WAV reaching Demucs/Whisper/
+  librosa (already sanitized once by `go-api`'s ffmpeg re-encode, spec
+  11.3 -- the worker's own stage-1 ffmpeg pass is a second, independent
+  pass through the same sanitizing transform).
+- Resource exhaustion from the ML stages themselves: unbounded runtime
+  (mitigated per-stage, see below) or unbounded memory (spec NFR-07's 6GB
+  ceiling, enforced at the container level, same posture as `go-api`'s
+  512MB limit, ADR-0007).
+- A malformed or spoofed Redis Pub/Sub message on `analyses:events`
+  reaching `go-api`'s relay and crashing it, or forging a `done`/`failed`
+  event for an analysis the "sender" doesn't own.
+- SQL injection in the worker's own repository layer, mirroring the same
+  concern already covered for `go-api`.
 
 ## File upload and YouTube import (E2, spec 11.3)
 
@@ -82,6 +95,50 @@ Out of scope for E2 (nothing to attack yet): the ML pipeline itself
   (spec 8.3). The `Origin` header is checked against `CORS_ALLOWED_ORIGIN`
   at the WebSocket upgrade (`internal/transport/ws`, mirroring the HTTP
   CORS policy).
+
+## ML worker (E3, spec 6.5, 11.3)
+
+- **Every stage timeout is enforced by killing a real OS process**, not a
+  cooperative check (`multiprocessing.get_context("spawn")`,
+  `terminate()`/`kill()` on expiry, ADR-0012) -- a stage cannot hang the
+  worker past its declared budget (spec 6.2's per-stage timeout table)
+  regardless of what a malformed input does inside a native library call.
+- **`ffmpeg` is invoked as an argument list**, never a shell string
+  (`vocalcoach.audio.ffmpeg.run_ffmpeg`, mirroring `go-api`'s
+  `internal/sysproc`), with both a timeout and a memory cap
+  (`resource.setrlimit(RLIMIT_AS)`, 1 GiB) on the subprocess itself, on top
+  of the container-level 6GB ceiling (spec NFR-07) that also bounds every
+  Python-side model.
+- **Memory isolation is structural, not just a limit**: Demucs and Whisper
+  are never resident together because every stage's memory is reclaimed
+  the instant its own child process exits (ADR-0012), not because
+  something remembers to call `del`/`gc.collect()` correctly -- that
+  explicit release still happens (`ModelRegistry.release()`) but is
+  hygiene on top of a guarantee, not the guarantee itself.
+- **Paths are never derived from user input**, same rule as `go-api`'s
+  `storage.FileStore`: `vocalcoach.audio.paths` derives every filename from
+  a server-generated `analysis_id`/`song_id`, never a request field.
+- **The worker never runs migrations or DDL**; it reads/writes the same
+  rows `go-api`'s own repositories do, via parameterised SQL only
+  (`vocalcoach.repositories.postgres`, `psycopg` placeholders; the one
+  dynamic identifier, an aspect-score column name, goes through
+  `psycopg.sql.Identifier`, never string interpolation).
+- **The Pub/Sub event relay is unauthenticated by design, and that's fine**:
+  `analyses:events` (ADR-0010) never crosses the network boundary --
+  Redis itself is not published to the host (spec 5.3) and reachable only
+  from `go-api`/`python-worker` on the compose-internal network, the same
+  trust boundary the job queue (ADR-0002) already relies on. A malformed
+  message is logged and dropped by `go-api`'s relay, never propagated to a
+  WS client or allowed to crash the relay goroutine.
+- **No outbound network access is needed at runtime** once model weights
+  are cached in the `model-weights` volume -- Demucs/Whisper/torchcrepe
+  only reach out on a cold cache (first run for a given model version).
+  Unlike `go-api`'s YouTube import path, the worker has no
+  feature-flagged external-fetch surface at all.
+- **Container hardening matches `go-api`'s**: non-root user, `cap_drop:
+  [ALL]`, `no-new-privileges`, no published ports (spec 5.2 -- there is no
+  HTTP server to expose; Docker's `HEALTHCHECK` reads a heartbeat file
+  instead, see `deploy/docker-compose.yml`).
 
 ## Authentication and sessions
 
@@ -158,18 +215,22 @@ Out of scope for E2 (nothing to attack yet): the ML pipeline itself
 ## Dependencies
 
 - Go module versions are locked via `go.sum`; `web/` dependencies via
-  `package-lock.json`.
+  `package-lock.json`; `worker/` dependencies via `uv.lock` (ADR-0011).
 - `ffmpeg`/`yt-dlp` are pinned to exact `apk` package versions in the
-  production runtime image, not just an unpinned `apk add` (ADR-0007).
-- CI runs `govulncheck`, `gosec`, and a Trivy image scan on the API, and
-  `npm audit --audit-level=high` on `web/`, on every PR
-  (`.github/workflows/ci.yml`); critical/high findings fail the build.
-  `react-router` is deliberately not a `web/` dependency yet: every
-  published 7.12+ release carries an open high-severity CSRF advisory
-  (RSC mode, which this app never enables) that `npm audit` would flag
-  regardless of reachability, and older releases carry several
-  unrelated ones instead -- see `docs/ARCHITECTURE.md`.
+  production `go-api` runtime image, not just an unpinned `apk add`
+  (ADR-0007); `worker/`'s Dockerfile pins the same way with the Debian
+  `apt` equivalent.
+- CI runs `govulncheck`, `gosec`, and a Trivy image scan on the API,
+  `npm audit --audit-level=high` on `web/`, and `pip-audit` plus a Trivy
+  image scan on `worker/`, on every PR (`.github/workflows/ci.yml`);
+  critical/high findings fail the build. `react-router` is deliberately
+  not a `web/` dependency yet: every published 7.12+ release carries an
+  open high-severity CSRF advisory (RSC mode, which this app never
+  enables) that `npm audit` would flag regardless of reachability, and
+  older releases carry several unrelated ones instead -- see
+  `docs/ARCHITECTURE.md`.
 
 ## Not yet applicable
 
-- Everything in the (not yet built) ML pipeline's own threat surface -- E3.
+- The score/report display surface (E4) -- there is no report to attack
+  until stage 11 and the piano-roll UI exist.

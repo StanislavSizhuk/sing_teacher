@@ -4,10 +4,13 @@ A web app that compares a user's singing to the original vocal of a song and
 reports pitch, rhythm, vibrato, breathing, dynamics and timbre. Analysis runs
 offline, not in real time.
 
-**Status:** stages E1-E2 (auth, DB schema, song upload/YouTube import, the
-analysis job queue with live WebSocket position updates, a web UI covering
-all of the above). The ML pipeline lands in stage E3 -- see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+**Status:** stages E1-E3 (auth, DB schema, song upload/YouTube import, the
+analysis job queue with live WebSocket status updates, a web UI covering
+all of that, and the Python ML pipeline: Demucs separation, Whisper
+transcription, DTW alignment, and pitch/rhythm/vibrato/dynamics/timbre/
+breath scoring). Score aggregation, the text report and the piano-roll UI
+land in stage E4 -- see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+[docs/ML_PIPELINE.md](docs/ML_PIPELINE.md).
 
 ## Quick start
 
@@ -44,6 +47,10 @@ docker compose -f deploy/docker-compose.dev.yml up
 - API: `http://localhost:8080` (hot-reloads on save via `air`)
 - Mailhog UI (captured verification emails): `http://localhost:8025`
 - Postgres: `localhost:5432`, Redis: `localhost:6379` (published for a local client)
+- `python-worker` starts too and picks up queued analyses automatically --
+  the first run downloads Demucs/Whisper/CREPE weights into the
+  `model-weights-dev` volume, which takes a while; subsequent starts reuse
+  the cache.
 
 Run tests and linters from `api/`:
 
@@ -75,6 +82,20 @@ npm run dev           # http://localhost:5173
 npm run typecheck && npm run lint && npm run format && npm test && npm run build
 ```
 
+Run the worker's tests and linters (needs `ffmpeg` on `PATH` and, for
+`-m integration`, a real Postgres migrated with the API's `goose`
+migrations plus a real Redis -- both already running if the dev compose
+stack is up):
+
+```bash
+cd worker
+uv sync --all-groups
+uv run pytest -m "not integration"   # unit tests, synthetic signals only
+uv run pytest -m integration         # needs Postgres/Redis, see above
+uv run ruff check . && uv run ruff format --check .
+uv run mypy .
+```
+
 ## Project layout
 
 | Path | Responsibility |
@@ -90,20 +111,24 @@ npm run typecheck && npm run lint && npm run format && npm test && npm run build
 | `api/internal/sysproc/` | External-command runner (DI seam for exec) |
 | `api/internal/security/`, `mailer/`, `oauth/` | Password hashing, JWT, SMTP, Google OIDC |
 | `api/internal/transport/http/` | chi router, middleware, DTOs, handlers |
-| `api/internal/transport/ws/` | WebSocket status channel (analysis queue position) |
+| `api/internal/transport/ws/` | WebSocket status channel (queue position, stage/done/failed) |
 | `api/migrations/` | goose SQL migrations, embedded into the binary |
 | `api/openapi.yaml` | API contract -- single source of truth |
 | `web/` | React + TS + Tailwind SPA: auth, song upload/YouTube, browser recording, analysis queue |
 | `web/src/api/` | Generated OpenAPI types, the one typed fetch client, session store |
 | `web/src/features/` | `auth`, `songs`, `analysis` -- one directory per feature, not per file type |
+| `worker/` | Python: the ML pipeline, consuming the same Redis Streams queue `api/` produces to |
+| `worker/src/vocalcoach/pipeline/` | `PipelineStage` base + `ModelRegistry` + one file per stage |
+| `worker/src/vocalcoach/pipeline/runner.py` | Orchestration: order, per-stage timeout/retry, progress persistence |
+| `worker/src/vocalcoach/queue/` | Redis Streams consumer, job lifecycle, Pub/Sub event publisher |
+| `worker/src/vocalcoach/repositories/` | Postgres implementations, same `analyses`/`songs` tables `api/` owns |
 | `deploy/` | Compose files, Caddyfile, nightly backup script |
-| `docs/` | Architecture, security, runbook, ADRs |
-
-`worker/` (Python ML pipeline) does not exist yet; it arrives in stage E3.
+| `docs/` | Architecture, security, ML pipeline, runbook, ADRs |
 
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) -- components, data flow, boundaries
+- [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) -- stages, parameters, error codes, caching
 - [docs/SECURITY.md](docs/SECURITY.md) -- threat model, secrets handling
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) -- deploy, rollback, backup restore, incidents
 - [docs/adr/](docs/adr/) -- architectural decisions
