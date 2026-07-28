@@ -25,3 +25,25 @@ tagged yet.
   Trivy), commit-message validation, image build. No CD yet (spec 16.3: no
   staging; deploy automation is stage E6).
 - ADRs 0001-0006.
+
+## [Unreleased] -- E2
+
+### Added
+
+- Song ingestion: file upload and YouTube import (`yt-dlp`) sharing one
+  sniff/probe/transcode/dedup pipeline; duration checked before download for
+  YouTube (FR-12); content-hash/video-id dedup reuses an existing song
+  (FR-13).
+- Analysis job queue: Redis Streams with a Postgres-computed FIFO position
+  (ADR-0008), live position over `GET /ws/analyses/{id}`, `429` on a full
+  queue or an exceeded per-user rate limit, cancel-while-queued (FR-25), and
+  retry-when-failed (FR-26, built and unit-tested; unreachable end-to-end
+  until the E3 worker exists).
+- `web/`: React + TypeScript (strict) + Tailwind v4 SPA covering all of the
+  above -- register/verify/login, add a song, record in the browser
+  (MediaRecorder) or upload a file, and a queue screen with live position
+  (WebSocket, REST-poll fallback). One generated-from-`openapi.yaml` typed
+  network layer with silent-refresh-on-401 retry.
+- go-api runtime moved to Alpine for `ffmpeg`/`yt-dlp` (ADR-0007).
+- CI: `web` lint (tsc/eslint/prettier + OpenAPI-types drift check), test
+  (vitest), security (`npm audit --audit-level=high`) and build jobs.

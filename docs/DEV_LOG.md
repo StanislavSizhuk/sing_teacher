@@ -27,15 +27,19 @@ is E6.
 **Done:** Song upload + YouTube import (shared sniff/probe/transcode/dedup
 pipeline), Redis Streams analysis queue with Postgres-computed FIFO
 position (ADR-0008), `429` on queue-full/rate-limit, WebSocket position
-channel, cancel-while-queued. go-api runtime moved to Alpine for ffmpeg/
-yt-dlp (ADR-0007). Frontend deliberately out of scope this stage (see E5).
+channel, cancel-while-queued, retry-when-failed (FR-26, unit-tested,
+unreachable until E3). go-api runtime moved to Alpine for ffmpeg/yt-dlp
+(ADR-0007). `web/` SPA now covers all of it: auth, add-a-song,
+MediaRecorder recording, live queue status. CI gained web lint/test/
+security/build jobs.
 
-**Next:** E3 -- ML pipeline, which also closes two E2 gaps: retry (FR-26,
-unreachable with no failure path yet) and audio deletion tied to real
-processing completion instead of the interim age-based sweep.
+**Next:** E3 -- ML pipeline, which closes retry's remaining gap (a worker
+that can actually produce a `failed` job) and lets audio deletion switch
+from the interim age-based sweep to real processing completion.
 
 **Blockers:** none.
 
-**Risks:** No `web/` yet, so FR-20/21 have an API but no UI to exercise it.
-YouTube import untested against the real service (no live network calls in
-tests, by design) -- worth a manual smoke test before relying on it.
+**Risks:** `web/` isn't wired into Caddy/compose for production -- still a
+Vite dev server pointed at go-api directly; that's deploy/CD work. Google
+sign-in has no UI yet. YouTube import untested against the real service (no
+live network calls in tests, by design) -- worth a manual smoke test.

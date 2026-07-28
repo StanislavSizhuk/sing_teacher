@@ -29,6 +29,15 @@ verify → login → add a song (`POST /songs`, multipart) → submit a recordin
 `GET /ws/analyses/{id}`. `api/openapi.yaml` has the exact request/response
 shape for every endpoint.
 
+Or drive the same flow from the browser:
+
+```bash
+cd web && npm install && cp .env.example .env.local && npm run dev
+```
+
+`http://localhost:5173` -- register, verify, log in, add a song, record (or
+upload) a take, watch the queue screen.
+
 ## 3. Where things live
 
 See the table in `README.md`. The one rule worth internalizing before
@@ -42,6 +51,7 @@ place.
 ## 4. Before your first PR
 
 - `cd api && go test ./... && go test -tags=integration ./... && gofmt -l . && go vet ./... && golangci-lint run`
+- `cd web && npm run typecheck && npm run lint && npm run format && npm test && npm run build`
 - Read `docs/REVIEW_CHECKLIST.md` -- that's what gets checked.
 - Commit format is enforced by `.githooks/commit-msg`
   (`git config core.hooksPath .githooks` after cloning -- do this before your
@@ -50,9 +60,11 @@ place.
 
 ## 5. What doesn't exist yet
 
-`worker/` (Python ML pipeline, stage E3) and `web/` (React frontend, stage
-E5) are empty. That means: analysis jobs queue and sit at `status=queued`
-forever (nothing consumes the Redis Streams queue yet), `retry` isn't
-implemented (nothing can produce a `failed` job to retry), and there is no
-browser UI for recording (FR-20) -- only the API surface for it. Check
-`tech.md` section 18 for what each stage adds.
+`worker/` (Python ML pipeline, stage E3) is empty. That means: analysis jobs
+queue and sit at `status=queued` forever, since nothing consumes the Redis
+Streams queue yet. Retry (FR-26) is implemented in both `api/` and `web/`
+but has no reachable precondition until E3 can actually produce a `failed`
+job. `web/` covers E1-E2 (auth, songs, recording, queue); it has no results
+page yet (piano-roll and scores are E4), no progress chart (E5), and isn't
+wired into Caddy/compose for production -- it runs as its own dev server.
+Check `tech.md` section 18 for what each stage adds.

@@ -91,4 +91,8 @@ var (
 	// ErrAnalysisNotQueued means a cancel was requested for an analysis that
 	// is no longer (or never was) in the queued state (FR-25).
 	ErrAnalysisNotQueued = errors.New("analysis is not in the queued state")
+
+	// ErrAnalysisNotFailed means a retry was requested for an analysis that
+	// is not in the failed state (FR-26).
+	ErrAnalysisNotFailed = errors.New("analysis is not in the failed state")
 )

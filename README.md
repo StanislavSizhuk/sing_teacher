@@ -5,8 +5,8 @@ reports pitch, rhythm, vibrato, breathing, dynamics and timbre. Analysis runs
 offline, not in real time.
 
 **Status:** stages E1-E2 (auth, DB schema, song upload/YouTube import, the
-analysis job queue with live WebSocket position updates). The ML pipeline
-and frontend land in later stages -- see
+analysis job queue with live WebSocket position updates, a web UI covering
+all of the above). The ML pipeline lands in stage E3 -- see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
@@ -63,6 +63,18 @@ cd api
 goose -dir migrations postgres "$POSTGRES_DSN" up
 ```
 
+Run the frontend against that dev API (`web/.env.example` already points
+`VITE_API_BASE_URL` at `http://localhost:8080/api/v1`, which the dev
+compose's `CORS_ALLOWED_ORIGIN` allows):
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+npm run dev           # http://localhost:5173
+npm run typecheck && npm run lint && npm run format && npm test && npm run build
+```
+
 ## Project layout
 
 | Path | Responsibility |
@@ -81,11 +93,13 @@ goose -dir migrations postgres "$POSTGRES_DSN" up
 | `api/internal/transport/ws/` | WebSocket status channel (analysis queue position) |
 | `api/migrations/` | goose SQL migrations, embedded into the binary |
 | `api/openapi.yaml` | API contract -- single source of truth |
+| `web/` | React + TS + Tailwind SPA: auth, song upload/YouTube, browser recording, analysis queue |
+| `web/src/api/` | Generated OpenAPI types, the one typed fetch client, session store |
+| `web/src/features/` | `auth`, `songs`, `analysis` -- one directory per feature, not per file type |
 | `deploy/` | Compose files, Caddyfile, nightly backup script |
 | `docs/` | Architecture, security, runbook, ADRs |
 
 `worker/` (Python ML pipeline) does not exist yet; it arrives in stage E3.
-`web/` (React frontend, including browser recording) arrives in stage E5.
 
 ## Documentation
 

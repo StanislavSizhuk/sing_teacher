@@ -112,6 +112,46 @@ func (r *AnalysisRepository) Cancel(ctx context.Context, id, userID uuid.UUID) (
 	return nil, domain.ErrAnalysisNotQueued
 }
 
+// Retry moves a failed analysis back to queued, at the back of the FIFO
+// order, without touching its stored recording or song reference (FR-26: no
+// re-upload). It draws a fresh queue_seq from the same sequence Create uses,
+// so it sorts after every job already waiting. It returns
+// domain.ErrNotFound if the id doesn't exist or isn't owned by userID, and
+// domain.ErrAnalysisNotFailed if it exists but isn't in the failed state.
+func (r *AnalysisRepository) Retry(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
+	const q = `
+		UPDATE analyses
+		SET status = 'queued',
+			error_code = NULL,
+			current_stage = NULL,
+			queue_stream_id = NULL,
+			queue_position = NULL,
+			queue_seq = nextval('analyses_queue_seq_seq')
+		WHERE id = $1 AND user_id = $2 AND status = 'failed'
+		RETURNING ` + analysisColumns
+
+	updated, err := scanAnalysis(r.pool.QueryRow(ctx, q, id, userID))
+	if err == nil {
+		return updated, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return nil, err
+	}
+
+	// The UPDATE matched no row: find out why so the caller gets the right
+	// sentinel instead of a blanket "not found".
+	existing, getErr := r.GetByID(ctx, id, userID)
+	if getErr != nil {
+		return nil, getErr
+	}
+	if existing.Status != domain.AnalysisStatusFailed {
+		return nil, domain.ErrAnalysisNotFailed
+	}
+	// Existed and was failed moments ago but the UPDATE still matched zero
+	// rows: raced with a concurrent retry. Report the same outcome either way.
+	return nil, domain.ErrAnalysisNotFailed
+}
+
 // RecalculatePositions reassigns a 1-based FIFO queue_position to every
 // currently queued analysis, ordered by queue_seq, and returns only the
 // rows whose position actually changed -- the set the caller needs to push
