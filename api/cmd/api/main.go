@@ -47,13 +47,26 @@ const shutdownGrace = 20 * time.Second
 
 // audioStorageDir is the shared volume songs and recordings are canonicalized
 // into (spec 5.2 "audio-tmp"), mounted by deploy/docker-compose*.yml. It is a
-// fixed container path, not operator config -- the E3 worker will read from
+// fixed container path, not operator config -- the E3 worker reads from
 // the exact same path.
 const audioStorageDir = "/data/audio-tmp"
 
-// audioSweepInterval is how often the interim TTL sweep runs (FR-43, spec
-// 7.2) until the E3 worker exists to tie deletion to actual processing completion.
+// audioSweepInterval is how often the orphan sweep runs.
 const audioSweepInterval = time.Minute
+
+// orphanedAudioMaxAge bounds the orphan-file safety net, not FR-43's "<=5
+// min after processing ends" itself -- the E3 worker now deletes a
+// recording/song file precisely when it's done with it
+// (queue/handler.py's AnalysisJobHandler._cleanup), immediately satisfying
+// FR-43 with room to spare. This sweep only catches what that can't: a
+// file written but never enqueued (a crash between upload and the
+// analysis row's insert), or one whose worker died before cleanup ran and
+// was never retried. QUEUE_MAX_LENGTH (20) queued jobs at a worst-case
+// per-job time (spec 6.2's stage timeouts sum to ~15 min) can leave a
+// legitimately-still-needed file waiting far longer than AUDIO_TTL_SECONDS
+// (5 min) -- reusing that value here would delete audio out from under a
+// job still waiting its turn, not just orphans.
+const orphanedAudioMaxAge = 24 * time.Hour
 
 // ffmpegPath, ffprobePath and ytDlpPath are resolved via PATH; the runtime
 // image (deploy/Dockerfile) installs all three (spec 11.3).
@@ -159,7 +172,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open audio storage: %w", err)
 	}
-	go runAudioSweepTicker(ctx, logger, files, time.Duration(cfg.Limits.AudioTTLSeconds)*time.Second)
+	go runAudioSweepTicker(ctx, logger, files, orphanedAudioMaxAge)
 
 	queueProducer := queue.NewProducer(redisClient)
 	if err := queueProducer.EnsureGroup(ctx); err != nil {
@@ -292,9 +305,13 @@ func relayWorkerEvents(ctx context.Context, redisClient *redis.Client, hub *ws.H
 	}
 }
 
-// runAudioSweepTicker drives the interim audio-retention safety net (FR-43)
-// until ctx is canceled.
-func runAudioSweepTicker(ctx context.Context, logger *slog.Logger, files *storage.FileStore, maxAge time.Duration) {
+// runAudioSweepTicker drives the orphaned-file safety net (see
+// orphanedAudioMaxAge) until ctx is canceled. FR-43's actual retention
+// window is enforced by the E3 worker deleting a file precisely when it's
+// done with it, not by this sweep.
+func runAudioSweepTicker(
+	ctx context.Context, logger *slog.Logger, files *storage.FileStore, maxAge time.Duration,
+) {
 	ticker := time.NewTicker(audioSweepInterval)
 	defer ticker.Stop()
 	for {
