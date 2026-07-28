@@ -26,11 +26,11 @@ npm run generate:api # regenerate src/api/schema.gen.ts from ../api/openapi.yaml
 
 ## Layout
 
-| Path | Responsibility |
-|---|---|
-| `src/api/` | Generated OpenAPI types, the one typed fetch client, session store |
-| `src/features/auth/` | Register, verify, login |
-| `src/features/songs/` | Add a song by file upload or YouTube link |
-| `src/features/analysis/` | Browser recording (MediaRecorder), analysis queue status |
-| `src/components/` | Shared presentational primitives |
-| `src/hooks/` | Shared hooks not tied to one feature |
+| Path                     | Responsibility                                                     |
+| ------------------------ | ------------------------------------------------------------------ |
+| `src/api/`               | Generated OpenAPI types, the one typed fetch client, session store |
+| `src/features/auth/`     | Register, verify, login                                            |
+| `src/features/songs/`    | Add a song by file upload or YouTube link                          |
+| `src/features/analysis/` | Browser recording (MediaRecorder), analysis queue status           |
+| `src/components/`        | Shared presentational primitives                                   |
+| `src/hooks/`             | Shared hooks not tied to one feature                               |
