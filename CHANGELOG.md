@@ -140,3 +140,47 @@ tagged yet.
 - FR-34 (a paginated `GET /analyses` history endpoint with song titles)
   is still not built -- the Progress screen's session table is fed by
   `progress_snapshots`, not a real history endpoint.
+
+## [Unreleased] -- E6
+
+### Added
+
+- `api/cmd/loadtest`: a CLI that fires N concurrent `POST /analyses`
+  requests at a running stack over real HTTP -- registers/verifies
+  distinct users via mailhog, uploads a synthetic reference song, and
+  asserts every response landed as either `202` or `429 QUEUE_FULL` with
+  the server still healthy before and after (spec 18/E6's "20 concurrent
+  tasks don't crash the server"). See `docs/LOAD_TESTING.md`.
+- `deploy/deploy.sh`: checkout -> build+up -> poll `go-api`'s healthcheck
+  for 60s -> automatic rollback to the previous ref if it never comes up
+  (spec 16.2). Rehearsed locally, both the success path and a forced
+  failure; no CD pipeline calls it, it's run by hand (spec 16.3: no
+  staging server for a pipeline to target).
+- `docs/RUNBOOK.md`: one-time VPS hardening checklist (UFW, SSH,
+  fail2ban, Cloudflare -- spec 11.1) that previously existed only as
+  spec text, never as an actual runbook step.
+- `docs/SECURITY.md`: dated, evidence-checked walkthrough of every spec
+  11 sub-item (11.1-11.6), stage E6's acceptance criterion.
+
+### Fixed
+
+- `internal/queue.Producer.EnqueueIfUnderLimit`: the analysis queue's
+  admission check (`Length()` then `Enqueue()`, two separate Redis calls)
+  let concurrent submissions all read the same pre-publish length and all
+  decide to admit, overshooting `QUEUE_MAX_LENGTH` under a real burst --
+  found by the load test above. Now one atomic Redis `EVAL`, with a
+  Postgres-row rollback on the rare loss of that race.
+- `deploy/docker-compose.dev.yml`: `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
+  had no dev-only default, so `cp .env.example .env && docker compose up`
+  did not actually work standalone as README/the compose file's own
+  comment claimed -- `go-api`'s config validation failed fast on the
+  empty values. Both now carry a placeholder like every other dev-only
+  default already there.
+
+### Known limitations
+
+- Caddy's CSP/security headers (spec 11.2) only cover `go-api`'s own JSON
+  responses today -- `web/`'s built static output still isn't served
+  through Caddy in production (tracked since E2, out of scope for this
+  CI-only stage). Re-verify those headers against real page content once
+  that wiring lands.

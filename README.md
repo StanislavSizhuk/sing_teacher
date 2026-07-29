@@ -4,14 +4,15 @@ A web app that compares a user's singing to the original vocal of a song and
 reports pitch, rhythm, vibrato, breathing, dynamics and timbre. Analysis runs
 offline, not in real time.
 
-**Status:** stages E1-E5 (auth, DB schema, song upload/YouTube import, the
+**Status:** stages E1-E6 (auth, DB schema, song upload/YouTube import, the
 analysis job queue with live WebSocket status updates, the Python ML
 pipeline -- Demucs separation, Whisper transcription, DTW alignment,
 pitch/rhythm/vibrato/dynamics/timbre/breath scoring, weighted score
-aggregation and a text report -- and a web UI covering all of that,
-including a synced piano-roll and a progress-over-time chart). A paginated
-analysis history endpoint (FR-34) is still open -- see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+aggregation and a text report -- a web UI covering all of that, including a
+synced piano-roll and a progress-over-time chart, and a completed spec
+section 11 security review with a local load-test tool and a deploy script
+with automatic rollback). A paginated analysis history endpoint (FR-34) is
+still open -- see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md).
 
 ## Quick start
@@ -116,6 +117,7 @@ uv run mypy .
 | `api/internal/transport/ws/` | WebSocket status channel (queue position, stage/done/failed) |
 | `api/migrations/` | goose SQL migrations, embedded into the binary |
 | `api/openapi.yaml` | API contract -- single source of truth |
+| `api/cmd/loadtest/` | Local load-test CLI (spec 18/E6), see `docs/LOAD_TESTING.md` |
 | `web/` | React + TS + Tailwind SPA: auth, song upload/YouTube, browser recording, analysis queue |
 | `web/src/api/` | Generated OpenAPI types, the one typed fetch client, session store |
 | `web/src/features/` | `auth`, `songs`, `analysis` -- one directory per feature, not per file type |
@@ -124,7 +126,7 @@ uv run mypy .
 | `worker/src/vocalcoach/pipeline/runner.py` | Orchestration: order, per-stage timeout/retry, progress persistence |
 | `worker/src/vocalcoach/queue/` | Redis Streams consumer, job lifecycle, Pub/Sub event publisher |
 | `worker/src/vocalcoach/repositories/` | Postgres implementations, same `analyses`/`songs` tables `api/` owns |
-| `deploy/` | Compose files, Caddyfile, nightly backup script |
+| `deploy/` | Compose files, Caddyfile, nightly backup script, `deploy.sh` (deploy with automatic rollback) |
 | `docs/` | Architecture, security, ML pipeline, runbook, ADRs |
 
 ## Documentation

@@ -115,3 +115,38 @@ history view but isn't one -- no song title, no pagination, capped at
 `progressPointsCap` (1000) points server-side. Never manually verified in
 a browser this session (worked CI-only, no dev server per this stage's
 instructions) -- worth a manual smoke test before calling E5 fully done.
+
+## 2026-07-29 -- E6
+
+**Done:** Load testing (`api/cmd/loadtest`, real HTTP against the dev
+stack -- 20 accepted, the rest correctly `429 QUEUE_FULL`, server healthy
+throughout, `docs/LOAD_TESTING.md`), which caught a real bug: the queue's
+admission check could overshoot `QUEUE_MAX_LENGTH` under a genuine
+concurrent burst (`Length()` then `Enqueue()` as two separate Redis
+calls). Fixed with an atomic Redis `EVAL`
+(`internal/queue.Producer.EnqueueIfUnderLimit`), proven against a real
+Redis instance under concurrent load, not just an in-process fake.
+Full spec section 11 review, evidence-checked line by line
+(`docs/SECURITY.md`); found and closed one real gap (VPS hardening --
+UFW/SSH/fail2ban/Cloudflare -- had no written procedure anywhere, now in
+`docs/RUNBOOK.md`). `deploy/deploy.sh`: checkout -> build+up -> poll
+healthcheck -> automatic rollback on failure (spec 16.2), rehearsed
+locally (success path and a forced failure, both correct) since this
+project has no provisioned VPS or staging server. Also fixed
+`docker-compose.dev.yml`: it silently required manually-set
+`GOOGLE_CLIENT_ID`/`SECRET` despite docs claiming otherwise.
+
+**Next:** FR-34 (paginated `GET /analyses` history) is still the one open
+functional requirement from E2/E5; otherwise the spec's stage list ends
+at E6 -- remaining work is whatever the tech lead prioritizes from the
+"Known limitations" entries accumulated across CHANGELOG.md.
+
+**Blockers:** none.
+
+**Risks:** Caddy's CSP/security headers don't yet cover a
+production-served `web/` (still not wired into `Caddy`/compose, tracked
+since E2) -- out of scope for this CI-only stage, but worth closing before
+a real public launch. `deploy/deploy.sh` has never run against a real VPS
+or a genuinely different git tag under production traffic, only a local
+rehearsal with a deliberately-broken migration; the first real production
+deploy is still the actual first test of the full sequence end to end.
