@@ -74,9 +74,10 @@ in `repositories/interfaces.py`.
 
 ## 5. What doesn't exist yet
 
-History with pagination (FR-34) and the progress-over-time chart (FR-35,
-G4) are E5, along with the adaptive/mobile UI pass and a WCAG AA audit.
-`web/` isn't wired into Caddy/compose for production either -- it runs as
-its own dev server; that's deploy/CD work (E6). Google sign-in has a
-working backend flow but no button/redirect target in `web/`. Check
-`tech.md` section 18 for what each stage adds.
+A paginated history endpoint (`GET /analyses`, FR-34) is still not built --
+the E5 Progress screen's session table is fed by `progress_snapshots`
+(score and date only, no song title), not a real history list. `web/`
+isn't wired into Caddy/compose for production either -- it runs as its own
+dev server; that's deploy/CD work (E6). Google sign-in has a working
+backend flow but no button/redirect target in `web/`. Check `tech.md`
+section 18 for what each stage adds.

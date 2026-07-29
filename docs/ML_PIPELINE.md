@@ -1,8 +1,9 @@
 # ML Pipeline
 
-Status: reflects stage E4 -- all eleven stages (spec 6.2), including
+Status: reflects stages E4-E5 -- all eleven stages (spec 6.2), including
 aggregation, the text report, and the piano-roll data (spec 18: "Агрегація
-балів, текстовий звіт, piano-roll").
+балів, текстовий звіт, piano-roll"), plus stage 11 now also recording a
+`progress_snapshots` point (spec 18/E5, FR-35).
 
 ## Where the code lives
 
@@ -170,7 +171,10 @@ retry resumes from (see "Resumability" below).
     both when it reads well and when it doesn't. The job handler persists
     `overall_score`/`feedback_text`/`scoring_version` in one write
     (`AnalysisRepository.save_scoring_result`) once every stage's result
-    is already in `stages_json`.
+    is already in `stages_json`, then upserts the same `overall_score` into
+    `progress_snapshots` (`record_progress_snapshot`, E5, FR-35) -- keyed
+    on `analysis_id` so a job that fails and later succeeds on retry
+    updates its one chart point instead of duplicating it.
 
 ## Caching (spec 6.6)
 

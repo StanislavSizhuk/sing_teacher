@@ -13,6 +13,7 @@ type RouterDeps struct {
 	Health       *HealthHandler
 	Song         *SongHandler
 	Analysis     *AnalysisHandler
+	Progress     *ProgressHandler
 	WS           http.HandlerFunc
 	Logger       *slog.Logger
 	CORSOrigin   string
@@ -63,6 +64,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 				r.Post("/{id}/cancel", deps.Analysis.Cancel)
 				r.Post("/{id}/retry", deps.Analysis.Retry)
 			})
+			r.Get("/progress", deps.Progress.List)
 		})
 
 		// The WebSocket handshake carries no Authorization header (browsers

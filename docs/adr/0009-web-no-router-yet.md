@@ -48,3 +48,17 @@ charts) add screens that genuinely want their own URL.
 - Pin `react-router-dom` and suppress the audit finding -- rejected: spec
   11.6 treats CI security findings as blocking, not something to silence
   per-project.
+
+## Addendum (E5, 2026-07-29)
+
+This is the revisit point Consequences called out. E5 adds a second
+top-level screen (`features/progress/ProgressPage.tsx`), so the trigger
+technically fired -- but the actual reason to add a router is a
+deep-linkable, bookmarkable URL for a specific resource (a song, an
+analysis), and neither this screen nor any other in the app has that need
+yet: Progress is a view toggle (`SegmentedControl` in `App.tsx`), not a
+resource with its own id. Still no dependency added; still revisit when a
+screen wants a real URL, not merely when the screen count grows. The CVE
+landscape in Context has not been re-checked as of this date -- re-run
+`npm audit` against the current `react-router-dom` line before relying on
+that part of the reasoning again.

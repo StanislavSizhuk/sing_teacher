@@ -152,6 +152,21 @@ class PostgresAnalysisRepository:
             )
         self._conn.commit()
 
+    def record_progress_snapshot(
+        self, analysis_id: str, user_id: str, overall_score: float
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO progress_snapshots (user_id, analysis_id, overall_score)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (analysis_id)
+                DO UPDATE SET overall_score = EXCLUDED.overall_score, created_at = now()
+                """,
+                (user_id, analysis_id, overall_score),
+            )
+        self._conn.commit()
+
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None:
         with self._conn.cursor() as cur:
             cur.execute(

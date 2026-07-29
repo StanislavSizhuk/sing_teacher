@@ -1,8 +1,9 @@
 # Architecture
 
-Status: reflects stages E1-E4, including `web/`. Components and flows
+Status: reflects stages E1-E5, including `web/`. Components and flows
 planned for later stages (Caddy serving the built SPA, Google sign-in UI,
-progress history) are noted as such, not described as if they existed.
+a paginated analysis history endpoint) are noted as such, not described
+as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -37,8 +38,14 @@ it. Built in E3: `python-worker` -- everything in
 `docs/ML_PIPELINE.md` -- and the Redis Pub/Sub relay
 (`internal/queue.RelayEvents`, ADR-0010) that lets `go-api` push the
 worker's stage/done/failed events onward over the same WS channel E2 built
-for queue position. `web/` runs as its own Vite dev server for now
-(`npm run dev`, talking to `go-api` directly); Caddy serving the built
+for queue position. Built in E4: stage 11 score aggregation and the FR-32
+report, `GET /analyses/{id}` returning the full score breakdown and
+piano-roll, and `web/`'s report/piano-roll screens. Built in E5:
+`progress_snapshots` actually gets written (the worker upserts one row per
+analysis alongside stage 11's result), `GET /progress` reads it back, and
+`web/` gained a Progress screen (chart, stat tiles, session table) and a
+top-level Analyze/Progress nav. `web/` runs as its own Vite dev server for
+now (`npm run dev`, talking to `go-api` directly); Caddy serving the built
 static SPA from the same origin as the API is still open -- see "Not yet
 built".
 
@@ -72,11 +79,17 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
   without touching the stored recording -- built and unit-tested now even
   though nothing can produce a `failed` analysis end-to-end until the E3
   worker exists.
+- `service/progress` (E5): read-only -- `ListByUser` is the entire service.
+  Every write to `progress_snapshots` comes from the E3 worker, never from
+  `go-api`, so there is no create/update path to guard here.
 - `repository/postgres`: `UserRepository`, `SongRepository` (dedup via
   `GetOrCreate`), `AnalysisRepository` (ownership-scoped `GetByID`/`Cancel`,
   and `RecalculatePositions`, a single `ROW_NUMBER()` query that reassigns
   FIFO position to every queued row -- see ADR-0008 for why position lives
-  in Postgres rather than being read back from the Streams entries directly).
+  in Postgres rather than being read back from the Streams entries directly),
+  `ProgressRepository` (E5, `ListByUser`, capped at a fixed size -- see
+  "Not yet built" for why this isn't cursor-paginated like spec 8.1 asks of
+  a browsable list).
 - `repository/redisrepo`: refresh-token rotation, login/verification
   throttles, and `AnalysisRateLimiter` (sliding window, `USER_ANALYSES_PER_HOUR`).
 - `queue`: Redis Streams producer (`XADD`/`XLEN`/`XDEL`), per ADR-0002.
@@ -145,7 +158,8 @@ queue/consumer.py  →  queue/handler.py  →  pipeline/runner.py  →  pipeline
 - `queue/handler.py`: `AnalysisJobHandler` builds the per-job
   `AnalysisContext` from current DB state, drives the runner, and on
   success denormalizes each aspect stage's score out of `stages_json` into
-  its own column (`analyses.pitch_score`, etc.) before `mark_done` --
+  its own column (`analyses.pitch_score`, etc.), records a FR-35 progress
+  snapshot alongside `save_scoring_result` (E5), then calls `mark_done` --
   `PipelineRunner` itself stays agnostic of which stages happen to produce
   a score. Also does the FR-43 cleanup: the scratch work dir always, the
   recording only once the job is durably `done` (a retryable failure must
@@ -157,6 +171,9 @@ queue/consumer.py  →  queue/handler.py  →  pipeline/runner.py  →  pipeline
 - `repositories/postgres.py`: `PostgresAnalysisRepository`/
   `PostgresSongRepository`, parameterised SQL only, `stages_json` updated
   via a `jsonb ||` merge so one stage's write can never clobber another's.
+  `record_progress_snapshot` (E5) upserts on `analysis_id` (a unique
+  constraint added alongside it), so a retried job that succeeds updates
+  its one chart point instead of the chart gaining a duplicate.
 
 ## Song upload / recording / analysis flow (E2 + E3)
 
@@ -215,6 +232,19 @@ ones. E2's screen count is small enough that plain component state covers
 the whole flow (auth -> add song -> record -> queue); revisit once more
 screens need real URL routing.
 
+E5 adds the Progress screen (`features/progress/`) as a second top-level
+view, toggled by a `SegmentedControl` nav in `App.tsx` next to the E2-E4
+analyze flow -- still no router, since a view toggle is not the same need
+as a deep-linkable per-resource URL (ADR-0009's addendum has the current
+reasoning).
+
+`features/progress/ProgressChart.tsx` follows the same accessible-chart
+pattern PianoRoll set in E4: an SVG/canvas with `role="img"` and a
+summarizing `aria-label`, with the actual data available to everyone,
+sighted or not, in a plain visible table right below it (`ProgressPage.tsx`)
+-- not a screen-reader-only duplicate, since the numbers are useful to look
+up regardless of how you're reading the page.
+
 ## Why Redis for sessions, not just Postgres
 
 Refresh tokens, the login brute-force throttle, and the verification-resend
@@ -264,10 +294,12 @@ applied with `goose`) -- there is no separate migrate step or container.
 - Google sign-in has no button/redirect target in `web/` yet -- the backend
   flow (`/auth/google`, `/auth/google/callback`) is E1 work with no E2 UI on
   top of it.
-- History with pagination (FR-34) and the progress-over-time chart
-  (FR-35, G4) -- E5 scope. `QueueStatus.tsx` only shows the most recent
-  analysis it just submitted; there is no `GET /analyses` (history) or
-  `GET /progress` screen yet.
+- History with pagination (FR-34): there is still no `GET /analyses`
+  collection endpoint. `QueueStatus.tsx` only shows the most recent
+  analysis it just submitted; the Progress screen's session table (E5) is
+  fed by `progress_snapshots` (id, score, date only, no song title), not a
+  real history endpoint -- it isn't a substitute for FR-34, just enough to
+  make the E5 progress chart's own data legible.
 
 ## Audio retention (spec 7.2, FR-43)
 
