@@ -13,7 +13,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from vocalcoach.config import ASPECTS
-from vocalcoach.models.audio import Lyrics, PitchCurve
+from vocalcoach.models.audio import Lyrics, PianoRollData, PitchCurve
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
 
@@ -130,11 +130,25 @@ class PostgresAnalysisRepository:
             cur.execute(query, (score, analysis_id))
         self._conn.commit()
 
-    def save_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None:
+    def save_piano_roll(self, analysis_id: str, data: PianoRollData) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 "UPDATE analyses SET pitch_curve_json = %s WHERE id = %s",
-                (Jsonb(curve.model_dump(mode="json")), analysis_id),
+                (Jsonb(data.model_dump(mode="json")), analysis_id),
+            )
+        self._conn.commit()
+
+    def save_scoring_result(
+        self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE analyses
+                SET overall_score = %s, feedback_text = %s, scoring_version = %s
+                WHERE id = %s
+                """,
+                (overall_score, feedback_text, scoring_version, analysis_id),
             )
         self._conn.commit()
 

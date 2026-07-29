@@ -13,12 +13,13 @@ from vocalcoach.audio.io import read_mono
 from vocalcoach.audio.timemap import TimeMap
 from vocalcoach.constants import (
     MIN_VOICED_FRACTION,
+    PIANO_ROLL_OFF_PITCH_CENTS,
     PITCH_HOP_SECONDS,
     PITCH_SCORE_CENTS_FOR_ZERO,
     PITCH_TIMEOUT_SECONDS,
 )
 from vocalcoach.errors import NoVoiceDetected
-from vocalcoach.models.audio import PitchCurve
+from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
@@ -49,9 +50,11 @@ class PitchStage(PipelineStage):
     `reference_pitch_curve` -- both curves are carried here (not just
     looked up again from `context`/the song row) so stage 7's vibrato
     analysis has one place to read them from regardless of whether the
-    reference curve came from cache or was just computed. The user curve is
-    also what the runner persists into `analyses.pitch_curve_json` (spec 7,
-    FR-31).
+    reference curve came from cache or was just computed. `piano_roll`
+    (a `PianoRollData`) is what the job handler persists into
+    `analyses.pitch_curve_json` (spec 7, FR-31) -- unlike the two curves
+    above, it is already resampled onto the user's time grid, ready for a
+    frame-for-frame overlay.
     """
 
     name = STAGE_NAME
@@ -81,11 +84,27 @@ class PitchStage(PipelineStage):
             )
 
         time_map = TimeMap.from_align_stage_data(context.result("align").data)
-        deviations = _cents_deviations(user_hz, reference_curve.hz, time_map)
-        mean_abs_cents = sum(abs(c) for c in deviations) / len(deviations) if deviations else 0.0
-        score = _score_from_mean_abs_cents(mean_abs_cents) if deviations else 0.0
+        aligned_reference_hz, deviations_cents = _align_and_compare(
+            user_hz, reference_curve.hz, time_map
+        )
+        present_deviations = [c for c in deviations_cents if c is not None]
+        mean_abs_cents = (
+            sum(abs(c) for c in present_deviations) / len(present_deviations)
+            if present_deviations
+            else 0.0
+        )
+        score = _score_from_mean_abs_cents(mean_abs_cents) if present_deviations else 0.0
 
         user_curve = PitchCurve(hop_seconds=PITCH_HOP_SECONDS, hz=user_hz)
+        piano_roll = PianoRollData(
+            hop_seconds=PITCH_HOP_SECONDS,
+            user_hz=user_hz,
+            reference_hz=aligned_reference_hz,
+            deviation_cents=deviations_cents,
+            off_pitch=[
+                c is not None and abs(c) > PIANO_ROLL_OFF_PITCH_CENTS for c in deviations_cents
+            ],
+        )
 
         return StageResult(
             stage=self.name,
@@ -94,10 +113,11 @@ class PitchStage(PipelineStage):
             data={
                 "score": score,
                 "mean_abs_cents": mean_abs_cents,
-                "compared_frames": len(deviations),
+                "compared_frames": len(present_deviations),
                 "voiced_fraction": voiced_fraction,
                 "user_pitch_curve": user_curve.model_dump(mode="json"),
                 "reference_pitch_curve": reference_curve.model_dump(mode="json"),
+                "piano_roll": piano_roll.model_dump(mode="json"),
             },
         )
 
@@ -113,24 +133,32 @@ class PitchStage(PipelineStage):
         return curve
 
 
-def _cents_deviations(
+def _align_and_compare(
     user_hz: list[float | None], reference_hz: list[float | None], time_map: TimeMap
-) -> list[float]:
+) -> tuple[list[float | None], list[float | None]]:
     """Walks the user's pitch curve (its own, finer hop) and looks up each
     frame's counterpart in the reference curve through `time_map` -- stage
     4's warping path runs on a coarser MFCC hop, so frame indices are never
     compared directly, only the times they represent (spec 6.3.4/6.3.5).
+
+    Returns, per user frame: the reference Hz value at that corresponding
+    time (`None` if out of range or unvoiced there) and the signed cents
+    deviation (`None` if either side is unvoiced/out of range). Both lists
+    are the same length as `user_hz`, so this is also the single place the
+    FR-31 piano-roll's frame-aligned overlay comes from -- the score
+    (`mean_abs_cents`) and the visualization read the same comparison.
     """
-    deviations: list[float] = []
+    aligned_reference: list[float | None] = []
+    deviations: list[float | None] = []
     for user_index, user_value in enumerate(user_hz):
-        if user_value is None:
-            continue
         reference_time = time_map.user_to_reference(user_index * PITCH_HOP_SECONDS)
         reference_index = round(reference_time / PITCH_HOP_SECONDS)
-        if reference_index < 0 or reference_index >= len(reference_hz):
-            continue
-        reference_value = reference_hz[reference_index]
-        if reference_value is None:
-            continue
-        deviations.append(_cents_deviation(user_value, reference_value))
-    return deviations
+        reference_value = (
+            reference_hz[reference_index] if 0 <= reference_index < len(reference_hz) else None
+        )
+        aligned_reference.append(reference_value)
+        if user_value is None or reference_value is None:
+            deviations.append(None)
+        else:
+            deviations.append(_cents_deviation(user_value, reference_value))
+    return aligned_reference, deviations

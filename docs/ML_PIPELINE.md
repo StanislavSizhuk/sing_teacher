@@ -1,13 +1,8 @@
 # ML Pipeline
 
-Status: reflects stage E3 -- stages 1-10 (spec 6.2). Stage 11 (weighted
-aggregation into `overall_score`, the text report, `scoring_version`
-stamping) is E4 scope: tech.md section 18 assigns "Агрегація балів,
-текстовий звіт, piano-roll" to E4 specifically, and E3's own acceptance
-criteria never mention scores or a report -- only that the pipeline
-finishes, stages are visible, and retry resumes correctly. This document
-covers what E3 actually ships; the aggregation formula (spec 6.4) and
-report format land here again when E4 builds them.
+Status: reflects stage E4 -- all eleven stages (spec 6.2), including
+aggregation, the text report, and the piano-roll data (spec 18: "Агрегація
+балів, текстовий звіт, piano-roll").
 
 ## Where the code lives
 
@@ -16,7 +11,8 @@ report format land here again when E4 builds them.
 | `worker/src/vocalcoach/pipeline/base.py` | `PipelineStage` contract every stage implements |
 | `worker/src/vocalcoach/pipeline/runner.py` | Orchestration: order, per-stage subprocess/timeout, retries, progress persistence (ADR-0012) |
 | `worker/src/vocalcoach/pipeline/registry.py` | `ModelRegistry`: lazy Demucs/Whisper/CREPE/pYIN construction behind narrow `Protocol`s |
-| `worker/src/vocalcoach/pipeline/stages/` | One file per stage, `preprocess.py` .. `breath.py` |
+| `worker/src/vocalcoach/pipeline/stages/` | One file per stage, `preprocess.py` .. `aggregate.py` |
+| `worker/src/vocalcoach/pipeline/report.py` | Stage 11's FR-32 per-aspect text report, built from the same stage data |
 | `worker/src/vocalcoach/audio/` | Shared DSP helpers: ffmpeg wrapper, loudness, WAV IO, RMS envelope, DTW time-mapping |
 | `worker/src/vocalcoach/queue/` | Redis Streams consumer, job handler, Redis Pub/Sub event publisher (ADR-0010) |
 | `worker/src/vocalcoach/repositories/` | `AnalysisRepository`/`SongRepository` Postgres implementations |
@@ -36,6 +32,7 @@ report format land here again when E4 builds them.
 | 8 | `dynamics` | `librosa.feature.rms` + the stage-4 time map | 30s | no |
 | 9 | `timbre` | `librosa.feature.mfcc` + the stage-4 time map | 30s | no |
 | 10 | `breath` | RMS-envelope silence detection | 30s | no |
+| 11 | `aggregate` | weighted sum + text report (own logic) | 10s | no |
 
 Every stage runs in its own spawned child process (ADR-0012) -- this is
 what makes each timeout an enforceable ceiling rather than an advisory one,
@@ -44,9 +41,8 @@ as a natural consequence rather than a special case. `PipelineRunner`
 persists a `StageResult` (spec 6.1: `stage`, `status`, `duration_ms`,
 `data`, `error_code`/`error_message`) into `analyses.stages_json` after
 every stage, and publishes a WS `stage` event (ADR-0010) before it starts
-the next one -- this is what makes progress visible in the UI (spec
-18/E3's acceptance criterion) and what a retry resumes from (see
-"Resumability" below).
+the next one -- this is what makes progress visible in the UI and what a
+retry resumes from (see "Resumability" below).
 
 ## Stage details
 
@@ -102,15 +98,22 @@ the next one -- this is what makes progress visible in the UI (spec
    voiced. The reference curve is cached the same way as stages 2/3
    (`songs.reference_pitch_json` + `vocal_stem_processed`, set together in
    one write once this stage computes it fresh -- see "Caching" below).
-   Deviation is cents (`1200 * log2(user_hz / reference_hz)`) at each
-   voiced pair the stage-4 `TimeMap` aligns; this stage's own 0-100 score
-   is `100 * (1 - min(1, mean_abs_cents / PITCH_SCORE_CENTS_FOR_ZERO))`
-   with `PITCH_SCORE_CENTS_FOR_ZERO = 100` (one semitone of average
-   deviation maps to 0). The user's curve (`PitchCurve`: `hop_seconds` +
-   one Hz-or-null per frame, no redundant per-point timestamp) is what
-   E4 persists into `analyses.pitch_curve_json` for the piano-roll (FR-31)
-   -- the reference curve is *not* duplicated there, since it is already
-   cached once per song in `songs.reference_pitch_json`.
+   Deviation is cents (`1200 * log2(user_hz / reference_hz)`) at each user
+   frame, looked up against the reference curve through the stage-4
+   `TimeMap` (`_align_and_compare`); this stage's own 0-100 score is
+   `100 * (1 - min(1, mean_abs_cents / PITCH_SCORE_CENTS_FOR_ZERO))` with
+   `PITCH_SCORE_CENTS_FOR_ZERO = 100` (one semitone of average deviation
+   maps to 0), averaged only over frames where both sides are voiced.
+
+   The same per-frame lookup also builds the FR-31 piano-roll payload
+   (`PianoRollData`, persisted into `analyses.pitch_curve_json`): the
+   reference curve *resampled onto the user's own time grid* (so the two
+   curves line up frame-for-frame despite the user's different
+   tempo/timing, rather than two curves on unrelated timelines), the
+   signed cents deviation per frame, and that deviation already
+   thresholded against `PIANO_ROLL_OFF_PITCH_CENTS = 50` into an
+   `off_pitch` boolean array -- the client colors a note by reading this
+   flag, never by re-deriving cents math in TypeScript (spec 12.1 DRY).
 6. **`rhythm`** -- `librosa.onset.onset_detect` on both signals; each
    reference onset is mapped through the `TimeMap` to an expected user
    time, compared to the nearest actual user onset.
@@ -141,8 +144,8 @@ the next one -- this is what makes progress visible in the UI (spec
    frame, cosine similarity at each `TimeMap`-aligned pair, averaged.
    Score is `100 * max(0, mean cosine similarity)`. Per spec 6.3.9, this
    is a rough "how similar does it sound" indicator, not a diagnosis of
-   vocal technique -- the disclaimer text itself is E4's report-writing
-   job, not this stage's; this stage only produces the honest number.
+   vocal technique -- this stage only produces the honest number; stage
+   11's report is what carries the mandatory disclaimer to the user.
 10. **`breath`** -- reuses the stage-8 RMS envelope; a run at least
     `BREATH_MIN_PAUSE_SECONDS = 0.2` long and quieter than
     `BREATH_SILENCE_RELATIVE_DB = -35` dB relative to the track's own
@@ -151,6 +154,23 @@ the next one -- this is what makes progress visible in the UI (spec
     `BREATH_PAUSE_MATCH_TOLERANCE_SECONDS = 0.5` of the expected time, it
     counts as matched. Score is `100 * matched / reference_pause_count`
     (100 if the reference has no pauses to match against at all).
+11. **`aggregate`** (spec 6.3.11, 6.4, FR-32) -- reads the six aspect
+    stages' own `score` values (never recomputes them) and weighted-sums
+    them into `overall_score` via `SCORING_WEIGHTS`
+    (`ScoringWeights.as_dict()`, so no `getattr`-on-`Any` typing hazard),
+    rounded to one decimal. `pipeline/report.py` builds the FR-32 text
+    report from the *same* stage data: one summary line naming the
+    lowest-scoring aspect as the suggested focus, then one paragraph per
+    aspect in `config.ASPECTS` order, each grounded in that aspect's own
+    numbers (mean cents, ms offset, matched-pause counts, correlation,
+    vibrato rate/depth, ...) rather than generic advice. Feedback is
+    tiered by score against `FEEDBACK_EXCELLENT_THRESHOLD = 90` /
+    `FEEDBACK_GOOD_THRESHOLD = 75` / `FEEDBACK_FAIR_THRESHOLD = 50`. The
+    timbre paragraph always includes spec 6.3.9's mandatory disclaimer,
+    both when it reads well and when it doesn't. The job handler persists
+    `overall_score`/`feedback_text`/`scoring_version` in one write
+    (`AnalysisRepository.save_scoring_result`) once every stage's result
+    is already in `stages_json`.
 
 ## Caching (spec 6.6)
 
@@ -172,7 +192,7 @@ The separated stem lives in its own `song-stems` Docker volume, not
 processing), but the stem is meant to survive indefinitely (spec 7.2,
 "поки існує songs-запис").
 
-## Resumability (spec 6.8, 18/E3 acceptance)
+## Resumability (spec 6.8)
 
 `PipelineRunner.run` takes `already_done: dict[str, StageResult]`, read
 from `analyses.stages_json` before the first stage runs; any stage already
@@ -206,8 +226,7 @@ all (subprocess isolation, not `signal.alarm`).
 All from the same `.env` the Go API reads (spec 20.5):
 `PITCH_ENGINE` (`crepe`|`pyin`), `WHISPER_MODEL`, `DEMUCS_MODEL`,
 `SCORING_VERSION`, `SCORING_WEIGHTS` (parsed and checked to sum to 1.0 at
-startup -- `SCORING_WEIGHTS`/`SCORING_VERSION` are read and validated now
-but not yet consumed by any stage; stage 11/E4 is what applies them).
+startup, consumed by stage 11's `AggregateStage`).
 `worker/src/vocalcoach/config.py` fails fast, listing every problem at
 once, exactly like `api/internal/config`.
 
@@ -216,24 +235,26 @@ once, exactly like `api/internal/config`.
 Every threshold named above with "empirical"/"starting point" language
 (`ALIGN_MAX_NORMALIZED_DISTANCE`, `MIN_VOCAL_LOUDNESS_LUFS`,
 `VIBRATO_*`, `BREATH_*`, `RHYTHM_ONSET_TOLERANCE_MS`,
-`PITCH_SCORE_CENTS_FOR_ZERO`) is a reasonable first value, not a value
+`PITCH_SCORE_CENTS_FOR_ZERO`, `FEEDBACK_EXCELLENT_THRESHOLD` /
+`FEEDBACK_GOOD_THRESHOLD` / `FEEDBACK_FAIR_THRESHOLD`,
+`PIANO_ROLL_OFF_PITCH_CENTS`) is a reasonable first value, not a value
 tuned against real singing. Spec 19's risk table already anticipates this
 ("калібрування на golden-фікстурах"): calibration needs real recordings
-and is deliberately deferred, the same way spec 18 defers scoring
-aggregation itself to E4. `test_timbre_stage.py` documents one concrete
+and is deliberately deferred. `test_timbre_stage.py` documents one concrete
 surprise from building this: MFCC cosine similarity is fairly insensitive
 to spectral shape once loudness is normalized (spec 6.3.1), so the
 "different spectra" test asserts a *relative* comparison rather than an
 absolute threshold -- worth knowing before tuning the real timbre score
-formula in E4.
+formula.
 
-## What E4 adds
+The FR-32 report text is generated in English only and does not route
+through the web app's i18n key system (spec 12.1, FR-41): it is dynamic
+prose built from per-analysis numbers, not static UI copy, so there is no
+fixed string to key. Localizing it (e.g. building the same sentences from
+Ukrainian templates) is deferred until there is a concrete need.
 
-Stage 11 (spec 6.3.11): the weighted sum of the six aspect scores this
-document's stages 5-10 already compute (`analyses.pitch_score` /
-`rhythm_score` / `vibrato_score` / `breath_score` / `dynamics_score` /
-`timbre_score` are all populated by the corresponding stage already) into
-`overall_score`, stamped with `scoring_version` so old results stay
-reproducible if the weights ever change (spec 6.4). Plus the text report
-and the piano-roll UI that reads `analyses.pitch_curve_json` and
-`songs.reference_pitch_json` together.
+Spec 6.9's "significant non-vocal energy in the recording" soft-detection
+and report warning is not implemented by any stage yet -- it is not
+assigned to a specific stage number in spec 6.2's table, and none of
+E1-E4's acceptance criteria call for it. A future stage (or an addition
+to `preprocess`) needs to own it.

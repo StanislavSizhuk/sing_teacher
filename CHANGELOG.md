@@ -56,8 +56,7 @@ tagged yet.
   preprocessing, Demucs vocal separation (cached per song), Whisper
   transcription (cached per song), DTW alignment, and pitch/rhythm/
   vibrato/dynamics/timbre/breath scoring against the reference, each
-  persisted to `analyses.stages_json` as it completes. Stage 11 (weighted
-  `overall_score`, the text report) is E4 scope (tech.md section 18).
+  persisted to `analyses.stages_json` as it completes.
 - Every stage runs in its own spawned child process: a real, enforceable
   per-stage timeout, and the mechanism that satisfies spec 6.5's "Demucs
   and Whisper never resident together" (ADR-0012).
@@ -80,3 +79,35 @@ tagged yet.
   jobs.
 - ADRs 0010-0012 (worker events over Redis Pub/Sub, worker dependency
   choices, per-stage subprocess isolation); `docs/ML_PIPELINE.md`.
+
+## [Unreleased] -- E4
+
+### Added
+
+- `worker/`: stage 11 (spec 6.3.11) weighted-sums the six aspect scores
+  into `overall_score` via `SCORING_WEIGHTS`, stamped with
+  `scoring_version` (spec 6.4, ADR-0005). `pipeline/report.py` builds the
+  FR-32 text report from the same stage data -- one paragraph per aspect
+  with concrete numbers, plus spec 6.3.9's mandatory timbre disclaimer.
+- `worker/`: the pitch stage now also resamples the reference pitch curve
+  onto the user's own time grid through the stage-4 DTW time map and
+  precomputes a per-frame cents deviation and off-pitch flag (FR-31),
+  persisted alongside the user's curve in `analyses.pitch_curve_json`.
+- `go-api`: `GET /analyses/{id}` (and the enqueue/cancel/retry responses)
+  now return the six aspect scores, `feedback_text`, `scoring_version`,
+  and the piano-roll payload, passed through from the worker's JSON
+  without a re-encode.
+- `web/`: once an analysis is done, `QueueStatus` shows the full score
+  breakdown (`AnalysisReport`) and a canvas piano-roll (`PianoRoll`) whose
+  cursor tracks the user's own recording during playback (FR-33) -- the
+  recording is replayed from the client-side Blob captured at record
+  time, not re-fetched, since the server deletes it minutes after
+  processing (FR-43).
+
+### Known limitations
+
+- The FR-32 report text is English-only; it is not routed through the
+  web app's i18n key system, since it is dynamic prose over per-analysis
+  numbers rather than static UI copy (see `docs/ML_PIPELINE.md`).
+- Spec 6.9's non-vocal-energy warning is still unimplemented -- no stage
+  owns it yet.

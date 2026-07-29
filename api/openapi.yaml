@@ -696,17 +696,72 @@ components:
           description: 1-based position among currently queued jobs. Absent once no longer queued.
         current_stage:
           type: string
-          description: Set by the E3 worker once processing starts.
+          description: Set by the worker once processing starts.
         error_code:
           type: string
+        pitch_score:
+          type: number
+        rhythm_score:
+          type: number
+        vibrato_score:
+          type: number
+        breath_score:
+          type: number
+        dynamics_score:
+          type: number
+        timbre_score:
+          type: number
         overall_score:
           type: number
+          description: Weighted sum of the six aspect scores (spec 6.4), set by stage 11.
+        feedback_text:
+          type: string
+          description: Readable per-aspect report with concrete advice (FR-32).
+        scoring_version:
+          type: string
+          description: Which SCORING_WEIGHTS this analysis was scored under (spec 6.4).
+        piano_roll:
+          $ref: "#/components/schemas/PianoRoll"
         created_at:
           type: string
           format: date-time
         completed_at:
           type: string
           format: date-time
+
+    PianoRoll:
+      type: object
+      description: >-
+        FR-31 overlay data: the user's pitch curve and the reference curve
+        already resampled onto the user's own time grid, frame for frame, so
+        the client never needs to redo the DTW alignment (spec 6.3.4/6.3.5)
+        to draw the two curves together.
+      required: [hop_seconds, user_hz, reference_hz, deviation_cents, off_pitch]
+      properties:
+        hop_seconds:
+          type: number
+          description: Seconds between consecutive frames; frame i's time is i * hop_seconds.
+        user_hz:
+          type: array
+          items:
+            type: number
+            nullable: true
+        reference_hz:
+          type: array
+          items:
+            type: number
+            nullable: true
+        deviation_cents:
+          type: array
+          description: Signed cents deviation per frame, null wherever either side is unvoiced.
+          items:
+            type: number
+            nullable: true
+        off_pitch:
+          type: array
+          description: deviation_cents already thresholded against PIANO_ROLL_OFF_PITCH_CENTS.
+          items:
+            type: boolean
 
     Problem:
       type: object

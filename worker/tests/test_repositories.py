@@ -13,7 +13,7 @@ from typing import Any, cast
 import psycopg
 import pytest
 
-from vocalcoach.models.audio import Lyrics, LyricsWord, PitchCurve
+from vocalcoach.models.audio import Lyrics, LyricsWord, PianoRollData, PitchCurve
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.repositories.postgres import PostgresAnalysisRepository, PostgresSongRepository
 
@@ -119,6 +119,30 @@ def test_analysis_repository_progress_and_terminal_states(
 
     with pytest.raises(ValueError, match="unknown aspect"):
         repo.save_aspect_score(analysis_id, "not_a_real_aspect", 1.0)
+
+    piano_roll = PianoRollData(
+        hop_seconds=0.01,
+        user_hz=[440.0, None],
+        reference_hz=[440.0, None],
+        deviation_cents=[0.0, None],
+        off_pitch=[False, False],
+    )
+    repo.save_piano_roll(analysis_id, piano_roll)
+    with conn.cursor() as cur:
+        cur.execute("SELECT pitch_curve_json FROM analyses WHERE id = %s", (analysis_id,))
+        (stored,) = _fetchone(cur)
+    assert PianoRollData.model_validate(stored) == piano_roll
+
+    repo.save_scoring_result(analysis_id, 88.4, "Overall score: 88/100.", "1.0")
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT overall_score, feedback_text, scoring_version FROM analyses WHERE id = %s",
+            (analysis_id,),
+        )
+        overall_score, feedback_text, scoring_version = _fetchone(cur)
+    assert float(overall_score) == 88.4
+    assert feedback_text == "Overall score: 88/100."
+    assert scoring_version == "1.0"
 
     repo.mark_done(analysis_id, {"demucs": "htdemucs"})
     assert repo.get_by_id(analysis_id).status == "done"

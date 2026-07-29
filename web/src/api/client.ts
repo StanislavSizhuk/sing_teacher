@@ -219,6 +219,27 @@ export async function addSong(input: AddSongByUpload | AddSongByYouTube): Promis
 
 export type AnalysisStatus = 'queued' | 'processing' | 'done' | 'failed' | 'canceled'
 
+/** FR-31 piano-roll overlay data: the user's and reference's pitch curves,
+ * already resampled onto the same (the user's) time grid frame for frame,
+ * plus a precomputed cents deviation and off-pitch flag per frame -- the
+ * client never re-derives the DTW alignment or the cents formula. */
+export interface PianoRoll {
+  hopSeconds: number
+  userHz: (number | null)[]
+  referenceHz: (number | null)[]
+  deviationCents: (number | null)[]
+  offPitch: boolean[]
+}
+
+export interface AspectScores {
+  pitch?: number
+  rhythm?: number
+  vibrato?: number
+  breath?: number
+  dynamics?: number
+  timbre?: number
+}
+
 export interface Analysis {
   id: string
   songId: string
@@ -226,7 +247,11 @@ export interface Analysis {
   queuePosition?: number
   currentStage?: string
   errorCode?: string
+  aspectScores: AspectScores
   overallScore?: number
+  feedbackText?: string
+  scoringVersion?: string
+  pianoRoll?: PianoRoll
 }
 
 function toAnalysis(
@@ -239,7 +264,24 @@ function toAnalysis(
     queuePosition: data.queue_position,
     currentStage: data.current_stage,
     errorCode: data.error_code,
+    aspectScores: {
+      pitch: data.pitch_score,
+      rhythm: data.rhythm_score,
+      vibrato: data.vibrato_score,
+      breath: data.breath_score,
+      dynamics: data.dynamics_score,
+      timbre: data.timbre_score,
+    },
     overallScore: data.overall_score,
+    feedbackText: data.feedback_text,
+    scoringVersion: data.scoring_version,
+    pianoRoll: data.piano_roll && {
+      hopSeconds: data.piano_roll.hop_seconds,
+      userHz: data.piano_roll.user_hz,
+      referenceHz: data.piano_roll.reference_hz,
+      deviationCents: data.piano_roll.deviation_cents,
+      offPitch: data.piano_roll.off_pitch,
+    },
   }
 }
 

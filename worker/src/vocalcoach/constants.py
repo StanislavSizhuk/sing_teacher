@@ -97,3 +97,20 @@ RETRY_BACKOFF_BASE_SECONDS = 2.0
 # Queue reliability (spec 10.1).
 PENDING_CLAIM_MIN_IDLE = 15 * 60  # seconds a delivered job may sit unacked before reclaim
 MAX_CLAIM_ATTEMPTS = 3  # after this many reclaims the job is given up on as failed
+
+# Stage 11 aggregation (spec 6.2/6.3.11, FR-32).
+AGGREGATE_TIMEOUT_SECONDS = 10
+
+# Feedback tiers every aspect's report text reads off its own score
+# against (spec FR-32): EXCELLENT reads as "nailed it", GOOD as "solid,
+# minor notes", FAIR as "noticeable room to improve"; below FAIR is POOR.
+# Starting points, not calibrated against real singers (same caveat as
+# every other scoring threshold in this file -- spec 19 risk table).
+FEEDBACK_EXCELLENT_THRESHOLD = 90.0
+FEEDBACK_GOOD_THRESHOLD = 75.0
+FEEDBACK_FAIR_THRESHOLD = 50.0
+
+# FR-31: a piano-roll frame whose |deviation_cents| exceeds this is drawn as
+# an off-pitch note. Half a semitone is comfortably past normal intonation
+# wobble but well inside a genuinely wrong note.
+PIANO_ROLL_OFF_PITCH_CENTS = 50.0

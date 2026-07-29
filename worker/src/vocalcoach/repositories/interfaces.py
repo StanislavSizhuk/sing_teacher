@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from vocalcoach.models.audio import Lyrics, PitchCurve
+from vocalcoach.models.audio import Lyrics, PianoRollData, PitchCurve
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
 
@@ -58,11 +58,22 @@ class AnalysisRepository(Protocol):
         (spec 7); `aspect` must be one of `config.ASPECTS`."""
         ...
 
-    def save_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None: ...
+    def save_piano_roll(self, analysis_id: str, data: PianoRollData) -> None:
+        """Persists FR-31's frame-aligned overlay data into
+        `analyses.pitch_curve_json` (spec 7)."""
+        ...
+
+    def save_scoring_result(
+        self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
+    ) -> None:
+        """Writes stage 11's weighted `overall_score`, the FR-32 text
+        report, and the `scoring_version` it was computed under (spec 6.4)
+        -- called once every aspect stage's own score is already
+        denormalized into its own column."""
+        ...
 
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None:
-        """Terminal success: every stage 1-10 finished (spec 18/E3 -- the
-        weighted overall score and text report are stage 11, built in E4)."""
+        """Terminal success: every stage 1-11 finished (spec 18/E4)."""
         ...
 
     def mark_failed(self, analysis_id: str, error_code: str) -> None:

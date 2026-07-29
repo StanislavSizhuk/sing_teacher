@@ -1,8 +1,9 @@
 # Security
 
 Status: reflects stages E1 (auth + account perimeter), E2 (song/recording
-upload, YouTube import, job queue) and E3 (the ML worker that now consumes
-that queue). Updated whenever the perimeter changes (spec 14.1).
+upload, YouTube import, job queue), E3 (the ML worker that now consumes
+that queue) and E4 (score aggregation, report, piano-roll). Updated
+whenever the perimeter changes (spec 14.1).
 
 ## Threat model, in scope for E1
 
@@ -38,6 +39,24 @@ that queue). Updated whenever the perimeter changes (spec 14.1).
   event for an analysis the "sender" doesn't own.
 - SQL injection in the worker's own repository layer, mirroring the same
   concern already covered for `go-api`.
+
+## Threat model, in scope for E4
+
+- Widened `GET /analyses/{id}` (and enqueue/cancel/retry) response: six
+  aspect scores, the text report, and the piano-roll payload are now
+  returned. Authorization is unchanged -- the same owner-scoped
+  `AnalysisRepository.GetByID(ctx, id, userID)` gates every field, not
+  just the ones that existed before E4.
+- The FR-32 report text is server-generated entirely from numeric stage
+  data (means, correlations, counts) -- no user-controlled string ever
+  reaches it, so there is no template-injection surface. It is rendered
+  in `web/` as plain React text content (never `dangerouslySetInnerHTML`),
+  so React's default output escaping applies.
+- `analyses.pitch_curve_json` is passed through to the client as
+  `json.RawMessage` without a re-encode (`dto_analyses.go`). It is written
+  exclusively by the worker's own `PianoRollData.model_dump()`, never from
+  request input, so this is a performance choice, not a new trust
+  boundary.
 
 ## File upload and YouTube import (E2, spec 11.3)
 
@@ -239,5 +258,5 @@ that queue). Updated whenever the perimeter changes (spec 14.1).
 
 ## Not yet applicable
 
-- The score/report display surface (E4) -- there is no report to attack
-  until stage 11 and the piano-roll UI exist.
+- History and progress endpoints (`GET /analyses` list, `GET /progress`,
+  FR-34/FR-35) -- E5. Nothing to attack until they exist.
