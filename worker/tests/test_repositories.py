@@ -148,6 +148,34 @@ def test_analysis_repository_progress_and_terminal_states(
     assert repo.get_by_id(analysis_id).status == "done"
 
 
+def test_record_progress_snapshot_upserts_on_retry(
+    conn: psycopg.Connection, seeded_ids: tuple[str, str, str]
+) -> None:
+    user_id, _song_id, analysis_id = seeded_ids
+    repo = PostgresAnalysisRepository(conn)
+
+    repo.record_progress_snapshot(analysis_id, user_id, 60.0)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT user_id, overall_score FROM progress_snapshots WHERE analysis_id = %s",
+            (analysis_id,),
+        )
+        stored_user_id, overall_score = _fetchone(cur)
+    assert str(stored_user_id) == user_id
+    assert float(overall_score) == 60.0
+
+    # A retried job re-scores under the same analysis_id (spec 6.8) -- the
+    # chart point must update in place, not duplicate (FR-35).
+    repo.record_progress_snapshot(analysis_id, user_id, 75.0)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT overall_score FROM progress_snapshots WHERE analysis_id = %s", (analysis_id,)
+        )
+        rows = cur.fetchall()
+    assert len(rows) == 1
+    assert float(rows[0][0]) == 75.0
+
+
 def test_mark_failed(conn: psycopg.Connection, seeded_ids: tuple[str, str, str]) -> None:
     _user_id, _song_id, analysis_id = seeded_ids
     repo = PostgresAnalysisRepository(conn)

@@ -50,6 +50,9 @@ class HandlerAnalysisRepository(Protocol):
     def save_scoring_result(
         self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
     ) -> None: ...
+    def record_progress_snapshot(
+        self, analysis_id: str, user_id: str, overall_score: float
+    ) -> None: ...
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None: ...
     def mark_failed(self, analysis_id: str, error_code: str) -> None: ...
 
@@ -135,7 +138,8 @@ class AnalysisJobHandler:
         separate mapping table is needed. `pitch`'s `piano_roll` goes into
         `analyses.pitch_curve_json` the same way (spec 7, FR-31), and
         stage 11's `overall_score`/`feedback_text`/`scoring_version` go into
-        their own columns (spec 6.4, FR-32).
+        their own columns (spec 6.4, FR-32), and `overall_score` also lands
+        as one `progress_snapshots` row for the FR-35 progress chart.
 
         `PipelineRunner` never does this itself: it stays agnostic of which
         stages happen to produce a score, so adding a stage there never
@@ -156,12 +160,18 @@ class AnalysisJobHandler:
         aggregate_result = record.stages.get("aggregate")
         if aggregate_result is not None:
             data = aggregate_result.data
+            overall_score = float(data["overall_score"])
             self._analyses.save_scoring_result(
                 analysis_id,
-                overall_score=float(data["overall_score"]),
+                overall_score=overall_score,
                 feedback_text=str(data["feedback_text"]),
                 scoring_version=str(data["scoring_version"]),
             )
+            # FR-35/G4: one progress-chart point per analysis, recorded here
+            # rather than in AggregateStage itself -- stage 11 has no
+            # database access (spec 12.3), and record.user_id is only known
+            # to the handler, not the pipeline context.
+            self._analyses.record_progress_snapshot(analysis_id, record.user_id, overall_score)
 
     def _build_context(self, analysis_id: str, user_id: str, song: SongRecord) -> AnalysisContext:
         return AnalysisContext(

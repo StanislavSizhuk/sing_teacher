@@ -72,6 +72,15 @@ class AnalysisRepository(Protocol):
         denormalized into its own column."""
         ...
 
+    def record_progress_snapshot(
+        self, analysis_id: str, user_id: str, overall_score: float
+    ) -> None:
+        """Upserts the FR-35 progress-chart point for this analysis into
+        `progress_snapshots` (spec 7), keyed on `analysis_id` so a job that
+        fails and later succeeds on retry updates its one point instead of
+        the chart gaining a duplicate for the same job (spec 6.8)."""
+        ...
+
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None:
         """Terminal success: every stage 1-11 finished (spec 18/E4)."""
         ...

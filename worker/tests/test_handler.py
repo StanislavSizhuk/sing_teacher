@@ -35,6 +35,7 @@ class FakeAnalysisRepo:
         self.saved_scores: list[tuple[str, str, float]] = []
         self.saved_piano_rolls: list[tuple[str, PianoRollData]] = []
         self.saved_scoring_results: list[tuple[str, float, str, str]] = []
+        self.progress_snapshots: list[tuple[str, str, float]] = []
 
     def get_by_id(self, analysis_id):
         return self._record
@@ -49,6 +50,9 @@ class FakeAnalysisRepo:
         self.saved_scoring_results.append(
             (analysis_id, overall_score, feedback_text, scoring_version)
         )
+
+    def record_progress_snapshot(self, analysis_id, user_id, overall_score):
+        self.progress_snapshots.append((analysis_id, user_id, overall_score))
 
     def mark_done(self, analysis_id, model_versions):
         self.marked_done.append((analysis_id, model_versions))
@@ -119,6 +123,7 @@ def test_handle_success_deletes_recording_and_cached_song_source(settings, tmp_p
 
     assert terminal is True
     assert analyses.marked_done == [("a1", {"demucs": "htdemucs"})]
+    assert analyses.progress_snapshots == []  # no "aggregate" stage in this fixture's stages={}
     assert events.done == ["a1"]
     assert not recording_path.exists()  # FR-43: done -> recording deleted now
     assert not song_path.exists()  # already cached -> original upload no longer needed
@@ -175,6 +180,7 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
     assert len(analyses.saved_scores) == 2  # "align" has no "score" key, nothing else does either
     assert analyses.saved_piano_rolls == [("a5", piano_roll)]
     assert analyses.saved_scoring_results == [("a5", 88.4, "Overall score: 88/100.", "1.0")]
+    assert analyses.progress_snapshots == [("a5", "u1", 88.4)]
     # Score persistence must happen before mark_done, not after -- a reader
     # that sees status="done" should already find every score in place.
     assert analyses.marked_done == [("a5", {})]
