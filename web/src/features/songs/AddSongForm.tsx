@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react'
 import { addSong, type AddSongByUpload, type AddSongByYouTube, type Song } from '../../api/client'
 import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
+import { SegmentedControl } from '../../components/SegmentedControl'
 import { TextField } from '../../components/TextField'
 
 interface AddSongFormProps {
@@ -41,34 +42,15 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
     <form onSubmit={handleSubmit} className="flex w-full max-w-md flex-col gap-4">
       <h1 className="text-ink-950 text-lg font-semibold">Add a song</h1>
 
-      <div role="radiogroup" aria-label="Song source" className="flex gap-2">
-        <button
-          type="button"
-          role="radio"
-          aria-checked={sourceType === 'upload'}
-          onClick={() => setSourceType('upload')}
-          className={`flex-1 rounded border px-3 py-2 text-sm ${
-            sourceType === 'upload'
-              ? 'bg-ink-950 border-ink-950 text-ink-0'
-              : 'border-ink-300 text-ink-700'
-          }`}
-        >
-          Upload file
-        </button>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={sourceType === 'youtube'}
-          onClick={() => setSourceType('youtube')}
-          className={`flex-1 rounded border px-3 py-2 text-sm ${
-            sourceType === 'youtube'
-              ? 'bg-ink-950 border-ink-950 text-ink-0'
-              : 'border-ink-300 text-ink-700'
-          }`}
-        >
-          YouTube link
-        </button>
-      </div>
+      <SegmentedControl
+        label="Song source"
+        value={sourceType}
+        onChange={setSourceType}
+        options={[
+          { value: 'upload', label: 'Upload file' },
+          { value: 'youtube', label: 'YouTube link' },
+        ]}
+      />
 
       {sourceType === 'upload' ? (
         <>

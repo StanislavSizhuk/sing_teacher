@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { Button } from '../../components/Button'
+import { SegmentedControl } from '../../components/SegmentedControl'
 import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { useMediaRecorder } from './useMediaRecorder'
 
@@ -35,34 +36,15 @@ export function RecordingCapture({ onReady }: RecordingCaptureProps) {
         voice directly against the reference track and assumes no other sound is present.
       </p>
 
-      <div role="radiogroup" aria-label="Recording source" className="flex gap-2">
-        <button
-          type="button"
-          role="radio"
-          aria-checked={mode === 'record'}
-          onClick={() => handleModeChange('record')}
-          className={`flex-1 rounded border px-3 py-2 text-sm ${
-            mode === 'record'
-              ? 'bg-ink-950 border-ink-950 text-ink-0'
-              : 'border-ink-300 text-ink-700'
-          }`}
-        >
-          Record in browser
-        </button>
-        <button
-          type="button"
-          role="radio"
-          aria-checked={mode === 'upload'}
-          onClick={() => handleModeChange('upload')}
-          className={`flex-1 rounded border px-3 py-2 text-sm ${
-            mode === 'upload'
-              ? 'bg-ink-950 border-ink-950 text-ink-0'
-              : 'border-ink-300 text-ink-700'
-          }`}
-        >
-          Upload a file
-        </button>
-      </div>
+      <SegmentedControl
+        label="Recording source"
+        value={mode}
+        onChange={handleModeChange}
+        options={[
+          { value: 'record', label: 'Record in browser' },
+          { value: 'upload', label: 'Upload a file' },
+        ]}
+      />
 
       {mode === 'record' ? (
         <div className="flex flex-col gap-2">
