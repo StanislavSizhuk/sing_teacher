@@ -2,15 +2,36 @@
 	encode gzip
 
 	# Perimeter security headers (spec 11.2). Centralized here, not in go-api:
-	# Caddy is the only service with a published port, and once web/ exists it
-	# will serve both the SPA and the proxied API from this one origin.
+	# Caddy is the only service with a published port, serving both the SPA
+	# and the proxied API from this one origin (ADR-0013).
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "microphone=(self)"
-		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		# No 'unsafe-inline' anywhere: Tailwind's CSS is precompiled to a
+		# static file, and React's `style` prop sets CSSOM properties
+		# directly rather than an inline `style` attribute, so style-src
+		# 'self' covers both. media-src needs blob: for MediaRecorder
+		# preview playback (FR-20) before a recording is ever uploaded.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 	}
 
-	reverse_proxy go-api:8080
+	# /healthz and /readyz stay unversioned and proxied (spec 17.3: an
+	# external uptime monitor pings /healthz directly).
+	@api path /api/* /healthz /readyz
+	handle @api {
+		reverse_proxy go-api:8080
+	}
+
+	# Everything else is the built SPA (web/Dockerfile's builder stage
+	# copies it into /srv/www, spec 5.1). try_files falls back to
+	# index.html for any path that isn't a real static asset, so a future
+	# client-side router (ADR-0009) can own deep-linkable URLs without a
+	# server-side route per screen.
+	handle {
+		root * /srv/www
+		file_server
+		try_files {path} /index.html
+	}
 }

@@ -11,8 +11,11 @@ pitch/rhythm/vibrato/dynamics/timbre/breath scoring, weighted score
 aggregation and a text report -- a web UI covering all of that, including a
 synced piano-roll and a progress-over-time chart, and a completed spec
 section 11 security review with a local load-test tool and a deploy script
-with automatic rollback). A paginated analysis history endpoint (FR-34) is
-still open -- see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+with automatic rollback), plus a post-E6 fix that wires the web UI into
+`docker compose` behind Caddy (ADR-0013) so the whole stack -- frontend
+included -- comes up with one command. A paginated analysis history
+endpoint (FR-34) is still open -- see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md).
 
 ## Quick start
@@ -28,7 +31,9 @@ cp .env.example .env
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Migrations apply automatically on boot. Once the stack is healthy:
+Migrations apply automatically on boot. Once the stack is healthy, open
+`https://<your-domain>/` for the web UI -- Caddy serves the built SPA and
+proxies `/api/v1/*` to `go-api` from that same origin (ADR-0013):
 
 - `POST https://<your-domain>/api/v1/auth/register`
 - `POST https://<your-domain>/api/v1/auth/verify`
@@ -47,6 +52,7 @@ cp .env.example .env   # real GOOGLE_CLIENT_ID/SECRET only needed to exercise Go
 docker compose -f deploy/docker-compose.dev.yml up
 ```
 
+- Web: `http://localhost:5173` (hot-reloads on save via Vite)
 - API: `http://localhost:8080` (hot-reloads on save via `air`)
 - Mailhog UI (captured verification emails): `http://localhost:8025`
 - Postgres: `localhost:5432`, Redis: `localhost:6379` (published for a local client)
@@ -73,15 +79,14 @@ cd api
 goose -dir migrations postgres "$POSTGRES_DSN" up
 ```
 
-Run the frontend against that dev API (`web/.env.example` already points
-`VITE_API_BASE_URL` at `http://localhost:8080/api/v1`, which the dev
-compose's `CORS_ALLOWED_ORIGIN` allows):
+The dev compose stack already serves `web/` itself (`VITE_API_BASE_URL`
+points at `http://localhost:8080/api/v1`, which the dev compose's
+`CORS_ALLOWED_ORIGIN` allows), so no separate `npm run dev` is needed. Run
+its tests and linters directly with Node (not through Docker):
 
 ```bash
 cd web
 npm install
-cp .env.example .env.local
-npm run dev           # http://localhost:5173
 npm run typecheck && npm run lint && npm run format && npm test && npm run build
 ```
 
