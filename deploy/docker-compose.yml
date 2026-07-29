@@ -4,7 +4,15 @@
 
 services:
   caddy:
-    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    # Builds from web/Dockerfile's final stage: Caddy's own image with the
+    # built React SPA baked into /srv/www (ADR-0013) -- no separate web
+    # container in production (spec 5.1: "одразу віддає статику React --
+    # на один контейнер менше"). The caddy:2-alpine base is still pinned
+    # by tag and digest, just inside that Dockerfile instead of here, the
+    # same pattern go-api/python-worker already use for their base images.
+    build:
+      context: ../web
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "80:80"
