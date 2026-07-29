@@ -26,4 +26,10 @@ RUN npm run build
 # статику React -- на один контейнер менше"). This stage's image IS what
 # deploy/docker-compose.yml's `caddy` service builds and runs; ADR-0013.
 FROM caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+# curl (and its libcurl/c-ares dependencies) ship in the upstream image but
+# nothing here calls them: the compose healthcheck uses busybox's wget, and
+# the static Caddy binary doesn't link against them. Removing the package
+# outright -- rather than apk-upgrading it -- drops CVE-2026-5773/6276
+# (curl/libcurl) and CVE-2026-33630 (c-ares) instead of just deferring them.
+RUN apk del --no-cache curl libcurl c-ares
 COPY --from=builder /src/dist /srv/www
