@@ -318,3 +318,20 @@ export async function retryAnalysis(id: string): Promise<Analysis> {
 export function currentAccessToken(): string | null {
   return getSession()?.accessToken ?? null
 }
+
+/** FR-35 progress-chart point: one completed analysis's overall_score,
+ * dated. Returned oldest first. */
+export interface ProgressPoint {
+  analysisId: string
+  overallScore: number
+  createdAt: string
+}
+
+export async function getProgress(): Promise<ProgressPoint[]> {
+  const data = await withAuth(() => raw.GET('/progress'))
+  return data.map((point) => ({
+    analysisId: point.analysis_id,
+    overallScore: point.overall_score,
+    createdAt: point.created_at,
+  }))
+}
