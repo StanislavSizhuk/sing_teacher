@@ -5,7 +5,12 @@ interface ProgressChartProps {
   points: ProgressPoint[]
 }
 
-const VIEW_WIDTH = 600
+// A narrower aspect ratio than PianoRoll's canvas (which resizes its pixel
+// dimensions to always fill its container edge to edge): this is a
+// responsive `viewBox`'d SVG instead, so `w-full h-auto` scales height with
+// width at a fixed ratio -- 400:220 keeps it legible on a narrow phone
+// without going needlessly tall on desktop.
+const VIEW_WIDTH = 400
 const VIEW_HEIGHT = 220
 const AXIS_LABEL_WIDTH = 28
 const PLOT_WIDTH = VIEW_WIDTH - AXIS_LABEL_WIDTH
@@ -39,8 +44,7 @@ export function ProgressChart({ points }: ProgressChartProps) {
       role="img"
       aria-label={summaryLabel}
       viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-      className="border-ink-300 bg-ink-0 w-full rounded border"
-      style={{ height: VIEW_HEIGHT }}
+      className="border-ink-300 bg-ink-0 h-auto w-full rounded border"
     >
       {GRID_SCORES.map((score) => (
         <text
