@@ -111,3 +111,32 @@ tagged yet.
   numbers rather than static UI copy (see `docs/ML_PIPELINE.md`).
 - Spec 6.9's non-vocal-energy warning is still unimplemented -- no stage
   owns it yet.
+
+## [Unreleased] -- E5
+
+### Added
+
+- `progress_snapshots` is now written: the E3 worker upserts one row per
+  analysis right after stage 11's `overall_score` is computed, keyed on
+  `analysis_id` so a retried job updates its point instead of duplicating
+  it (spec 6.8, FR-35). New migration adds the unique constraint that
+  upsert relies on.
+- `go-api`: `GET /progress` (FR-35) returns the caller's own points,
+  oldest first, capped at a fixed size since it feeds a chart rather than
+  a browsable list (spec 8.1's cursor pagination is for the latter).
+- `web/`: a Progress screen -- summary stat tiles (latest/best/average/
+  change), an accessible SVG line chart (`role="img"`, fixed 0-100 axis),
+  and a visible session table, which is the chart's actual data source
+  for anyone who can't read the line (mirroring how PianoRoll's
+  `aria-label` works for the piano-roll). `App.tsx` gained a top-level
+  Analyze/Progress nav and a skip-to-content link.
+- `web/`: extracted `SegmentedControl`, the radiogroup-of-buttons pattern
+  AddSongForm and RecordingCapture already used, now shared by the new
+  nav too; `Button`/`SegmentedControl` gained an explicit keyboard focus
+  ring.
+
+### Known limitations
+
+- FR-34 (a paginated `GET /analyses` history endpoint with song titles)
+  is still not built -- the Progress screen's session table is fed by
+  `progress_snapshots`, not a real history endpoint.

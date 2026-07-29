@@ -58,6 +58,22 @@ whenever the perimeter changes (spec 14.1).
   request input, so this is a performance choice, not a new trust
   boundary.
 
+## Threat model, in scope for E5
+
+- `GET /progress` (FR-35): read-only, `bearerAuth`-gated like every other
+  `/api/v1` resource route, scoped by `ProgressRepository.ListByUser(ctx,
+  userID)` -- a plain `WHERE user_id = $1`, the same shape as
+  `AnalysisRepository.GetByID`'s ownership scoping (spec 11). No request
+  body, no query parameters to validate at the boundary.
+- `progress_snapshots` is written exclusively by the E3 worker
+  (`record_progress_snapshot`, keyed on `analysis_id` with a unique
+  constraint) -- `go-api` never writes this table, only reads it back, so
+  there is no new write-path trust boundary on the API side.
+- No new user input anywhere in this stage: no new upload path, no new
+  external binary call, no new template/HTML rendering. `ProgressChart`
+  and `ProgressPage` (`web/`) render server-supplied numbers and ISO
+  timestamps as plain React text content.
+
 ## File upload and YouTube import (E2, spec 11.3)
 
 - **Format validation is on content, never the filename or extension.**
@@ -258,5 +274,5 @@ whenever the perimeter changes (spec 14.1).
 
 ## Not yet applicable
 
-- History and progress endpoints (`GET /analyses` list, `GET /progress`,
-  FR-34/FR-35) -- E5. Nothing to attack until they exist.
+- A paginated `GET /analyses` history endpoint (FR-34). Nothing to attack
+  until it exists.

@@ -91,3 +91,27 @@ E3's own thresholds. The report text is English-only and does not route
 through the i18n system yet (FR-41) -- deferred, see
 `docs/ML_PIPELINE.md`. Spec 6.9's non-vocal-energy warning still has no
 owning stage.
+
+## 2026-07-29 -- E5
+
+**Done:** Worker upserts a `progress_snapshots` row (unique on
+`analysis_id`) right after stage 11's `overall_score`, so a retry updates
+the point instead of duplicating it. `go-api` exposes it read-only via
+`GET /progress`. `web/` gained a Progress screen -- stat tiles, an
+accessible SVG line chart (`role="img"` + a visible session table as its
+real data source), and a top-level Analyze/Progress nav
+(`SegmentedControl`, extracted from two prior duplicated radiogroups) plus
+a skip-to-content link. New worker/Go/web tests all green; CI unchanged
+(still no CD).
+
+**Next:** E6 -- load testing, security review, production deploy with
+rollback. FR-34 (paginated `GET /analyses` history) is still open; folding
+it into E6 or a follow-up PR needs a call from the tech lead.
+
+**Blockers:** none.
+
+**Risks:** the Progress screen's session table stands in for FR-34's
+history view but isn't one -- no song title, no pagination, capped at
+`progressPointsCap` (1000) points server-side. Never manually verified in
+a browser this session (worked CI-only, no dev server per this stage's
+instructions) -- worth a manual smoke test before calling E5 fully done.
