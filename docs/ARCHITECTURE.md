@@ -1,9 +1,9 @@
 # Architecture
 
-Status: reflects stages E1-E5, including `web/`. Components and flows
-planned for later stages (Caddy serving the built SPA, Google sign-in UI,
-a paginated analysis history endpoint) are noted as such, not described
-as if they existed.
+Status: reflects stages E1-E5, including `web/`, plus the post-E6 fix that
+wires `web/` into `docker compose` (ADR-0013). Components and flows still
+planned for later stages (Google sign-in UI, a paginated analysis history
+endpoint) are noted as such, not described as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -13,7 +13,7 @@ as if they existed.
                     └─────┬──────┘
                           │ HTTPS
                     ┌─────▼──────┐
-                    │   caddy    │  auto-TLS, reverse proxy (+ static React, later)
+                    │   caddy    │  auto-TLS, reverse proxy + static React
                     └─────┬──────┘
                           │
                     ┌─────▼──────┐        ┌──────────┐
@@ -44,10 +44,13 @@ piano-roll, and `web/`'s report/piano-roll screens. Built in E5:
 `progress_snapshots` actually gets written (the worker upserts one row per
 analysis alongside stage 11's result), `GET /progress` reads it back, and
 `web/` gained a Progress screen (chart, stat tiles, session table) and a
-top-level Analyze/Progress nav. `web/` runs as its own Vite dev server for
-now (`npm run dev`, talking to `go-api` directly); Caddy serving the built
-static SPA from the same origin as the API is still open -- see "Not yet
-built".
+top-level Analyze/Progress nav. Post-E6, `web/` was wired into `docker
+compose` (ADR-0013): `deploy/docker-compose.yml`'s `caddy` service now
+builds from `web/Dockerfile`, which bakes the built SPA into Caddy's own
+image at `/srv/www`, and `deploy/Caddyfile` serves it from the same origin
+it proxies `/api/*` to `go-api` from. `deploy/docker-compose.dev.yml` gets
+a `web` service instead, running the same `Dockerfile`'s `dev` target (the
+Vite dev server, hot reload) on `:5173`.
 
 ## go-api internal layers
 
@@ -279,18 +282,15 @@ wired up in `web/`; the Google button/redirect target is not built yet.
 
 ## Deployment boundary
 
-Only `caddy` publishes ports (80/443). Postgres, Redis and go-api are
-reachable solely over the compose-internal network. Migrations run
-automatically inside the `go-api` binary at boot (embedded via `go:embed`,
-applied with `goose`) -- there is no separate migrate step or container.
+Only `caddy` publishes ports (80/443), and it now serves the built `web/`
+SPA directly in addition to proxying `/api/*`/`/healthz`/`/readyz` to
+`go-api` (ADR-0013). Postgres, Redis and go-api are reachable solely over
+the compose-internal network. Migrations run automatically inside the
+`go-api` binary at boot (embedded via `go:embed`, applied with `goose`) --
+there is no separate migrate step or container.
 
 ## Not yet built
 
-- Caddy serving the built `web/` static output from the same origin as
-  `go-api` (spec 5.2's target end-state). `web/` currently runs as its own
-  Vite dev server pointed at `go-api` directly; wiring it into
-  `deploy/docker-compose*.yml` and the `Caddyfile` is deploy/CD work, not
-  covered by this (CI-only) stage.
 - Google sign-in has no button/redirect target in `web/` yet -- the backend
   flow (`/auth/google`, `/auth/google/callback`) is E1 work with no E2 UI on
   top of it.

@@ -33,11 +33,8 @@ new song is slow (Demucs + Whisper run cold, and the first-ever run also
 downloads their weights into `model-weights-dev`); a second analysis of
 the same song is much faster (spec 6.6's cache).
 
-Or drive the same flow from the browser:
-
-```bash
-cd web && npm install && cp .env.example .env.local && npm run dev
-```
+Or drive the same flow from the browser -- `docker compose up` above
+already started `web/` too:
 
 `http://localhost:5173` -- register, verify, log in, add a song, record (or
 upload) a take, watch the queue screen.

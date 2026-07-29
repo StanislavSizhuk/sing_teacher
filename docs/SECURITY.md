@@ -2,8 +2,9 @@
 
 Status: reflects stages E1 (auth + account perimeter), E2 (song/recording
 upload, YouTube import, job queue), E3 (the ML worker that now consumes
-that queue), E4 (score aggregation, report, piano-roll) and E5 (progress
-stats, adaptive UI). Updated whenever the perimeter changes (spec 14.1).
+that queue), E4 (score aggregation, report, piano-roll), E5 (progress
+stats, adaptive UI), and a post-E6 fix wiring `web/` into `docker compose`
+behind Caddy (ADR-0013). Updated whenever the perimeter changes (spec 14.1).
 
 ## E6 security review -- spec section 11 checklist
 
@@ -32,14 +33,14 @@ stands, not just cross-referenced against the threat-model prose below.
 - [x] CORS restricted to one exact configured origin
   (`CORS_ALLOWED_ORIGIN`), not `*`, with credentials and `Vary: Origin`
   (`internal/transport/http/middleware.go:corsMiddleware`).
-- **Known gap, not new:** the CSP/header set above only ever covers
-  `go-api`'s own JSON responses today, because `web/`'s built static output
-  is not yet served through Caddy in production (`docs/ARCHITECTURE.md`'s
-  "Not yet built" -- tracked since E2, explicitly out of scope for a
-  CI-only stage per this stage's own instructions). This line item is
-  correctly implemented for everything that exists in production so far;
-  it will need re-verifying against real page content once `web/` is
-  actually wired into `deploy/docker-compose.yml`/`Caddyfile`.
+- [x] **Gap closed:** `web/`'s built static output is now served through
+  Caddy in production (ADR-0013), from the same origin `/api/*` is proxied
+  from. The CSP was re-verified against real page content, not just JSON:
+  it moved from `default-src 'none'` (which only ever had to admit an empty
+  JSON body) to a `self`-scoped policy (`script-src`/`style-src`/`font-src`/
+  `connect-src 'self'`, `img-src 'self' data:`, `media-src 'self' blob:` for
+  `MediaRecorder` preview playback, no `'unsafe-inline'` anywhere) that the
+  SPA actually needs to render and run.
 
 ### 11.3 File uploads
 
@@ -126,12 +127,9 @@ stands, not just cross-referenced against the threat-model prose below.
   (`api/cmd/loadtest` is stdlib-only: `go.mod`/`go.sum` are untouched by
   this stage's commits), so there is no new supply-chain surface to audit.
 
-All six sub-sections pass. The one open item (11.2's CSP/headers not yet
-covering a Caddy-served frontend) is a pre-existing, already-tracked gap
-from the "web/ isn't wired into Caddy yet" deploy/CD work noted in
-`docs/ARCHITECTURE.md`, explicitly out of scope for this CI-only stage --
-not a regression and not something E6's load-testing/security-review/
-deploy-script work was asked to close.
+All six sub-sections pass, including the one item that was still open at
+E6 (11.2's CSP/headers not yet covering a Caddy-served frontend) -- closed
+by ADR-0013's `web`/Caddy compose wiring, verified above.
 
 ## Threat model, in scope for E1
 
@@ -354,10 +352,8 @@ deploy-script work was asked to close.
 - HSTS, CSP, `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
   `Permissions-Policy: microphone=(self)` are set once, at Caddy
   (`deploy/Caddyfile`) -- not duplicated in go-api, since Caddy is the only
-  internet-facing hop and will also serve `web/`'s static build once that
-  wiring lands (see `docs/ARCHITECTURE.md`'s "Not yet built"). In the
-  meantime `web/` runs as its own Vite dev server with no production
-  deployment path yet, so these headers don't apply to it in practice.
+  internet-facing hop and now also serves `web/`'s static build from that
+  same origin (ADR-0013).
 - CORS is enforced in go-api (`CORS_ALLOWED_ORIGIN`), not Caddy: it is
   request/response negotiation tied to the API's own cookie policy, not a
   generic perimeter header.

@@ -183,4 +183,34 @@ tagged yet.
   responses today -- `web/`'s built static output still isn't served
   through Caddy in production (tracked since E2, out of scope for this
   CI-only stage). Re-verify those headers against real page content once
-  that wiring lands.
+  that wiring lands. **Closed below.**
+
+## [Unreleased] -- post-E6 fix
+
+### Added
+
+- `web/Dockerfile`: multi-stage build -- a `dev` target running the Vite
+  dev server with hot reload, and a default target that builds the SPA and
+  bakes it into Caddy's own image at `/srv/www` (ADR-0013).
+- `docs/adr/0013-caddy-serves-web-build.md`.
+
+### Changed
+
+- `deploy/docker-compose.yml`: the `caddy` service now builds from
+  `web/Dockerfile` instead of pulling the stock `caddy:2-alpine` image, so
+  production serves the built SPA directly, from the same origin `/api/*`
+  is proxied from -- closing the "frontend runs outside `docker compose`"
+  gap tracked since E2 (spec 5.1/5.2, NFR-10).
+- `deploy/docker-compose.dev.yml`: new `web` service (the `Dockerfile`'s
+  `dev` target) on `:5173`, so `docker compose -f
+  deploy/docker-compose.dev.yml up` alone now serves the frontend too,
+  hot reload included -- no more separate `cd web && npm run dev` step.
+- `deploy/Caddyfile`: serves `/srv/www` with a `try_files` SPA fallback,
+  proxies `/api/*` and `/healthz`/`/readyz` to `go-api`. CSP tightened from
+  `default-src 'none'` (correct only while Caddy proxied JSON exclusively)
+  to a `self`-scoped policy covering the page content it now actually
+  serves, with `blob:` allowed on `media-src` for `MediaRecorder` preview
+  playback (FR-20).
+- CI: `web`'s `lint`/`security`/`build` jobs now also build and Trivy-scan
+  the production image, matching `api`/`worker`. Still CI-only -- no CD
+  job added, no staging environment (spec 16.3).

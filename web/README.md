@@ -5,6 +5,12 @@ recording (MediaRecorder), and the analysis queue screen. See the repo root
 [README](../README.md) and [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
 for how this fits into the rest of the stack.
 
+`docker compose -f ../deploy/docker-compose.dev.yml up` already serves this
+directory at `http://localhost:5173` with hot reload (`web`'s `Dockerfile`,
+`dev` target); in production `deploy/Caddyfile` serves the build straight
+out of Caddy's own image (ADR-0013). `npm run dev` below is for running
+against `go-api` without Docker at all, e.g. while iterating on `web/` alone.
+
 ## Development
 
 ```bash
