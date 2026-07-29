@@ -3,28 +3,98 @@
 Deploy, rollback, backup restore, and an incident log (symptom → cause →
 action → prevention), updated after every incident (spec 14.1, 17.1).
 
-## Deploy (current: manual; CD arrives in E6)
+## Server setup (one-time, before the first deploy)
+
+Spec 11.1's perimeter controls outside `docker compose` itself -- there is
+no code that can enforce these, so they are a manual checklist for whoever
+provisions the VPS the first time:
+
+1. **Cloudflare** in front of the VPS: DNS-only record switched to
+   "proxied" for the app's domain. Gives DNS proxying, basic DDoS
+   absorption, and hides the origin IP -- it sits in front of the compose
+   stack, not inside it, so it does not conflict with "everything on one
+   VPS".
+2. **UFW, deny by default:**
+   ```bash
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
+   sudo ufw allow OpenSSH
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   sudo ufw enable
+   ```
+   Only 80/443 (Caddy) and SSH are ever exposed -- Postgres and Redis are
+   never published to the host in the first place (`deploy/docker-compose.yml`
+   has no `ports:` for either), so there is nothing to block for them
+   specifically.
+3. **SSH hardening** (`/etc/ssh/sshd_config`, then `systemctl restart sshd`):
+   ```
+   PasswordAuthentication no
+   PermitRootLogin no
+   ```
+   Key-based auth only, deploy user is not `root`.
+4. **fail2ban** against SSH brute force:
+   ```bash
+   sudo apt-get install -y fail2ban
+   sudo systemctl enable --now fail2ban
+   ```
+   The stock `sshd` jail that ships with fail2ban is enough; nothing else
+   in this stack listens on a host-exposed port for fail2ban to watch.
+
+Redo this checklist for every new VPS; nothing here is part of
+`docker compose up` because none of it is portable across hosts.
+
+## Deploy (with automatic rollback)
+
+Tag the release on `main` first (spec 13.5: SemVer, e.g. `v0.6.0`,
+`CHANGELOG.md` updated in the same PR), then, on the VPS as the deploy user:
 
 ```bash
-git pull
-docker compose -f deploy/docker-compose.yml up -d --build
+git fetch --tags
+deploy/deploy.sh v0.6.0
 ```
 
-`go-api` applies any pending goose migrations itself on boot, before it
-starts accepting requests -- there is no separate migrate step. Watch
-`docker compose -f deploy/docker-compose.yml logs -f go-api` for the
-`migrations applied` line, then `listening`.
+`deploy/deploy.sh` implements spec 16.2's sequence end to end:
 
-## Rollback
+1. Checks out the given ref (refuses if the working tree isn't clean).
+2. `docker compose -f deploy/docker-compose.yml up -d --build`. `go-api`
+   applies any pending goose migrations itself on boot, before it starts
+   accepting requests -- there is no separate migrate step.
+3. Polls `go-api`'s own container `HEALTHCHECK` (gated on `/readyz`, which
+   is gated on migrations having applied) for up to 60s.
+4. If it never reports healthy, checks out whatever ref was running before
+   this deploy, rebuilds, and polls again. Exit code distinguishes a clean
+   rollback (`1`) from a rollback that *also* failed to come up healthy
+   (`2`, needs a human -- see "Incidents" below).
+
+Watch it live in another terminal:
+`docker compose -f deploy/docker-compose.yml logs -f go-api`.
+
+Migrations are written expand/contract (backward compatible for one release,
+spec 7/16.2), so rolling the image back one release never leaves the schema
+in a state the older code can't read -- this is what makes step 4's
+automatic rollback safe to do without a human checking the schema first.
+
+**Verified:** rehearsed locally (a fresh clone stood in for the VPS, since
+this project has no provisioned production server or staging environment
+yet, spec 16.3) -- both the success path and a forced failure (an
+intentionally broken ref) were exercised; the failure case correctly rolled
+back and exited `1`, and `go-api` came back up serving the previous ref.
+No CD automation triggers this script; it is run by hand, matching this
+stage's CI-only scope (spec 16.1 already covers automated lint/test/
+security/build on every PR -- deploy stays a deliberate, manual action).
+
+## Rollback (manual)
+
+If you need to roll back without re-running the full script (e.g. days
+later, not right after a failed deploy):
 
 ```bash
 git checkout <previous-tag>
 docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-Migrations are written expand/contract (backward compatible for one
-release, spec 7/16.2), so rolling the image back one release never leaves
-the schema in a state the older code can't read.
+Same expand/contract guarantee as above applies.
 
 ## Restore from backup
 

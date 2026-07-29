@@ -50,6 +50,13 @@ func (f *fakeAnalysisRepository) Create(_ context.Context, a *domain.Analysis) e
 	return nil
 }
 
+func (f *fakeAnalysisRepository) Delete(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.byID, id)
+	return nil
+}
+
 func (f *fakeAnalysisRepository) SetQueueStreamID(_ context.Context, id uuid.UUID, streamEntryID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -158,6 +165,7 @@ func (f *fakeSongRepository) GetByID(_ context.Context, id uuid.UUID) (*domain.S
 // --- fakeAudioProcessor -----------------------------------------------------
 
 type fakeAudioProcessor struct {
+	mu             sync.Mutex
 	seconds        float64
 	probeErr       error
 	transcodeErr   error
@@ -165,6 +173,8 @@ type fakeAudioProcessor struct {
 }
 
 func (f *fakeAudioProcessor) Probe(_ context.Context, _ string) (float64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.probeErr != nil {
 		return 0, f.probeErr
 	}
@@ -172,9 +182,12 @@ func (f *fakeAudioProcessor) Probe(_ context.Context, _ string) (float64, error)
 }
 
 func (f *fakeAudioProcessor) Transcode(_ context.Context, _, dst string) error {
+	f.mu.Lock()
 	f.transcodeCalls++
-	if f.transcodeErr != nil {
-		return f.transcodeErr
+	transcodeErr := f.transcodeErr
+	f.mu.Unlock()
+	if transcodeErr != nil {
+		return transcodeErr
 	}
 	return os.WriteFile(dst, []byte("canonical audio bytes"), 0o600)
 }
@@ -182,6 +195,7 @@ func (f *fakeAudioProcessor) Transcode(_ context.Context, _, dst string) error {
 // --- fakeRateLimiter ---------------------------------------------------------
 
 type fakeRateLimiter struct {
+	mu         sync.Mutex
 	allowed    bool
 	retryAfter time.Duration
 	err        error
@@ -193,6 +207,8 @@ func newAllowingRateLimiter() *fakeRateLimiter {
 }
 
 func (f *fakeRateLimiter) Allow(_ context.Context, _ uuid.UUID) (bool, time.Duration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	if f.err != nil {
 		return false, 0, f.err
@@ -202,10 +218,20 @@ func (f *fakeRateLimiter) Allow(_ context.Context, _ uuid.UUID) (bool, time.Dura
 
 // --- fakeQueueProducer -------------------------------------------------------
 
+// fakeQueueProducer guards length/enqueued with a mutex so
+// EnqueueIfUnderLimit can reproduce the real Producer's atomicity guarantee
+// (spec 10, FR-24) under a concurrent test, not just a sequential one.
 type fakeQueueProducer struct {
-	length      int64
-	lengthErr   error
-	enqueueErr  error
+	mu                sync.Mutex
+	length            int64
+	lengthErr         error
+	enqueueErr        error
+	enqueueIfUnderErr error
+	// forceFull makes EnqueueIfUnderLimit report the queue as full
+	// regardless of length, simulating a concurrent racer winning the
+	// atomic admission after this caller already passed the early
+	// Length() pre-check.
+	forceFull   bool
 	removeErr   error
 	nextEntryID int
 	enqueued    []uuid.UUID
@@ -213,6 +239,8 @@ type fakeQueueProducer struct {
 }
 
 func (f *fakeQueueProducer) Length(_ context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.lengthErr != nil {
 		return 0, f.lengthErr
 	}
@@ -220,15 +248,35 @@ func (f *fakeQueueProducer) Length(_ context.Context) (int64, error) {
 }
 
 func (f *fakeQueueProducer) Enqueue(_ context.Context, analysisID uuid.UUID) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.enqueueErr != nil {
 		return "", f.enqueueErr
 	}
 	f.nextEntryID++
+	f.length++
 	f.enqueued = append(f.enqueued, analysisID)
 	return fmt.Sprintf("%d-0", f.nextEntryID), nil
 }
 
+func (f *fakeQueueProducer) EnqueueIfUnderLimit(_ context.Context, analysisID uuid.UUID, maxLen int64) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.enqueueIfUnderErr != nil {
+		return "", false, f.enqueueIfUnderErr
+	}
+	if f.forceFull || f.length >= maxLen {
+		return "", false, nil
+	}
+	f.nextEntryID++
+	f.length++
+	f.enqueued = append(f.enqueued, analysisID)
+	return fmt.Sprintf("%d-0", f.nextEntryID), true, nil
+}
+
 func (f *fakeQueueProducer) Remove(_ context.Context, entryID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removed = append(f.removed, entryID)
 	return f.removeErr
 }

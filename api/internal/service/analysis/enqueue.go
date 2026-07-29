@@ -71,7 +71,12 @@ func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recordi
 		return nil, nil, fmt.Errorf("create analysis: %w", err)
 	}
 
-	streamEntryID, err := s.queue.Enqueue(ctx, analysisID)
+	// The queueLen check above is only a cheap pre-check to skip expensive
+	// work on an already-full queue; it is not the admission decision.
+	// Concurrent callers that all pass it before any of them publish would
+	// overshoot queueMaxLength, so the actual admission has to be atomic
+	// with the publish itself (spec 10, FR-24).
+	streamEntryID, ok, err := s.queue.EnqueueIfUnderLimit(ctx, analysisID, s.queueMaxLength)
 	if err != nil {
 		// The row now exists as "queued" but was never actually published to
 		// Redis. Rare (Redis would have to fail right after Postgres
@@ -79,6 +84,18 @@ func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recordi
 		// codebase (service/auth.Register), left as a known gap rather than
 		// building compensating-transaction machinery for it.
 		return nil, nil, fmt.Errorf("enqueue analysis: %w", err)
+	}
+	if !ok {
+		// The queue filled up between the pre-check and here (a losing
+		// entrant in a concurrent burst). Unlike a genuine Redis error, this
+		// is an expected, common outcome under load, so the just-created row
+		// is rolled back rather than left behind as a phantom "queued" job
+		// that will never actually run.
+		_ = s.files.Remove(canonicalPath)
+		if delErr := s.analyses.Delete(ctx, analysisID); delErr != nil {
+			return nil, nil, fmt.Errorf("roll back analysis after queue-full: %w", delErr)
+		}
+		return nil, nil, domain.ErrQueueFull
 	}
 	if err := s.analyses.SetQueueStreamID(ctx, analysisID, streamEntryID); err != nil {
 		return nil, nil, fmt.Errorf("record queue stream id: %w", err)

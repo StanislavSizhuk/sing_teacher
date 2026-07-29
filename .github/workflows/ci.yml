@@ -1,5 +1,9 @@
-# CI only -- deliberately no CD/deploy job in this workflow. E1 has no
-# server to deploy to yet; deployment automation is stage E6 (spec 16.2).
+# CI only -- deliberately no CD/deploy job in this workflow. Deploy (spec
+# 16.2's checkout -> build+up -> healthcheck -> auto-rollback sequence) is
+# deploy/deploy.sh, run by hand on the VPS -- there is no provisioned
+# server or registry for a pipeline to target yet (spec 16.3), and a
+# solo-developer project without a staging environment gains little from
+# automating the one step a human should already be watching.
 name: CI
 
 on:
