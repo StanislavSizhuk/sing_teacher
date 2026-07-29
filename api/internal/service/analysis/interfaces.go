@@ -17,6 +17,11 @@ import (
 // Repository persists analysis jobs and their queue ordering.
 type Repository interface {
 	Create(ctx context.Context, a *domain.Analysis) error
+	// Delete removes a row this request just created, used only to undo
+	// Create when the queue turns out to be full by the time
+	// EnqueueIfUnderLimit runs (see Enqueue) -- never exposed to a caller
+	// outside this package.
+	Delete(ctx context.Context, id uuid.UUID) error
 	SetQueueStreamID(ctx context.Context, id uuid.UUID, streamEntryID string) error
 	GetByID(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
 	Cancel(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
@@ -60,5 +65,10 @@ type RateLimiter interface {
 type QueueProducer interface {
 	Length(ctx context.Context) (int64, error)
 	Enqueue(ctx context.Context, analysisID uuid.UUID) (streamEntryID string, err error)
+	// EnqueueIfUnderLimit is the authoritative, race-free admission check:
+	// Length is only a fast pre-check before expensive work, cheap but not
+	// safe under concurrency (see Enqueue). ok is false when the queue was
+	// already at maxLen.
+	EnqueueIfUnderLimit(ctx context.Context, analysisID uuid.UUID, maxLen int64) (streamEntryID string, ok bool, err error)
 	Remove(ctx context.Context, streamEntryID string) error
 }

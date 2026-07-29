@@ -57,6 +57,19 @@ func (r *AnalysisRepository) Create(ctx context.Context, a *domain.Analysis) err
 	return nil
 }
 
+// Delete removes a row outright. The only caller is
+// analysis.Service.Enqueue, undoing its own just-created row when the
+// queue turns out to have filled up between the pre-check and the atomic
+// admission (see queue.Producer.EnqueueIfUnderLimit) -- never a
+// user-reachable operation, so it takes no ownership scope.
+func (r *AnalysisRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	const q = `DELETE FROM analyses WHERE id = $1`
+	if _, err := r.pool.Exec(ctx, q, id); err != nil {
+		return fmt.Errorf("delete analysis: %w", err)
+	}
+	return nil
+}
+
 // SetQueueStreamID records the Redis Streams entry id returned by XADD, so a
 // later Cancel can XDEL that exact entry (ADR-0002, ADR-0008).
 func (r *AnalysisRepository) SetQueueStreamID(ctx context.Context, id uuid.UUID, streamEntryID string) error {

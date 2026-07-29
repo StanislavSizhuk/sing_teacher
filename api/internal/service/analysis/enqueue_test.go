@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -138,4 +139,65 @@ func TestEnqueue_MultipleJobs_PositionsIncrementInOrder(t *testing.T) {
 	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, 2, *second.QueuePosition)
+}
+
+// TestEnqueue_QueueFillsBetweenPreCheckAndAdmission_RollsBackRow covers the
+// window between Length()'s early pre-check and EnqueueIfUnderLimit's atomic
+// admission: a concurrent racer can fill the queue in that gap. The row
+// Create wrote in anticipation of admission must be rolled back, not left
+// behind as a "queued" job that was never actually published (spec 10, FR-24).
+func TestEnqueue_QueueFillsBetweenPreCheckAndAdmission_RollsBackRow(t *testing.T) {
+	song := testSong()
+	d := newTestService(t, song, 360, 20)
+	d.queue.forceFull = true
+
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	require.ErrorIs(t, err, domain.ErrQueueFull)
+	require.Empty(t, d.queue.enqueued, "a losing entrant must never publish the job")
+	require.Empty(t, d.analyses.byID, "the pre-admission row must be rolled back, not left as a phantom queued job")
+}
+
+// TestEnqueue_ConcurrentBurst_NeverExceedsQueueMaxLength is the regression
+// test for the check-then-act race the E6 load test surfaced: a naive
+// Length()-then-Enqueue would let every goroutine in a simultaneous burst
+// pass the length check before any of them published, overshooting
+// queueMaxLength by as much as the burst size. With EnqueueIfUnderLimit,
+// exactly queueMaxLength of a larger concurrent burst must be admitted, and
+// every other request must fail cleanly with domain.ErrQueueFull.
+func TestEnqueue_ConcurrentBurst_NeverExceedsQueueMaxLength(t *testing.T) {
+	const queueMaxLength = 20
+	const burst = 35
+
+	song := testSong()
+	d := newTestService(t, song, 360, queueMaxLength)
+
+	start := make(chan struct{})
+	results := make([]error, burst)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+			results[i] = err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var admitted, rejected int
+	for _, err := range results {
+		switch {
+		case err == nil:
+			admitted++
+		case errors.Is(err, domain.ErrQueueFull):
+			rejected++
+		default:
+			t.Fatalf("unexpected error from concurrent Enqueue: %v", err)
+		}
+	}
+	require.Equal(t, queueMaxLength, admitted, "queue must admit exactly its cap, no more, under a concurrent burst")
+	require.Equal(t, burst-queueMaxLength, rejected)
+	require.Len(t, d.analyses.byID, queueMaxLength, "rejected entrants must not leave rows behind")
 }
