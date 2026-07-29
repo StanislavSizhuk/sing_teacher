@@ -3,7 +3,48 @@
 Deploy, rollback, backup restore, and an incident log (symptom → cause →
 action → prevention), updated after every incident (spec 14.1, 17.1).
 
-## Deploy (current: manual; CD arrives in E6)
+## Server setup (one-time, before the first deploy)
+
+Spec 11.1's perimeter controls outside `docker compose` itself -- there is
+no code that can enforce these, so they are a manual checklist for whoever
+provisions the VPS the first time:
+
+1. **Cloudflare** in front of the VPS: DNS-only record switched to
+   "proxied" for the app's domain. Gives DNS proxying, basic DDoS
+   absorption, and hides the origin IP -- it sits in front of the compose
+   stack, not inside it, so it does not conflict with "everything on one
+   VPS".
+2. **UFW, deny by default:**
+   ```bash
+   sudo ufw default deny incoming
+   sudo ufw default allow outgoing
+   sudo ufw allow OpenSSH
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   sudo ufw enable
+   ```
+   Only 80/443 (Caddy) and SSH are ever exposed -- Postgres and Redis are
+   never published to the host in the first place (`deploy/docker-compose.yml`
+   has no `ports:` for either), so there is nothing to block for them
+   specifically.
+3. **SSH hardening** (`/etc/ssh/sshd_config`, then `systemctl restart sshd`):
+   ```
+   PasswordAuthentication no
+   PermitRootLogin no
+   ```
+   Key-based auth only, deploy user is not `root`.
+4. **fail2ban** against SSH brute force:
+   ```bash
+   sudo apt-get install -y fail2ban
+   sudo systemctl enable --now fail2ban
+   ```
+   The stock `sshd` jail that ships with fail2ban is enough; nothing else
+   in this stack listens on a host-exposed port for fail2ban to watch.
+
+Redo this checklist for every new VPS; nothing here is part of
+`docker compose up` because none of it is portable across hosts.
+
+## Deploy
 
 ```bash
 git pull

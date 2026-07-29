@@ -2,8 +2,136 @@
 
 Status: reflects stages E1 (auth + account perimeter), E2 (song/recording
 upload, YouTube import, job queue), E3 (the ML worker that now consumes
-that queue) and E4 (score aggregation, report, piano-roll). Updated
-whenever the perimeter changes (spec 14.1).
+that queue), E4 (score aggregation, report, piano-roll) and E5 (progress
+stats, adaptive UI). Updated whenever the perimeter changes (spec 14.1).
+
+## E6 security review -- spec section 11 checklist
+
+Formal pass-by-pass verification against every sub-item of spec section 11,
+done 2026-07-29 as stage E6's acceptance criterion ("чек-лист розділу 11
+пройдено повністю"). Each line is evidence-checked against the code as it
+stands, not just cross-referenced against the threat-model prose below.
+
+### 11.1 Perimeter
+
+- [x] Only 80/443 (Caddy) and SSH are ever exposed. Postgres and Redis carry
+  no `ports:` at all in `deploy/docker-compose.yml`; neither does `go-api`
+  or `python-worker` -- compose-internal network only.
+- [x] Cloudflare, UFW (deny by default), SSH key-only/no-root-login and
+  fail2ban are host-level setup outside anything `docker compose` can
+  enforce -- previously assumed but never actually written down anywhere.
+  Now a checklist in `docs/RUNBOOK.md`'s new "Server setup" section, to run
+  once per VPS before the first deploy.
+
+### 11.2 Transport and headers
+
+- [x] Auto-HTTPS + HSTS (`max-age=31536000; includeSubDomains`), CSP,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+  strict-origin-when-cross-origin`, `Permissions-Policy: microphone=(self)`
+  -- all set once in `deploy/Caddyfile`, the only internet-facing hop.
+- [x] CORS restricted to one exact configured origin
+  (`CORS_ALLOWED_ORIGIN`), not `*`, with credentials and `Vary: Origin`
+  (`internal/transport/http/middleware.go:corsMiddleware`).
+- **Known gap, not new:** the CSP/header set above only ever covers
+  `go-api`'s own JSON responses today, because `web/`'s built static output
+  is not yet served through Caddy in production (`docs/ARCHITECTURE.md`'s
+  "Not yet built" -- tracked since E2, explicitly out of scope for a
+  CI-only stage per this stage's own instructions). This line item is
+  correctly implemented for everything that exists in production so far;
+  it will need re-verifying against real page content once `web/` is
+  actually wired into `deploy/docker-compose.yml`/`Caddyfile`.
+
+### 11.3 File uploads
+
+- [x] Format validated by magic bytes, never extension
+  (`internal/media.Sniff`).
+- [x] Size/duration enforced before expensive work: `http.MaxBytesReader`
+  bounds the body before multipart parsing; `ffprobe` duration is checked
+  before transcoding; YouTube duration comes from `yt-dlp --skip-download`
+  metadata before any bytes download (FR-12).
+- [x] Every file is re-encoded through `ffmpeg` to canonical WAV before
+  anything else touches it (`internal/media.Processor.Transcode`).
+- [x] Paths are always server-generated UUIDs
+  (`internal/storage.FileStore.PathFor`); a submitted filename is never
+  read as a path.
+- [x] External binaries (`ffmpeg`, `ffprobe`, `yt-dlp`) are invoked as
+  argument lists (`internal/sysproc.Runner`, `exec.CommandContext`), never
+  a shell string, each with a `context.WithTimeout` (verified: `probeTimeout`
+  20s/`transcodeTimeout` 120s in `internal/media/processor.go`,
+  `metadataTimeout` 20s/`downloadTimeout` 180s in `internal/youtube/client.go`).
+  Memory is capped at the container level
+  (`deploy.resources.limits.memory: 512M` on `go-api`, ADR-0007) rather
+  than a per-process `ulimit`, which `os/exec` cannot set for a child
+  without a shell.
+- [x] Processing runs as a non-root container user (`Dockerfile`'s
+  `USER vocalcoach:vocalcoach`); `python-worker` has no outbound network
+  need at runtime once model weights are cached, and is the only stage
+  spec 11.3's "no network access outside the YouTube step" cleanly applies
+  to -- `go-api` is a single long-running process that inherently needs
+  Postgres/Redis connectivity throughout, so per-call network isolation
+  around just the YouTube step was never implemented and isn't a gap
+  relative to spec intent (the worker, which actually does isolated,
+  short-lived per-stage processing, has no such need at all).
+
+### 11.4 YouTube caveat
+
+- [x] `FEATURE_YOUTUBE_IMPORT` defaults `false` in `.env.example` and is
+  not overridden in `deploy/docker-compose.yml`.
+- [x] UI shows the personal/non-commercial disclaimer before the YouTube
+  URL field every time that tab is selected
+  (`web/src/features/songs/AddSongForm.tsx`).
+- [x] Host allowlist (`internal/youtube/url.go`) is an exact match, not a
+  suffix match -- `youtube.com.evil.example` is rejected.
+
+### 11.5 Data and secrets
+
+- [x] All secrets validated as non-empty at boot and read only from `.env`
+  (`internal/config`, `req(...)`); `.env.example` ships blank placeholders,
+  never a real-looking default.
+- [x] Rotation procedure documented in `docs/RUNBOOK.md`.
+- [x] Grep-verified: no `logger.*` call anywhere in `api/internal` or
+  `worker/src` references a password, token, verification code or email.
+  Email is never logged at all (stronger than the spec's "mask as
+  `s***@gmail.com`" -- there is nothing to mask because it never enters a
+  log line in the first place); structured logs carry `user_id` (uuid)
+  instead.
+- [x] Every external input is validated at the boundary: Go DTOs
+  (`internal/transport/http/dto*.go`) before any service call; Python
+  stages take only `pydantic` models, never bare `dict`s, between layers.
+- [x] SQL is parameterized everywhere, grep-verified in both languages
+  (no `fmt.Sprintf`/string concatenation building a query in
+  `internal/repository/postgres`; no f-string/`.format()` building a query
+  in `worker/src/vocalcoach/repositories`). The one dynamic SQL identifier
+  (an aspect-score column name) goes through `psycopg.sql.Identifier`, and
+  the value feeding it is always one of the six literal strings in
+  `vocalcoach.config.ASPECTS`, never external input.
+
+### 11.6 Dependencies
+
+- [x] `go.sum`, `worker/uv.lock`, `web/package-lock.json` all present and
+  committed.
+- [x] CI runs `govulncheck` + `gosec` + Trivy on `go-api`'s image,
+  `pip-audit` + Trivy on `python-worker`'s image, and `npm audit
+  --audit-level=high` on `web/`, on every PR (`.github/workflows/ci.yml`).
+- [x] Re-run locally for this review: `govulncheck` (0 vulnerabilities in
+  code or called dependencies), `gosec ./...` (0 issues across all of
+  `api/`, including the new `cmd/loadtest`), `pip-audit` (no known
+  vulnerabilities; `torch`/`torchaudio` are unauditable by `pip-audit`
+  because they aren't published to PyPI proper, a pre-existing, already
+  CI-accepted limitation of the tool, not a code issue). `npm audit` was
+  not re-run in this environment (no Node toolchain available here); `web/`
+  had no dependency changes in this stage, and CI already enforces it on
+  every PR regardless.
+- [x] This stage added zero new third-party dependencies
+  (`api/cmd/loadtest` is stdlib-only: `go.mod`/`go.sum` are untouched by
+  this stage's commits), so there is no new supply-chain surface to audit.
+
+All six sub-sections pass. The one open item (11.2's CSP/headers not yet
+covering a Caddy-served frontend) is a pre-existing, already-tracked gap
+from the "web/ isn't wired into Caddy yet" deploy/CD work noted in
+`docs/ARCHITECTURE.md`, explicitly out of scope for this CI-only stage --
+not a regression and not something E6's load-testing/security-review/
+deploy-script work was asked to close.
 
 ## Threat model, in scope for E1
 
