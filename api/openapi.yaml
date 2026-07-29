@@ -3,9 +3,10 @@ info:
   title: AI Vocal Coach API
   version: "1.0.0"
   summary: >
-    Auth/account (E1) and song upload/YouTube import/analysis queue (E2).
-    Analysis results and progress endpoints are added in later stages
-    (E3-E5) in the same file.
+    Auth/account (E1), song upload/YouTube import/analysis queue (E2),
+    per-aspect scores/report/piano-roll (E4) and the progress-over-time
+    chart (E5, FR-35). A paginated /analyses history endpoint (FR-34) is
+    not yet built.
 servers:
   - url: /api/v1
 paths:
@@ -463,6 +464,31 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /progress:
+    get:
+      operationId: getProgress
+      summary: Get the caller's overall_score points for the progress chart (FR-35)
+      description: >
+        Every completed analysis's overall_score, oldest first (spec 7's
+        progress_snapshots, written by the E3 worker once stage 11
+        succeeds). Not cursor-paginated like a browsable list (spec 8.1):
+        this feeds a chart in one call rather than something a user pages
+        through, so the server caps it at a fixed size instead.
+      tags: [progress]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The caller's progress points.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProgressPoint"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /healthz:
     servers:
       - url: /
@@ -762,6 +788,20 @@ components:
           description: deviation_cents already thresholded against PIANO_ROLL_OFF_PITCH_CENTS.
           items:
             type: boolean
+
+    ProgressPoint:
+      type: object
+      description: One dated overall_score sample for the FR-35 progress chart.
+      required: [analysis_id, overall_score, created_at]
+      properties:
+        analysis_id:
+          type: string
+          format: uuid
+        overall_score:
+          type: number
+        created_at:
+          type: string
+          format: date-time
 
     Problem:
       type: object

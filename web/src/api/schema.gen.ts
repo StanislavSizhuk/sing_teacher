@@ -280,6 +280,26 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/progress': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /**
+     * Get the caller's overall_score points for the progress chart (FR-35)
+     * @description Every completed analysis's overall_score, oldest first (spec 7's progress_snapshots, written by the E3 worker once stage 11 succeeds). Not cursor-paginated like a browsable list (spec 8.1): this feeds a chart in one call rather than something a user pages through, so the server caps it at a fixed size instead.
+     */
+    get: operations['getProgress']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/healthz': {
     parameters: {
       query?: never
@@ -436,6 +456,14 @@ export interface components {
       deviation_cents: (number | null)[]
       /** @description deviation_cents already thresholded against PIANO_ROLL_OFF_PITCH_CENTS. */
       off_pitch: boolean[]
+    }
+    /** @description One dated overall_score sample for the FR-35 progress chart. */
+    ProgressPoint: {
+      /** Format: uuid */
+      analysis_id: string
+      overall_score: number
+      /** Format: date-time */
+      created_at: string
     }
     /** @description RFC 9457 application/problem+json body. */
     Problem: {
@@ -985,6 +1013,27 @@ export interface operations {
           [name: string]: unknown
         }
         content?: never
+      }
+      401: components['responses']['Unauthorized']
+    }
+  }
+  getProgress: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description The caller's progress points. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ProgressPoint'][]
+        }
       }
       401: components['responses']['Unauthorized']
     }

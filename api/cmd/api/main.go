@@ -29,6 +29,7 @@ import (
 	"ai-vocal-coach/api/internal/security"
 	"ai-vocal-coach/api/internal/service/analysis"
 	"ai-vocal-coach/api/internal/service/auth"
+	"ai-vocal-coach/api/internal/service/progress"
 	"ai-vocal-coach/api/internal/service/song"
 	"ai-vocal-coach/api/internal/storage"
 	"ai-vocal-coach/api/internal/sysproc"
@@ -180,6 +181,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 
 	songSvc, analysisSvc := buildSongAndAnalysisServices(cfg, pool, redisClient, files, queueProducer)
+	progressSvc := progress.NewService(postgres.NewProgressRepository(pool))
 	hub := ws.NewHub()
 	accessParser := security.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
 	wsHandler := ws.NewHandler(hub, analysisSvc, accessParser, cfg.CORSOrigin)
@@ -193,6 +195,7 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 		Health:       health,
 		Song:         httptransport.NewSongHandler(songSvc, logger, cfg.Limits.MaxUploadBytes),
 		Analysis:     httptransport.NewAnalysisHandler(analysisSvc, hub, logger, cfg.Limits.MaxUploadBytes),
+		Progress:     httptransport.NewProgressHandler(progressSvc, logger),
 		WS:           wsHandler.ServeAnalysis,
 		Logger:       logger,
 		CORSOrigin:   cfg.CORSOrigin,
