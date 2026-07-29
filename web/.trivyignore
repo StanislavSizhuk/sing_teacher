@@ -1,0 +1,33 @@
+# Findings inside the statically-linked caddy binary itself (upstream
+# caddy:2-alpine image, gobinary scanner) that apk cannot patch -- there is
+# no Alpine package to upgrade or remove for a dependency compiled into the
+# binary. Re-run `docker build` + Trivy against a fresh `caddy:2-alpine`
+# digest periodically; drop the matching line the moment a rebuilt image
+# picks up patched golang.org/x/text/grpc/stdlib. Each entry expires so a
+# stale ignore fails the scan again instead of hiding a finding forever.
+
+# golang.org/x/text: norm.Iter infinite loop on crafted input. Caddy uses
+# x/text for IDNA hostname normalization, not open to attacker-controlled
+# text in this deployment (no user-submitted hostnames).
+CVE-2026-56852 exp:2026-10-29
+
+# grpc-go: xDS RBAC/HTTP2 issues. xDS is gRPC's service-mesh control-plane
+# feature; this deployment never configures or reaches Caddy's (unused)
+# gRPC/xDS integration.
+GHSA-hrxh-6v49-42gf exp:2026-10-29
+
+# crypto/x509: DoS via a certificate with excessive DNS SANs. Certificates
+# here come only from Let's Encrypt via Caddy's own ACME client, not from
+# attacker-controlled input.
+CVE-2026-27145 exp:2026-10-29
+
+# os.Root: symlink-following directory traversal. /srv/www's only content
+# is this repo's own `npm run build` output, baked in at image-build time --
+# no user-writable path a symlink could be planted through.
+CVE-2026-39822 exp:2026-10-29
+
+# mime: DoS via crafted MIME headers. Caddy here only sets outgoing
+# Content-Type for static files and proxies go-api's own (trusted)
+# responses; it never parses attacker-controlled MIME/multipart input --
+# that parsing happens in go-api, not Caddy.
+CVE-2026-42504 exp:2026-10-29

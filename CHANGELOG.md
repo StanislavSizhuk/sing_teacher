@@ -214,3 +214,20 @@ tagged yet.
 - CI: `web`'s `lint`/`security`/`build` jobs now also build and Trivy-scan
   the production image, matching `api`/`worker`. Still CI-only -- no CD
   job added, no staging environment (spec 16.3).
+
+### Fixed
+
+- `security-web`'s first Trivy run against the new production image
+  failed on 10 HIGH findings, none of them new to this change: the
+  `caddy:2-alpine` digest already pinned in `deploy/docker-compose.yml`
+  before this stage, just never scanned until `web/Dockerfile` gave it
+  something to build and scan. 5 were Alpine packages --
+  `curl`/`libcurl`/`c-ares` -- bundled in the base image but unused (the
+  compose healthcheck runs busybox's `wget`, and the static Caddy binary
+  doesn't link against them); `web/Dockerfile` now removes them outright.
+  The remaining 5 are compiled into the upstream `caddy` binary itself
+  (`golang.org/x/text`, `google.golang.org/grpc`, 3 in `stdlib`) -- no apk
+  package to patch; `web/.trivyignore` documents, per CVE, why each
+  doesn't apply to how this deployment actually uses Caddy, with a
+  three-month expiry so the ignore starts failing the scan again instead
+  of hiding a finding indefinitely.

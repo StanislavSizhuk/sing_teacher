@@ -170,6 +170,11 @@ jobs:
           image-ref: vocalcoach-web:ci
           severity: CRITICAL,HIGH
           exit-code: "1"
+          # web/.trivyignore documents, per CVE, why each remaining finding
+          # (all inside the upstream caddy binary itself, not apk-patchable)
+          # doesn't apply to how this deployment actually uses Caddy, with
+          # an expiry so a stale ignore starts failing the scan again.
+          trivyignores: web/.trivyignore
 
   build-web:
     runs-on: ubuntu-latest
