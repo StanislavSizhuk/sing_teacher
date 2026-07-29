@@ -38,11 +38,11 @@ See [api/openapi.yaml](api/openapi.yaml) for the full contract.
 ## Development
 
 The dev stack needs no real secrets to start (mailhog captures verification
-emails instead of sending them; Postgres/Redis/JWT get working dev-only
-defaults -- see `deploy/docker-compose.dev.yml`):
+emails instead of sending them; Postgres/Redis/JWT/Google all get working
+dev-only defaults -- see `deploy/docker-compose.dev.yml`):
 
 ```bash
-cp .env.example .env   # only GOOGLE_CLIENT_ID/SECRET matter if you test Google login
+cp .env.example .env   # real GOOGLE_CLIENT_ID/SECRET only needed to exercise Google login itself
 docker compose -f deploy/docker-compose.dev.yml up
 ```
 
@@ -133,6 +133,7 @@ uv run mypy .
 - [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) -- stages, parameters, error codes, caching
 - [docs/SECURITY.md](docs/SECURITY.md) -- threat model, secrets handling
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) -- deploy, rollback, backup restore, incidents
+- [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) -- run `api/cmd/loadtest` locally against the dev stack
 - [docs/adr/](docs/adr/) -- architectural decisions
 - [CHANGELOG.md](CHANGELOG.md)
 

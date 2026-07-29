@@ -3,10 +3,11 @@
 # connect directly. Not hardened like docker-compose.yml -- this never faces
 # the internet.
 #
-# Usage: from the repo root, `cp .env.example .env` (only GOOGLE_CLIENT_ID/
-# GOOGLE_CLIENT_SECRET need real values to exercise Google login; everything
-# else below already has a working dev default), then:
+# Usage: from the repo root, `cp .env.example .env`, then:
 #   docker compose -f deploy/docker-compose.dev.yml up
+# Every setting below already has a working dev default, including
+# GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET placeholders -- set real values in
+# .env only if you actually need to exercise Google login end-to-end.
 
 x-dev-env: &dev-env
   APP_BASE_URL: http://localhost:8080
@@ -17,6 +18,13 @@ x-dev-env: &dev-env
   SMTP_HOST: mailhog
   SMTP_PORT: "1025"
   SMTP_FROM: dev@localhost
+  # config.Load() fails fast on an empty value (spec 12.1), so these need a
+  # placeholder even when nobody is testing Google login -- the actual
+  # Google OIDC discovery call only happens lazily, the first time
+  # /auth/google is hit (internal/oauth.GoogleVerifier.ensureInit), so a
+  # non-real value is harmless until then.
+  GOOGLE_CLIENT_ID: dev-placeholder-client-id
+  GOOGLE_CLIENT_SECRET: dev-placeholder-client-secret
 
 services:
   postgres:
