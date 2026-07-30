@@ -94,9 +94,14 @@ services:
     # NFR-07: worker peak RAM <= 6 GB (Demucs and Whisper are never
     # resident together, spec 6.5); this is the enforced ceiling, not just
     # a target -- an OOM here must not be able to take Postgres down with it.
+    # cpus matches the 4 vCPU reference hardware the 6.17 budget is measured
+    # against (spec 5.3, 16.3) -- also what makes WORKER_CPU_THREADS=0's
+    # cgroup autodetection (spec 6.11) resolve to something other than the
+    # host's full core count.
     deploy:
       resources:
         limits:
+          cpus: "4"
           memory: 6G
     # Graceful shutdown finishes the current stage and saves progress
     # before exiting (spec 10.1); 120s covers the slowest single stage

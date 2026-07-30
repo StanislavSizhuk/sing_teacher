@@ -88,9 +88,24 @@ def _heartbeat_loop(stop: threading.Event) -> None:
 def run() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
+
+    # First `torch` import in the process (spec 6.11): thread env vars are
+    # already set by `configure_worker_threads` in __main__.py, before this
+    # module -- or anything it imports -- ever ran; torch.set_num_threads
+    # covers its own internal thread pool, which is separate from the
+    # OMP_NUM_THREADS-driven one the env vars alone control.
+    import torch
+
+    torch.set_num_threads(settings.worker_cpu_threads)
+    torch.set_num_interop_threads(max(1, settings.worker_cpu_threads // 2) or 1)
+
     logger.info(
         "starting worker",
-        extra={"pitch_engine": settings.pitch_engine, "app_env": settings.app_env},
+        extra={
+            "pitch_engine": settings.pitch_engine,
+            "app_env": settings.app_env,
+            "worker_cpu_threads": settings.worker_cpu_threads,
+        },
     )
 
     settings.audio_storage_dir.mkdir(parents=True, exist_ok=True)

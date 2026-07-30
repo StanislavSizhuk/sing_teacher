@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     max_audio_seconds: int = Field(360, alias="MAX_AUDIO_SECONDS")
     audio_ttl_seconds: int = Field(300, alias="AUDIO_TTL_SECONDS")
 
+    # Normalized to a concrete count by `runtime.threads.configure_worker_threads`
+    # before this settings object is ever built (spec 6.11) -- 0 here would
+    # only mean "autodetect wasn't applied yet", which should never happen.
+    worker_cpu_threads: int = Field(0, alias="WORKER_CPU_THREADS")
+
     pitch_engine: PitchEngine = Field("crepe", alias="PITCH_ENGINE")
     # "base", not spec 6.2's named "small": ADR-0014, real hardware measured
     # "small" landing on top of TRANSCRIBE_TIMEOUT_SECONDS instead of under it.
