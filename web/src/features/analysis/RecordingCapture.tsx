@@ -85,7 +85,7 @@ export function RecordingCapture({ onReady }: RecordingCaptureProps) {
             type="file"
             accept={ACCEPTED_AUDIO}
             onChange={(e) => setUploadedFile(e.target.files?.[0] ?? null)}
-            className="text-ink-700 text-sm"
+            className="text-ink-700 text-sm file:border file:border-ink-950 file:bg-ink-950 file:text-ink-0"
           />
           <p className="text-ink-500 text-xs">mp3, wav, m4a, flac or ogg. Up to 6 minutes.</p>
         </div>
