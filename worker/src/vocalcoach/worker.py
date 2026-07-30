@@ -4,6 +4,7 @@ runs the Redis Streams consumer loop until told to stop (spec 10, 18/E3).
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 from pathlib import Path
@@ -54,7 +55,12 @@ def build_stages(
         PreprocessStage(ffmpeg_path=FFMPEG_PATH),
         SeparateReferenceStage(
             registry.vocal_separator(),
-            stem_path_for_song=lambda song_id: song_stem_path(settings.song_stems_dir, song_id),
+            # functools.partial, not a lambda: PipelineRunner sends each
+            # stage instance across a spawn-based multiprocessing boundary
+            # (runner.py), which pickles it -- pickle cannot serialize a
+            # closure over a local variable, only a plain function plus its
+            # already-bound arguments.
+            stem_path_for_song=functools.partial(song_stem_path, settings.song_stems_dir),
         ),
         TranscribeStage(registry.transcriber(), songs),
         AlignStage(),
