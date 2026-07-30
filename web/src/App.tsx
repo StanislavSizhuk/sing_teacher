@@ -83,7 +83,15 @@ function AuthenticatedApp() {
         />
       </header>
 
-      {view === 'analyze' ? <AnalyzeFlow /> : <ProgressPage />}
+      {/* Both flows stay mounted across tab switches: unmounting AnalyzeFlow
+          would drop its in-progress `step` (recording/queued analysis) the
+          moment the user glances at Progress and comes back. */}
+      <div className={view === 'analyze' ? 'contents' : 'hidden'}>
+        <AnalyzeFlow />
+      </div>
+      <div className={view === 'progress' ? 'contents' : 'hidden'}>
+        <ProgressPage />
+      </div>
     </main>
   )
 }
