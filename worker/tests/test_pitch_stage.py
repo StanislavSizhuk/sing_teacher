@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from tests.conftest import sine_wave
@@ -11,6 +12,7 @@ from vocalcoach.errors import NoVoiceDetected
 from vocalcoach.models.audio import PitchCurve
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.registry import PyinPitchDetector
+from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
@@ -56,6 +58,34 @@ def test_pitch_reuses_cached_reference_curve_when_warm(tmp_path: Path, wav_write
     assert result.data["reference_cached"] is True
 
 
+def test_pitch_gates_detector_over_a_silent_gap(tmp_path: Path, wav_writer) -> None:
+    """A real gap in the middle of an otherwise-sung recording (spec 6.5's
+    VAD gate) must still produce a sane curve: voiced before/after the gap,
+    unvoiced during it, and a fraction that reflects roughly how much of
+    the recording was actually silent -- gating must not corrupt the result
+    it's built to make cheaper.
+    """
+    tone = sine_wave(2.0, 44100, 300.0)
+    silence = sine_wave(1.5, 44100, 300.0, amplitude=0.0)
+    signal = np.concatenate([tone, silence, tone])
+    recording = wav_writer("recording.wav", signal, 44100)
+    reference = wav_writer("reference.wav", signal, 44100)
+    context = build_context_through_align(tmp_path, recording, reference)
+
+    result = PitchStage(PyinPitchDetector()).run(context)
+
+    # ~1.5s silent out of ~5.5s total -- comfortably clear of both "no
+    # gating happened" (fraction near 1.0) and "everything got gated"
+    # (fraction near 0.0).
+    assert 0.5 < result.data["voiced_fraction"] < 0.85
+    hz = result.data["user_pitch_curve"]["hz"]
+    hop = result.data["user_pitch_curve"]["hop_seconds"]
+    mid_frame = round(2.75 / hop)  # well inside the silent gap
+    assert hz[mid_frame] is None
+    first_frame = round(0.5 / hop)  # well inside the first sung span
+    assert hz[first_frame] is not None
+
+
 def test_pitch_raises_no_voice_detected_on_silence(tmp_path: Path, wav_writer) -> None:
     # A silent recording also fails DTW alignment (nothing to align against),
     # which would mask NO_VOICE_DETECTED behind ALIGNMENT_FAILED if routed
@@ -64,6 +94,7 @@ def test_pitch_raises_no_voice_detected_on_silence(tmp_path: Path, wav_writer) -
     silence_path = wav_writer("recording.wav", sine_wave(3.0, 22050, 300.0, amplitude=0.0), 22050)
     reference_path = wav_writer("reference.wav", sine_wave(3.0, 22050, 300.0), 22050)
     context = make_context(tmp_path, recording_path=silence_path, reference_path=reference_path)
+    context.work_dir.mkdir(parents=True, exist_ok=True)
     context = context.with_result(
         StageResult(
             stage="preprocess",
@@ -84,6 +115,7 @@ def test_pitch_raises_no_voice_detected_on_silence(tmp_path: Path, wav_writer) -
             data={"stem_path": str(reference_path)},
         )
     )
+    context = context.with_result(FeaturesStage().run(context))
     context = context.with_result(
         StageResult(
             stage="align",

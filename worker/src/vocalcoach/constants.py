@@ -88,6 +88,15 @@ BREATH_SILENCE_RELATIVE_DB = -35.0
 BREATH_MIN_PAUSE_SECONDS = 0.2
 BREATH_PAUSE_MATCH_TOLERANCE_SECONDS = 0.5
 
+# VAD gate (spec 6.5, A2): reuses BREATH_SILENCE_RELATIVE_DB's "is this
+# frame silence" definition (dsp/vad.py) rather than a second threshold for
+# the same question. A silent run must last at least this long before the
+# pitch detector is skipped over it -- this is a performance threshold
+# (worth the gating overhead), not a scoring one, so it is deliberately
+# looser than BREATH_MIN_PAUSE_SECONDS, which exists to catch real breath
+# gaps precisely.
+VAD_MIN_SILENT_RUN_SECONDS = 0.3
+
 # torchcrepe: "tiny" trades some accuracy for CPU speed, needed to keep a
 # ~6-minute clip inside the 180s pitch-stage timeout on 4 vCPU (spec 6.2,
 # risk table: "pYIN замість CREPE" is the documented fallback if this still
