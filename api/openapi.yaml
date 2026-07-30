@@ -723,6 +723,30 @@ components:
         current_stage:
           type: string
           description: Set by the worker once processing starts.
+        current_stage_index:
+          type: integer
+          description: >-
+            1-based position of current_stage among total_stages (spec 6.2),
+            matching the WS `stage` event (spec 8.3). Set once processing
+            starts.
+        total_stages:
+          type: integer
+          description: Total pipeline stages for this analysis (spec 6.2).
+        current_stage_started_at:
+          type: string
+          format: date-time
+          description: >-
+            When current_stage began. Lets the client render a live elapsed
+            timer instead of a static label that looks frozen during a
+            multi-minute stage (Demucs/Whisper, spec 6.2).
+        stages:
+          type: object
+          description: >-
+            Every already-completed stage's real recorded duration, keyed by
+            stage name (spec 6.1) -- a running timeline, not just the
+            current stage.
+          additionalProperties:
+            $ref: "#/components/schemas/StageProgress"
         error_code:
           type: string
         pitch_score:
@@ -754,6 +778,22 @@ components:
         completed_at:
           type: string
           format: date-time
+
+    StageProgress:
+      type: object
+      description: >-
+        Display-only summary of one completed pipeline stage (spec 6.1) --
+        never the stage's own `data` (which can carry a full pitch curve for
+        the "pitch" stage, already exposed separately as pitch_curve_json)
+        or its error detail.
+      required: [status, duration_ms]
+      properties:
+        status:
+          type: string
+          enum: [done, failed]
+        duration_ms:
+          type: integer
+          description: Real wall-clock time the stage took.
 
     PianoRoll:
       type: object

@@ -96,26 +96,48 @@ class PostgresAnalysisRepository:
             id=str(id_), user_id=str(user_id), song_id=str(song_id), status=status, stages=stages
         )
 
-    def mark_processing(self, analysis_id: str, first_stage: str) -> None:
+    def mark_processing(
+        self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
+    ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
-                "UPDATE analyses SET status = 'processing', current_stage = %s WHERE id = %s",
-                (first_stage, analysis_id),
+                """
+                UPDATE analyses
+                SET status = 'processing', current_stage = %s, current_stage_index = %s,
+                    total_stages = %s, current_stage_started_at = now(), queue_position = NULL
+                WHERE id = %s
+                """,
+                (first_stage, stage_index, total_stages, analysis_id),
             )
         self._conn.commit()
 
     def save_stage_progress(
-        self, analysis_id: str, result: StageResult, next_stage: str | None
+        self,
+        analysis_id: str,
+        result: StageResult,
+        next_stage: str | None,
+        next_stage_index: int | None,
+        total_stages: int,
     ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
                 SET stages_json = COALESCE(stages_json, '{}'::jsonb) || %s::jsonb,
-                    current_stage = %s
+                    current_stage = %s,
+                    current_stage_index = %s,
+                    total_stages = %s,
+                    current_stage_started_at = CASE WHEN %s THEN now() ELSE NULL END
                 WHERE id = %s
                 """,
-                (Jsonb({result.stage: result.model_dump(mode="json")}), next_stage, analysis_id),
+                (
+                    Jsonb({result.stage: result.model_dump(mode="json")}),
+                    next_stage,
+                    next_stage_index,
+                    total_stages,
+                    next_stage is not None,
+                    analysis_id,
+                ),
             )
         self._conn.commit()
 
@@ -172,7 +194,9 @@ class PostgresAnalysisRepository:
             cur.execute(
                 """
                 UPDATE analyses
-                SET status = 'done', current_stage = NULL, model_versions = %s, completed_at = now()
+                SET status = 'done', current_stage = NULL, current_stage_index = NULL,
+                    total_stages = NULL, current_stage_started_at = NULL, queue_position = NULL,
+                    model_versions = %s, completed_at = now()
                 WHERE id = %s
                 """,
                 (Jsonb(model_versions), analysis_id),
@@ -184,7 +208,9 @@ class PostgresAnalysisRepository:
             cur.execute(
                 """
                 UPDATE analyses
-                SET status = 'failed', error_code = %s, current_stage = NULL, completed_at = now()
+                SET status = 'failed', error_code = %s, current_stage = NULL,
+                    current_stage_index = NULL, total_stages = NULL,
+                    current_stage_started_at = NULL, queue_position = NULL, completed_at = now()
                 WHERE id = %s
                 """,
                 (error_code, analysis_id),

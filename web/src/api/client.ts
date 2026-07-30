@@ -240,12 +240,24 @@ export interface AspectScores {
   timbre?: number
 }
 
+export interface StageProgress {
+  status: 'done' | 'failed'
+  durationMs: number
+}
+
 export interface Analysis {
   id: string
   songId: string
   status: AnalysisStatus
   queuePosition?: number
   currentStage?: string
+  /** 1-based position of currentStage among totalStages (spec 6.2). */
+  currentStageIndex?: number
+  totalStages?: number
+  /** When currentStage began; lets the client render a live elapsed timer. */
+  currentStageStartedAt?: string
+  /** Every already-completed stage's real recorded duration, keyed by stage name. */
+  stages?: Record<string, StageProgress>
   errorCode?: string
   aspectScores: AspectScores
   overallScore?: number
@@ -263,6 +275,17 @@ function toAnalysis(
     status: data.status,
     queuePosition: data.queue_position,
     currentStage: data.current_stage,
+    currentStageIndex: data.current_stage_index,
+    totalStages: data.total_stages,
+    currentStageStartedAt: data.current_stage_started_at,
+    stages:
+      data.stages &&
+      Object.fromEntries(
+        Object.entries(data.stages).map(([name, stage]) => [
+          name,
+          { status: stage.status, durationMs: stage.duration_ms },
+        ]),
+      ),
     errorCode: data.error_code,
     aspectScores: {
       pitch: data.pitch_score,

@@ -80,16 +80,25 @@ class FlakyStage(PipelineStage):
 
 class RecordingAnalysisRepo:
     def __init__(self) -> None:
-        self.processing_calls: list[tuple[str, str]] = []
-        self.progress_calls: list[tuple[str, str, str | None]] = []
+        self.processing_calls: list[tuple[str, str, int, int]] = []
+        self.progress_calls: list[tuple[str, str, str | None, int | None, int]] = []
 
-    def mark_processing(self, analysis_id: str, first_stage: str) -> None:
-        self.processing_calls.append((analysis_id, first_stage))
+    def mark_processing(
+        self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
+    ) -> None:
+        self.processing_calls.append((analysis_id, first_stage, stage_index, total_stages))
 
     def save_stage_progress(
-        self, analysis_id: str, result: StageResult, next_stage: str | None
+        self,
+        analysis_id: str,
+        result: StageResult,
+        next_stage: str | None,
+        next_stage_index: int | None,
+        total_stages: int,
     ) -> None:
-        self.progress_calls.append((analysis_id, result.stage, next_stage))
+        self.progress_calls.append(
+            (analysis_id, result.stage, next_stage, next_stage_index, total_stages)
+        )
 
 
 class RecordingEvents:
@@ -132,8 +141,8 @@ def test_timeout_is_classified_and_retried_then_raises(tmp_path: Path) -> None:
         runner.run("a1", make_context(tmp_path), {})
 
     assert exc_info.value.error_code == "TIMEOUT"
-    assert repo.progress_calls == [("a1", "ok_stage", "slow_stage")]
-    assert repo.processing_calls == [("a1", "ok_stage")]
+    assert repo.progress_calls == [("a1", "ok_stage", "slow_stage", 2, 2)]
+    assert repo.processing_calls == [("a1", "ok_stage", 1, 2)]
     assert events.stage_events == [("a1", "ok_stage", 1, 2), ("a1", "slow_stage", 2, 2)]
 
 
@@ -178,7 +187,10 @@ def test_resumability_skips_already_done_stages(tmp_path: Path) -> None:
 
     runner.run("a5", make_context(tmp_path), already_done)
 
-    assert repo.processing_calls == [("a5", "flaky_stage")]
+    # ok_stage is index 1 of 2 overall, but already_done -- flaky_stage
+    # (index 2) is the one that actually starts running, and the resumed
+    # job's WS/REST position must say so, not restart the count at 1.
+    assert repo.processing_calls == [("a5", "flaky_stage", 2, 2)]
     assert [call[1] for call in repo.progress_calls] == ["flaky_stage"]
 
 

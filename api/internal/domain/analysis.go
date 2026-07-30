@@ -39,7 +39,17 @@ type Analysis struct {
 	QueueStreamID *string
 
 	CurrentStage *string
-	ErrorCode    *string
+	// CurrentStageIndex/TotalStages are the same 1-based position/count the
+	// WS `stage` event carries (spec 8.3), persisted so REST agrees with it
+	// and a fresh page load (or the polling fallback) can render "stage N
+	// of M" without waiting on a WS message. CurrentStageStartedAt is when
+	// CurrentStage began, so the client can render a live elapsed timer
+	// instead of a static label that looks frozen during a multi-minute
+	// stage (spec 6.2's Demucs/Whisper timeouts).
+	CurrentStageIndex     *int
+	TotalStages           *int
+	CurrentStageStartedAt *time.Time
+	ErrorCode             *string
 
 	PitchScore    *float64
 	RhythmScore   *float64

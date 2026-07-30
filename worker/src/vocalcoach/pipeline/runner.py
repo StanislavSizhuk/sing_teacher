@@ -47,10 +47,17 @@ class RunnerAnalysisRepository(Protocol):
     job handler's concern, not the runner's.
     """
 
-    def mark_processing(self, analysis_id: str, first_stage: str) -> None: ...
+    def mark_processing(
+        self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
+    ) -> None: ...
 
     def save_stage_progress(
-        self, analysis_id: str, result: StageResult, next_stage: str | None
+        self,
+        analysis_id: str,
+        result: StageResult,
+        next_stage: str | None,
+        next_stage_index: int | None,
+        total_stages: int,
     ) -> None: ...
 
 
@@ -148,7 +155,10 @@ class PipelineRunner:
         remaining = [stage for stage in self._stages if stage.name not in already_done]
 
         if remaining:
-            self._analyses.mark_processing(analysis_id, remaining[0].name)
+            first = remaining[0]
+            self._analyses.mark_processing(
+                analysis_id, first.name, stage_positions[first.name], total
+            )
 
         for index, stage in enumerate(remaining):
             if should_stop():
@@ -164,7 +174,10 @@ class PipelineRunner:
 
             context = context.with_result(result)
             next_stage = remaining[index + 1].name if index + 1 < len(remaining) else None
-            self._analyses.save_stage_progress(analysis_id, result, next_stage)
+            next_stage_index = stage_positions[next_stage] if next_stage is not None else None
+            self._analyses.save_stage_progress(
+                analysis_id, result, next_stage, next_stage_index, total
+            )
             logger.info(
                 "stage done",
                 extra={

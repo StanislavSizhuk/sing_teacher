@@ -22,7 +22,8 @@ func NewAnalysisRepository(pool *pgxpool.Pool) *AnalysisRepository {
 	return &AnalysisRepository{pool: pool}
 }
 
-const analysisColumns = `id, user_id, song_id, status, queue_position, current_stage, error_code,
+const analysisColumns = `id, user_id, song_id, status, queue_position, current_stage,
+	current_stage_index, total_stages, current_stage_started_at, error_code,
 	pitch_score, rhythm_score, vibrato_score, breath_score, dynamics_score, timbre_score, overall_score,
 	pitch_curve_json, stages_json, feedback_text, scoring_version, model_versions,
 	created_at, completed_at, queue_seq, queue_stream_id`
@@ -30,7 +31,8 @@ const analysisColumns = `id, user_id, song_id, status, queue_position, current_s
 func scanAnalysis(row pgx.Row) (*domain.Analysis, error) {
 	var a domain.Analysis
 	err := row.Scan(
-		&a.ID, &a.UserID, &a.SongID, &a.Status, &a.QueuePosition, &a.CurrentStage, &a.ErrorCode,
+		&a.ID, &a.UserID, &a.SongID, &a.Status, &a.QueuePosition, &a.CurrentStage,
+		&a.CurrentStageIndex, &a.TotalStages, &a.CurrentStageStartedAt, &a.ErrorCode,
 		&a.PitchScore, &a.RhythmScore, &a.VibratoScore, &a.BreathScore, &a.DynamicsScore, &a.TimbreScore, &a.OverallScore,
 		&a.PitchCurveJSON, &a.StagesJSON, &a.FeedbackText, &a.ScoringVersion, &a.ModelVersions,
 		&a.CreatedAt, &a.CompletedAt, &a.QueueSeq, &a.QueueStreamID,
@@ -99,7 +101,7 @@ func (r *AnalysisRepository) GetByID(ctx context.Context, id, userID uuid.UUID) 
 // state.
 func (r *AnalysisRepository) Cancel(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
 	const q = `
-		UPDATE analyses SET status = 'canceled'
+		UPDATE analyses SET status = 'canceled', queue_position = NULL
 		WHERE id = $1 AND user_id = $2 AND status = 'queued'
 		RETURNING ` + analysisColumns
 
@@ -137,6 +139,9 @@ func (r *AnalysisRepository) Retry(ctx context.Context, id, userID uuid.UUID) (*
 		SET status = 'queued',
 			error_code = NULL,
 			current_stage = NULL,
+			current_stage_index = NULL,
+			total_stages = NULL,
+			current_stage_started_at = NULL,
 			queue_stream_id = NULL,
 			queue_position = NULL,
 			queue_seq = nextval('analyses_queue_seq_seq')
