@@ -14,7 +14,6 @@ from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 from vocalcoach.pipeline.registry import Transcriber
-from vocalcoach.repositories.interfaces import SongRepository
 
 STAGE_NAME = "transcribe"
 
@@ -22,14 +21,20 @@ STAGE_NAME = "transcribe"
 class TranscribeStage(PipelineStage):
     """`StageResult.data`: `lyrics` (a JSON-encoded `Lyrics`), `cached`
     (whether Whisper actually ran).
+
+    Does not write `songs.lyrics_json` itself: every stage instance is
+    pickled across `PipelineRunner`'s spawn-based subprocess boundary
+    (runner.py), and a `SongRepository` holding a live DB connection isn't
+    picklable. The job handler persists `lyrics` out of this stage's
+    `StageResult` once the pipeline finishes, in the parent process where
+    the real repository connection lives (spec 6.6 cache write).
     """
 
     name = STAGE_NAME
     timeout_seconds = TRANSCRIBE_TIMEOUT_SECONDS
 
-    def __init__(self, transcriber: Transcriber, songs: SongRepository) -> None:
+    def __init__(self, transcriber: Transcriber) -> None:
         self._transcriber = transcriber
-        self._songs = songs
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
@@ -51,7 +56,6 @@ class TranscribeStage(PipelineStage):
             # never coexist with Demucs'; release it as soon as this stage
             # is done rather than waiting for process exit.
             self._transcriber.release()
-        self._songs.save_lyrics(context.song_id, lyrics)
 
         return StageResult(
             stage=self.name,

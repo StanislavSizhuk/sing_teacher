@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import sine_wave
-from tests.helpers import FakeSongRepository, build_context_through_align, make_context
+from tests.helpers import build_context_through_align, make_context
 from vocalcoach.errors import NoVoiceDetected
+from vocalcoach.models.audio import PitchCurve
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.registry import PyinPitchDetector
 from vocalcoach.pipeline.stages.pitch import PitchStage
@@ -19,13 +20,15 @@ def test_pitch_matching_signals_score_near_perfect(tmp_path: Path, wav_writer) -
     recording = wav_writer("recording.wav", sine_wave(4.0, 44100, 300.0), 44100)
     reference = wav_writer("reference.wav", sine_wave(4.0, 44100, 300.0), 44100)
     context = build_context_through_align(tmp_path, recording, reference)
-    songs = FakeSongRepository()
 
-    result = PitchStage(PyinPitchDetector(), songs).run(context)
+    result = PitchStage(PyinPitchDetector()).run(context)
 
     assert result.data["score"] > 85
     assert result.data["mean_abs_cents"] < 15
-    assert songs.saved_pitch_curve is not None  # cache warmed for future analyses of this song
+    # Cache warmed for future analyses of this song (spec 6.6) -- persisting
+    # it isn't this stage's job (see pitch.py), so only the "not cached"
+    # signal is this stage's to produce; test_handler.py covers the write.
+    assert result.data["reference_cached"] is False
 
     piano_roll = result.data["piano_roll"]
     keys = ("user_hz", "reference_hz", "deviation_cents", "off_pitch")
@@ -36,31 +39,21 @@ def test_pitch_matching_signals_score_near_perfect(tmp_path: Path, wav_writer) -
     assert sum(piano_roll["off_pitch"]) < len(piano_roll["off_pitch"]) * 0.1
 
 
-def test_pitch_caches_reference_curve_and_reuses_it_when_warm(tmp_path: Path, wav_writer) -> None:
+def test_pitch_reuses_cached_reference_curve_when_warm(tmp_path: Path, wav_writer) -> None:
     recording = wav_writer("recording.wav", sine_wave(4.0, 44100, 300.0), 44100)
     reference = wav_writer("reference.wav", sine_wave(4.0, 44100, 300.0), 44100)
     context = build_context_through_align(tmp_path, recording, reference)
 
-    class ExplodingSongRepo:
-        def get_by_id(self, song_id):  # pragma: no cover
-            raise NotImplementedError
-
-        def save_lyrics(self, song_id, lyrics):  # pragma: no cover
-            raise NotImplementedError
-
-        def mark_vocal_stem_processed(self, song_id, reference_pitch):
-            raise AssertionError("must not write the cache again on a cache hit")
-
     # Reuse the pitch curve from the first (cold) run as the "cached" one.
-    warm_songs = FakeSongRepository()
-    PitchStage(PyinPitchDetector(), warm_songs).run(context)
-
-    context = context.model_copy(
-        update={"vocal_stem_processed": True, "reference_pitch": warm_songs.saved_pitch_curve}
+    cold_result = PitchStage(PyinPitchDetector()).run(context)
+    reference_pitch = PitchCurve.model_validate(cold_result.data["reference_pitch_curve"])
+    warm_context = context.model_copy(
+        update={"vocal_stem_processed": True, "reference_pitch": reference_pitch}
     )
 
-    result = PitchStage(PyinPitchDetector(), ExplodingSongRepo()).run(context)
+    result = PitchStage(PyinPitchDetector()).run(warm_context)
     assert result.data["score"] > 85
+    assert result.data["reference_cached"] is True
 
 
 def test_pitch_raises_no_voice_detected_on_silence(tmp_path: Path, wav_writer) -> None:
@@ -101,4 +94,4 @@ def test_pitch_raises_no_voice_detected_on_silence(tmp_path: Path, wav_writer) -
     )
 
     with pytest.raises(NoVoiceDetected):
-        PitchStage(PyinPitchDetector(), FakeSongRepository()).run(context)
+        PitchStage(PyinPitchDetector()).run(context)

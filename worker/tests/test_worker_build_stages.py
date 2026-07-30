@@ -16,23 +16,10 @@ from pathlib import Path
 import pytest
 
 from vocalcoach.config import load_settings
-from vocalcoach.models.audio import Lyrics, PitchCurve
-from vocalcoach.models.records import SongRecord
 from vocalcoach.pipeline.registry import ModelRegistry
 from vocalcoach.worker import build_stages
 
 VALID_WEIGHTS = "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10"
-
-
-class _FakeSongRepository:
-    def get_by_id(self, song_id: str) -> SongRecord:
-        raise NotImplementedError
-
-    def save_lyrics(self, song_id: str, lyrics: Lyrics) -> None:
-        raise NotImplementedError
-
-    def mark_vocal_stem_processed(self, song_id: str, reference_pitch: PitchCurve) -> None:
-        raise NotImplementedError
 
 
 @pytest.fixture
@@ -53,8 +40,8 @@ def test_every_stage_is_picklable(settings, tmp_path: Path) -> None:
         weights_dir=tmp_path,
     )
 
-    stages = build_stages(settings, registry, _FakeSongRepository())
+    stages = build_stages(settings, registry)
 
-    assert len(stages) == 11
+    assert len(stages) == 12
     for stage in stages:
         pickle.dumps(stage)

@@ -98,7 +98,25 @@ RETRY_BACKOFF_BASE_SECONDS = 2.0
 PENDING_CLAIM_MIN_IDLE = 15 * 60  # seconds a delivered job may sit unacked before reclaim
 MAX_CLAIM_ATTEMPTS = 3  # after this many reclaims the job is given up on as failed
 
-# Stage 11 aggregation (spec 6.2/6.3.11, FR-32).
+# Stage 11 recording-condition check (spec 2.3, 6.9): the user's own
+# recording is never run through Demucs (ADR-0003), so this is a cheap
+# substitute for real source separation -- a frame loud enough to matter,
+# relative to this recording's own peak RMS, yet where the pitch stage (5)
+# found no single clear pitch, is a soft signal of non-vocal energy
+# (instruments, noise) rather than a singing voice. -20 dB is well above
+# BREATH_SILENCE_RELATIVE_DB, deliberately: this only wants to catch frames
+# energetic enough to plausibly be an instrument, not normal room tone
+# under a quiet vocal.
+RECORDING_CONDITION_TIMEOUT_SECONDS = 30
+RECORDING_CONDITION_LOUD_RELATIVE_DB = -20.0
+# A recording where at least this fraction of frames are loud-yet-unvoiced
+# is flagged in the report (spec 6.9) -- a starting point, not calibrated
+# against real recordings (same caveat as every other threshold here, spec
+# 19 risk table); every voice has *some* loud-but-momentarily-unvoiced
+# frames (consonants, breath noise), so this sits well above zero.
+RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3
+
+# Stage 12 aggregation (spec 6.2/6.3.11, FR-32).
 AGGREGATE_TIMEOUT_SECONDS = 10
 
 # Feedback tiers every aspect's report text reads off its own score

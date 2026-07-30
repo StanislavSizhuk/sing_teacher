@@ -30,8 +30,11 @@ def song_stem_path(song_stems_dir: Path, song_id: str) -> Path:
 
 
 def analysis_work_dir(audio_storage_dir: Path, analysis_id: str) -> Path:
-    """Scratch directory for one analysis run's intermediate files, deleted
-    once the job reaches a terminal state (spec FR-43: no later than 5
-    minutes after processing ends -- here, immediately).
+    """Scratch directory for one analysis run's intermediate files (each
+    stage's cached output in stages_json points back into here). Deleted
+    on success, immediately (spec FR-43). Left in place on failure instead:
+    a retry (FR-26) resumes from already-completed stages by reopening
+    exactly these files, so removing them here would make retry always
+    fail on the first cached stage it tries to reuse.
     """
     return audio_storage_dir / f"work-{analysis_id}"

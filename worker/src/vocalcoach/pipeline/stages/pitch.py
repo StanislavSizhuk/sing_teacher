@@ -24,7 +24,6 @@ from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 from vocalcoach.pipeline.registry import PitchDetector
-from vocalcoach.repositories.interfaces import SongRepository
 
 STAGE_NAME = "pitch"
 
@@ -55,20 +54,28 @@ class PitchStage(PipelineStage):
     `analyses.pitch_curve_json` (spec 7, FR-31) -- unlike the two curves
     above, it is already resampled onto the user's time grid, ready for a
     frame-for-frame overlay.
+
+    Does not write `songs.reference_pitch_json`/`vocal_stem_processed`
+    itself: every stage instance is pickled across `PipelineRunner`'s
+    spawn-based subprocess boundary (runner.py), and a `SongRepository`
+    holding a live DB connection isn't picklable. The job handler persists
+    `reference_pitch_curve` out of this stage's `StageResult` once the
+    pipeline finishes, in the parent process where the real repository
+    connection lives (spec 6.6 cache write).
     """
 
     name = STAGE_NAME
     timeout_seconds = PITCH_TIMEOUT_SECONDS
 
-    def __init__(self, detector: PitchDetector, songs: SongRepository) -> None:
+    def __init__(self, detector: PitchDetector) -> None:
         self._detector = detector
-        self._songs = songs
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
         preprocess = context.result("preprocess").data
         sample_rate = int(preprocess["sample_rate_hz"])
 
+        reference_cached = context.vocal_stem_processed and context.reference_pitch is not None
         try:
             user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
             user_hz = self._detector.detect(user_samples, sample_rate, PITCH_HOP_SECONDS)
@@ -117,6 +124,7 @@ class PitchStage(PipelineStage):
                 "voiced_fraction": voiced_fraction,
                 "user_pitch_curve": user_curve.model_dump(mode="json"),
                 "reference_pitch_curve": reference_curve.model_dump(mode="json"),
+                "reference_cached": reference_cached,
                 "piano_roll": piano_roll.model_dump(mode="json"),
             },
         )
@@ -128,9 +136,7 @@ class PitchStage(PipelineStage):
         stem_path = Path(context.result("separate_reference").data["stem_path"])
         reference_samples, _sr = read_mono(stem_path)
         reference_hz = self._detector.detect(reference_samples, sample_rate, PITCH_HOP_SECONDS)
-        curve = PitchCurve(hop_seconds=PITCH_HOP_SECONDS, hz=reference_hz)
-        self._songs.mark_vocal_stem_processed(context.song_id, curve)
-        return curve
+        return PitchCurve(hop_seconds=PITCH_HOP_SECONDS, hz=reference_hz)
 
 
 def _align_and_compare(
