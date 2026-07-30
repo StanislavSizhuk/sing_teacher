@@ -53,6 +53,12 @@ def _context_with_aspect_results(tmp_path: Path) -> AnalysisContext:
             reference={"detected": True, "rate_hz": 5.6, "depth_cents": 42.0},
         ),
         _stage("timbre", 50.0, mean_cosine_similarity=0.5),
+        StageResult(
+            stage="recording_condition",
+            status=StageStatus.DONE,
+            duration_ms=1,
+            data={"background_music_detected": False, "non_vocal_energy_fraction": 0.0},
+        ),
     ]
     for result in results:
         context = context.with_result(result)
@@ -85,6 +91,35 @@ def test_aggregate_report_names_lowest_scoring_aspect_as_focus(tmp_path: Path) -
     report = result.data["feedback_text"]
     assert "Overall score: 78/100" in report  # 77.5 rounds to 78 under "{:.0f}"
     assert "timbre" in report.lower()  # timbre is the lowest-scoring aspect (50)
+
+
+def test_aggregate_report_flags_background_music_without_penalizing_score(tmp_path: Path) -> None:
+    context = _context_with_aspect_results(tmp_path)
+    context = context.with_result(
+        StageResult(
+            stage="recording_condition",
+            status=StageStatus.DONE,
+            duration_ms=1,
+            data={"background_music_detected": True, "non_vocal_energy_fraction": 0.42},
+        )
+    )
+
+    result = AggregateStage(_WEIGHTS, scoring_version="1.0").run(context)
+
+    # spec 6.9: a report warning, never a score penalty -- same 77.5 as the
+    # background_music_detected=False fixture above.
+    assert result.data["overall_score"] == 77.5
+    assert "doesn't look like a clean solo voice" in result.data["feedback_text"]
+
+
+def test_aggregate_report_omits_background_music_warning_when_not_detected(
+    tmp_path: Path,
+) -> None:
+    context = _context_with_aspect_results(tmp_path)
+
+    result = AggregateStage(_WEIGHTS, scoring_version="1.0").run(context)
+
+    assert "doesn't look like a clean solo voice" not in result.data["feedback_text"]
 
 
 def test_aggregate_report_includes_timbre_disclaimer(tmp_path: Path) -> None:

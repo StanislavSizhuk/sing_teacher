@@ -1,6 +1,6 @@
-"""Stage 11: weighted-sum the six aspect scores into `overall_score` and
+"""Stage 12: weighted-sum the six aspect scores into `overall_score` and
 build the FR-32 text report (spec 6.2 row 11, 6.3.11, 6.4). Pure arithmetic
-and string-building over stage results stages 5-10 already computed -- no
+and string-building over stage results stages 5-11 already computed -- no
 DSP, no I/O beyond returning its own `StageResult`.
 """
 
@@ -46,7 +46,14 @@ class AggregateStage(PipelineStage):
         }
 
         overall_score = _weighted_overall_score(aspect_scores, self._weights)
-        feedback_text = build_feedback_report(aspect_results, overall_score)
+        # spec 6.9: a non-blocking report warning, never a lower score --
+        # the recording-condition check runs regardless of what it finds.
+        background_music_detected = bool(
+            context.result("recording_condition").data["background_music_detected"]
+        )
+        feedback_text = build_feedback_report(
+            aspect_results, overall_score, background_music_detected
+        )
 
         return StageResult(
             stage=self.name,

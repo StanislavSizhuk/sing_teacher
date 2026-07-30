@@ -58,3 +58,20 @@ def test_align_wildly_different_signals_raises_alignment_failed(tmp_path: Path, 
 
     with pytest.raises(AlignmentFailed):
         AlignStage().run(context)
+
+
+def test_align_duration_beyond_window_raises_alignment_failed_not_internal(
+    tmp_path: Path, wav_writer
+) -> None:
+    """dtw-python raises a bare ValueError ("No warping path found
+    compatible with the local constraints"), not one of its own error
+    types, when the two signals' length difference alone exceeds what the
+    Sakoe-Chiba window (ALIGN_WINDOW_SECONDS) can bridge -- this must
+    still classify as the non-retryable ALIGNMENT_FAILED (spec 6.8), not
+    fall through as an uncaught, retried InternalPipelineError."""
+    recording = wav_writer("recording.wav", sine_wave(2.0, 44100, 300.0), 44100)
+    reference = wav_writer("reference.wav", sine_wave(20.0, 44100, 300.0), 44100)
+    context = _through_separation(tmp_path, recording, reference)
+
+    with pytest.raises(AlignmentFailed):
+        AlignStage().run(context)

@@ -27,8 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends "ffmpeg=${FFMPE
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir "uv==${UV_VERSION}"
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --all-groups
+# Split like the builder stage below: dependencies only (cached across most
+# rebuilds, since pyproject.toml/uv.lock change far less often than src/),
+# then the project itself once src/ exists. A single `uv sync` before COPY
+# never installs vocalcoach's own editable package (there is no src/ yet to
+# build it from), which left `python -m vocalcoach` failing with "No module
+# named vocalcoach" even though every third-party dependency was present.
+RUN uv sync --frozen --all-groups --no-install-project
 COPY . .
+RUN uv sync --frozen --all-groups
 ENV PATH="/src/.venv/bin:${PATH}"
 CMD ["python", "-m", "vocalcoach"]
 

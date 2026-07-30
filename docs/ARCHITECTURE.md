@@ -1,9 +1,13 @@
 # Architecture
 
 Status: reflects stages E1-E5, including `web/`, plus the post-E6 fix that
-wires `web/` into `docker compose` (ADR-0013). Components and flows still
-planned for later stages (Google sign-in UI, a paginated analysis history
-endpoint) are noted as such, not described as if they existed.
+wires `web/` into `docker compose` (ADR-0013), and a further post-E6 audit
+pass that made the ML pipeline actually complete a real analysis end to
+end for the first time (spawn-boundary pickling, Demucs model loading, the
+retry/work-dir interaction, a Redis Streams resilience gap) plus the spec
+6.9 recording-condition stage. Components and flows still planned for
+later stages (Google sign-in UI, a paginated analysis history endpoint)
+are noted as such, not described as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -136,39 +140,66 @@ queue/consumer.py  →  queue/handler.py  →  pipeline/runner.py  →  pipeline
 ```
 
 - `worker.py`: the entrypoint, wiring config → Postgres/Redis connections →
-  repositories → `ModelRegistry` → the 10 stages → `PipelineRunner` →
+  repositories → `ModelRegistry` → the 12 stages → `PipelineRunner` →
   `AnalysisJobHandler` → `Consumer`, then blocking in the consumer loop
   until SIGTERM/SIGINT.
 - `pipeline/base.py`/`pipeline/stages/`: `PipelineStage` is the Open/Closed
   seam spec 12.3 asks for -- a new stage is a new class plus one line in
   `worker.build_stages`, nothing else changes. See `docs/ML_PIPELINE.md`
-  for what each of the 10 stages does.
+  for what each of the 12 stages does. No stage constructor takes a
+  repository: every stage instance is pickled across `PipelineRunner`'s
+  spawn-based subprocess boundary, and a `SongRepository` holding a live
+  DB connection cannot survive that (a stage that tried this -- `transcribe`
+  and `pitch` originally did -- crashed the moment a job actually reached
+  it, `TypeError: no default __reduce__ due to non-trivial __cinit__` on
+  the connection object). Their song-cache writes (`songs.lyrics_json`,
+  `reference_pitch_json`/`vocal_stem_processed`) move to
+  `AnalysisJobHandler` instead, which runs in the parent process and holds
+  the real connection.
 - `pipeline/runner.py`: `PipelineRunner` orchestrates order, per-stage
   timeout, transient retry, and progress persistence -- and nothing else
   (spec 12.3: "нічого не знає про DSP"). Every stage runs in its own
   spawned child process (ADR-0012), which is what makes a timeout
   enforceable at all and what satisfies spec 6.5's "Demucs and Whisper
   never resident together" as a consequence rather than a special case.
+  Any non-picklable value bound into a stage instance (a lambda closing
+  over a local variable, e.g.) fails the same way, only once a job
+  actually reaches that stage, not at import/construction time -- see
+  `worker.build_stages`'s `functools.partial` comment.
 - `pipeline/registry.py`: `ModelRegistry` lazily constructs Demucs/Whisper/
   CREPE/pYIN behind narrow `Protocol`s a stage takes as a constructor
   dependency -- unit tests inject a fake instead of downloading model
-  weights (spec 15.2).
+  weights (spec 15.2). `DemucsSeparator` never passes Demucs' own `repo=`
+  parameter: doing so tells Demucs to treat it as a *local-only* folder
+  that must already contain the model files, with no fallback to
+  download them, which is not what the `model-weights` volume is (a
+  download cache, populated lazily via `TORCH_HOME`/`XDG_CACHE_HOME`).
 - `queue/consumer.py`: `XREADGROUP` delivery, `XACK` once a job reaches a
   terminal state, and a startup reclaim sweep over `XPENDING` for a job
   whose worker died mid-stage (spec 10.1) -- mirrors `api/internal/queue`'s
   producer side of the same Redis Stream (`StreamName`/`GroupName` must
-  match exactly, ADR-0002).
+  match exactly, ADR-0002). A `NOGROUP` response from Redis (the stream or
+  group missing) is caught and recovered -- re-create the group and keep
+  going -- rather than left to crash the whole process, which previously
+  abandoned every in-flight job until something external restarted the
+  container.
 - `queue/handler.py`: `AnalysisJobHandler` builds the per-job
   `AnalysisContext` from current DB state, drives the runner, and on
   success denormalizes each aspect stage's score out of `stages_json` into
-  its own column (`analyses.pitch_score`, etc.), records a FR-35 progress
+  its own column (`analyses.pitch_score`, etc.), writes `transcribe`'s/
+  `pitch`'s spec 6.6 song cache (`_persist_song_cache`, skipped when a
+  stage already served its answer from cache), records a FR-35 progress
   snapshot alongside `save_scoring_result` (E5), then calls `mark_done` --
   `PipelineRunner` itself stays agnostic of which stages happen to produce
-  a score. Also does the FR-43 cleanup: the scratch work dir always, the
-  recording only once the job is durably `done` (a retryable failure must
-  leave it in place -- see `service/analysis/retry.go`'s "canonical
-  recording... untouched" contract), and the song's original upload once
-  `vocal_stem_processed` is true.
+  a score or a cache write. Also does the FR-43 cleanup: the scratch work
+  dir only once the job is durably `done` (a retryable failure leaves it
+  in place -- a retry resumes from stages already in `stages_json` by
+  reopening exactly the files `preprocess` wrote there, so deleting it on
+  every failure silently broke every retry past `preprocess`), the
+  recording only once the job is durably `done` (see
+  `service/analysis/retry.go`'s "canonical recording... untouched"
+  contract), and the song's original upload once `vocal_stem_processed`
+  is true.
 - `queue/events.py`: `RedisEventPublisher`, the other end of `go-api`'s
   `queue.RelayEvents` (ADR-0010).
 - `repositories/postgres.py`: `PostgresAnalysisRepository`/
@@ -193,11 +224,17 @@ queue/consumer.py  →  queue/handler.py  →  pipeline/runner.py  →  pipeline
    `analyses` row, an `XADD` to the Redis Streams queue, and every queued
    job's position recomputed.
 3. `python-worker`'s consumer picks the job up (`XREADGROUP`), runs stages
-   1-10 (`docs/ML_PIPELINE.md`), and persists progress after each one.
+   1-12 (`docs/ML_PIPELINE.md`), and persists progress after each one.
 4. `GET /ws/analyses/{id}` pushes `{"type":"queued","position":N}` while
    queued, then `{"type":"stage",...}` per stage, then `{"type":"done"}` or
    `{"type":"failed",...}` (spec 8.3); `GET /analyses/{id}` is the REST
-   fallback/final-result path regardless.
+   fallback/final-result path regardless. The REST resource also carries
+   `current_stage_index`/`total_stages`/`current_stage_started_at` (set by
+   the same `mark_processing`/`save_stage_progress` writes the WS event
+   mirrors) and a `stages` map of each completed stage's real duration, so
+   a fresh page load or the polling fallback can render "stage N of M" and
+   a live elapsed timer without ever needing the WS message that first
+   announced it.
 5. `POST /analyses/{id}/cancel` (FR-25) works while `queued`.
    `POST /analyses/{id}/retry` (FR-26) is reachable end-to-end now that E3
    can actually produce a `failed` analysis: it resets status/error/queue

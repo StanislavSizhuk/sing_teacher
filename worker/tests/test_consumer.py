@@ -115,6 +115,20 @@ def test_reclaim_stuck_job_reprocesses_it(redis_client: redis.Redis) -> None:
     assert redis_client.xpending_range(STREAM_NAME, GROUP_NAME, min="-", max="+", count=10) == []
 
 
+def test_read_next_recreates_a_missing_consumer_group(redis_client: redis.Redis) -> None:
+    """A previous version let NOGROUP (the stream/group disappearing out
+    from under a running worker) escape run_forever's loop uncaught,
+    crashing the whole process instead of just this one read attempt."""
+    consumer = Consumer(redis_client, RecordingHandler(), consumer_name="test-consumer")
+    redis_client.delete(STREAM_NAME)
+
+    entries = consumer._read_next()
+
+    assert entries == []
+    groups = cast(list[dict[str, Any]], redis_client.xinfo_groups(STREAM_NAME))
+    assert any(group["name"] == GROUP_NAME for group in groups)
+
+
 def test_reclaim_gives_up_after_max_claim_attempts(redis_client: redis.Redis) -> None:
     handler = RecordingHandler(terminal=True)
     consumer = Consumer(redis_client, handler, consumer_name="reclaimer2")

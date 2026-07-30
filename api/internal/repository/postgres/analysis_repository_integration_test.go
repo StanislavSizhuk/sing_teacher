@@ -71,10 +71,14 @@ func TestAnalysisRepository_Cancel_QueuedAnalysis_Succeeds(t *testing.T) {
 
 	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
 	require.NoError(t, analysisRepo.Create(ctx, a))
+	_, err = pool.Exec(ctx, `UPDATE analyses SET queue_position = 4 WHERE id = $1`, a.ID)
+	require.NoError(t, err)
 
 	canceled, err := analysisRepo.Cancel(ctx, a.ID, user.ID)
 	require.NoError(t, err)
 	require.Equal(t, domain.AnalysisStatusCanceled, canceled.Status)
+	// spec 8.2: queue_position is "Absent once no longer queued".
+	require.Nil(t, canceled.QueuePosition)
 }
 
 func TestAnalysisRepository_Cancel_AlreadyCanceled_ReturnsErrAnalysisNotQueued(t *testing.T) {
@@ -135,7 +139,9 @@ func TestAnalysisRepository_Retry_FailedAnalysis_Succeeds(t *testing.T) {
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	require.NoError(t, analysisRepo.SetQueueStreamID(ctx, a.ID, "1234-0"))
 
-	_, err = pool.Exec(ctx, `UPDATE analyses SET status = 'failed', error_code = 'INTERNAL', current_stage = 'pitch' WHERE id = $1`, a.ID)
+	_, err = pool.Exec(ctx, `UPDATE analyses SET status = 'failed', error_code = 'INTERNAL',
+		current_stage = 'pitch', current_stage_index = 5, total_stages = 11,
+		current_stage_started_at = now() WHERE id = $1`, a.ID)
 	require.NoError(t, err)
 
 	retried, err := analysisRepo.Retry(ctx, a.ID, user.ID)
@@ -143,6 +149,9 @@ func TestAnalysisRepository_Retry_FailedAnalysis_Succeeds(t *testing.T) {
 	require.Equal(t, domain.AnalysisStatusQueued, retried.Status)
 	require.Nil(t, retried.ErrorCode)
 	require.Nil(t, retried.CurrentStage)
+	require.Nil(t, retried.CurrentStageIndex)
+	require.Nil(t, retried.TotalStages)
+	require.Nil(t, retried.CurrentStageStartedAt)
 	require.Nil(t, retried.QueueStreamID)
 	require.Greater(t, retried.QueueSeq, a.QueueSeq, "retry must draw a fresh, later queue_seq so it goes to the back of the FIFO")
 }

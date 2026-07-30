@@ -76,18 +76,24 @@ class PitchDetector(Protocol):
 class DemucsSeparator:
     """Real `VocalSeparator` backed by Demucs v4 (spec ADR-0003)."""
 
-    def __init__(self, model_name: str, weights_dir: Path) -> None:
+    def __init__(self, model_name: str) -> None:
         self._model_name = model_name
-        self._weights_dir = weights_dir
         self._separator: Any = None
 
     def _loaded(self) -> Any:
         if self._separator is None:
             from demucs.api import Separator  # heavy import deferred to first use
 
-            self._separator = Separator(
-                model=self._model_name, repo=self._weights_dir, device="cpu"
-            )
+            # No `repo=` here: passing one tells Demucs to treat it as a
+            # self-contained *local-only* folder that must already hold the
+            # exact model files, with no fallback to download them --
+            # every separate_reference run failed with "htdemucs is neither
+            # a single pre-trained model or a bag of models" the moment the
+            # weights volume was empty. Leaving repo unset uses Demucs' own
+            # HuggingFace-Hub-then-remote-repo download, cached under
+            # TORCH_HOME/XDG_CACHE_HOME (worker/Dockerfile already points
+            # both at the model-weights volume, spec 5.4/6.5).
+            self._separator = Separator(model=self._model_name, device="cpu")
         return self._separator
 
     def separate_vocals(self, mixture: np.ndarray, sample_rate_hz: int) -> np.ndarray:
@@ -234,7 +240,7 @@ class ModelRegistry:
     def vocal_separator(self) -> VocalSeparator:
         if self._separator is None:
             logger.info("loading demucs model", extra={"model": self._demucs_model})
-            self._separator = DemucsSeparator(self._demucs_model, self._weights_dir)
+            self._separator = DemucsSeparator(self._demucs_model)
         return self._separator
 
     def transcriber(self) -> Transcriber:

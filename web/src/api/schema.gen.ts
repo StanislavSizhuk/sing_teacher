@@ -427,6 +427,19 @@ export interface components {
       queue_position?: number
       /** @description Set by the worker once processing starts. */
       current_stage?: string
+      /** @description 1-based position of current_stage among total_stages (spec 6.2), matching the WS `stage` event (spec 8.3). Set once processing starts. */
+      current_stage_index?: number
+      /** @description Total pipeline stages for this analysis (spec 6.2). */
+      total_stages?: number
+      /**
+       * Format: date-time
+       * @description When current_stage began. Lets the client render a live elapsed timer instead of a static label that looks frozen during a multi-minute stage (Demucs/Whisper, spec 6.2).
+       */
+      current_stage_started_at?: string
+      /** @description Every already-completed stage's real recorded duration, keyed by stage name (spec 6.1) -- a running timeline, not just the current stage. */
+      stages?: {
+        [key: string]: components['schemas']['StageProgress']
+      }
       error_code?: string
       pitch_score?: number
       rhythm_score?: number
@@ -445,6 +458,13 @@ export interface components {
       created_at: string
       /** Format: date-time */
       completed_at?: string
+    }
+    /** @description Display-only summary of one completed pipeline stage (spec 6.1) -- never the stage's own `data` (which can carry a full pitch curve for the "pitch" stage, already exposed separately as pitch_curve_json) or its error detail. */
+    StageProgress: {
+      /** @enum {string} */
+      status: 'done' | 'failed'
+      /** @description Real wall-clock time the stage took. */
+      duration_ms: number
     }
     /** @description FR-31 overlay data: the user's pitch curve and the reference curve already resampled onto the user's own time grid, frame for frame, so the client never needs to redo the DTW alignment (spec 6.3.4/6.3.5) to draw the two curves together. */
     PianoRoll: {

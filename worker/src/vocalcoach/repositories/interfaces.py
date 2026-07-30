@@ -40,17 +40,28 @@ class AnalysisRepository(Protocol):
 
     def get_by_id(self, analysis_id: str) -> AnalysisRecord: ...
 
-    def mark_processing(self, analysis_id: str, first_stage: str) -> None:
+    def mark_processing(
+        self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
+    ) -> None:
         """Transitions `queued` -> `processing` when a worker picks the job
-        up, and records the first stage it is about to run."""
+        up, and records the first stage it is about to run: its name,
+        1-based position among total_stages, and a fresh
+        current_stage_started_at so the client can render a live elapsed
+        timer instead of a static label (spec 6.2, 8.3)."""
         ...
 
     def save_stage_progress(
-        self, analysis_id: str, result: StageResult, next_stage: str | None
+        self,
+        analysis_id: str,
+        result: StageResult,
+        next_stage: str | None,
+        next_stage_index: int | None,
+        total_stages: int,
     ) -> None:
         """Merges `result` into `stages_json` under its stage name (spec
-        6.1) and sets `current_stage` to `next_stage` (or clears it once
-        there is no next stage), so a poll or WS push sees progress live."""
+        6.1) and sets `current_stage`/`current_stage_index` to `next_stage`
+        (or clears them, and stops the elapsed timer, once there is no next
+        stage), so a poll or WS push sees progress live."""
         ...
 
     def save_aspect_score(self, analysis_id: str, aspect: str, score: float) -> None:

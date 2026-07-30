@@ -93,23 +93,53 @@ def test_analysis_repository_progress_and_terminal_states(
     _user_id, _song_id, analysis_id = seeded_ids
     repo = PostgresAnalysisRepository(conn)
 
-    repo.mark_processing(analysis_id, "preprocess")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE analyses SET queue_position = 9 WHERE id = %s", (analysis_id,))
+    conn.commit()
+
+    repo.mark_processing(analysis_id, "preprocess", stage_index=1, total_stages=3)
     assert repo.get_by_id(analysis_id).status == "processing"
+    with conn.cursor() as cur:
+        # spec 8.2: queue_position is "Absent once no longer queued" -- a
+        # job the worker just picked up must not still claim a queue spot.
+        cur.execute("SELECT queue_position FROM analyses WHERE id = %s", (analysis_id,))
+        (queue_position,) = _fetchone(cur)
+    assert queue_position is None
 
     repo.save_stage_progress(
         analysis_id,
         StageResult(stage="preprocess", status=StageStatus.DONE, duration_ms=10, data={"a": 1}),
         next_stage="align",
+        next_stage_index=2,
+        total_stages=3,
     )
     repo.save_stage_progress(
         analysis_id,
         StageResult(stage="align", status=StageStatus.DONE, duration_ms=20, data={}),
         next_stage="pitch",
+        next_stage_index=3,
+        total_stages=3,
     )
     record = repo.get_by_id(analysis_id)
     # Both entries must survive -- this is the jsonb `||` merge resumability depends on.
     assert set(record.stages.keys()) == {"preprocess", "align"}
     assert record.stages["preprocess"].duration_ms == 10
+
+    # current_stage_index/total_stages/current_stage_started_at (spec 6.2,
+    # 8.3) aren't on AnalysisRecord (the worker's own pipeline logic never
+    # reads them back), so check the row directly -- this is what the Go
+    # API's GET /analyses/{id} actually surfaces to the client.
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT current_stage, current_stage_index, total_stages, "
+            "current_stage_started_at FROM analyses WHERE id = %s",
+            (analysis_id,),
+        )
+        current_stage, current_stage_index, total_stages, started_at = _fetchone(cur)
+    assert current_stage == "pitch"
+    assert current_stage_index == 3
+    assert total_stages == 3
+    assert started_at is not None
 
     repo.save_aspect_score(analysis_id, "pitch", 87.5)
     with conn.cursor() as cur:
@@ -144,8 +174,19 @@ def test_analysis_repository_progress_and_terminal_states(
     assert feedback_text == "Overall score: 88/100."
     assert scoring_version == "1.0"
 
+    # A job's queue_position is only meaningful while queued (spec 8.2:
+    # "Absent once no longer queued") -- set it as if this row were still
+    # sitting in the queue, so mark_done clearing it is actually exercised.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE analyses SET queue_position = 7 WHERE id = %s", (analysis_id,))
+    conn.commit()
+
     repo.mark_done(analysis_id, {"demucs": "htdemucs"})
     assert repo.get_by_id(analysis_id).status == "done"
+    with conn.cursor() as cur:
+        cur.execute("SELECT queue_position FROM analyses WHERE id = %s", (analysis_id,))
+        (queue_position,) = _fetchone(cur)
+    assert queue_position is None
 
 
 def test_record_progress_snapshot_upserts_on_retry(
@@ -179,7 +220,23 @@ def test_record_progress_snapshot_upserts_on_retry(
 def test_mark_failed(conn: psycopg.Connection, seeded_ids: tuple[str, str, str]) -> None:
     _user_id, _song_id, analysis_id = seeded_ids
     repo = PostgresAnalysisRepository(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE analyses SET queue_position = 3, current_stage = 'pitch', "
+            "current_stage_index = 5, total_stages = 11, current_stage_started_at = now() "
+            "WHERE id = %s",
+            (analysis_id,),
+        )
+    conn.commit()
 
     repo.mark_failed(analysis_id, "NO_VOICE_DETECTED")
 
     assert repo.get_by_id(analysis_id).status == "failed"
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT queue_position, current_stage, current_stage_index, total_stages, "
+            "current_stage_started_at FROM analyses WHERE id = %s",
+            (analysis_id,),
+        )
+        row = _fetchone(cur)
+    assert row == (None, None, None, None, None)

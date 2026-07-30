@@ -25,6 +25,12 @@ x-dev-env: &dev-env
   # non-real value is harmless until then.
   GOOGLE_CLIENT_ID: dev-placeholder-client-id
   GOOGLE_CLIENT_SECRET: dev-placeholder-client-secret
+  # Spec 11.4 requires this to default to false in *production* config --
+  # that's .env.example/.env, untouched here. The dev stack never faces the
+  # internet and exists specifically so this flow can be exercised locally,
+  # so it is on by default here instead of silently 403-ing until someone
+  # discovers the flag exists.
+  FEATURE_YOUTUBE_IMPORT: "true"
 
 services:
   postgres:
@@ -128,6 +134,12 @@ services:
       <<: *dev-env
     volumes:
       - ../worker:/src
+      # Anonymous volume so the bind mount above doesn't shadow the image's
+      # own .venv with the host's -- the host's editable install records an
+      # absolute host path (see uv's *.pth file) that doesn't exist inside
+      # the container, which otherwise crash-loops on `no module named
+      # vocalcoach` (same reasoning as web's /src/node_modules below).
+      - /src/.venv
       - audio-tmp-dev:/data/audio-tmp
       - song-stems-dev:/data/song-stems
       - model-weights-dev:/data/model-weights

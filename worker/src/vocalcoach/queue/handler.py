@@ -13,7 +13,7 @@ from typing import Protocol
 from vocalcoach.audio.paths import analysis_work_dir, recording_source_path, song_source_path
 from vocalcoach.config import ASPECTS, Settings
 from vocalcoach.errors import PipelineError
-from vocalcoach.models.audio import PianoRollData
+from vocalcoach.models.audio import Lyrics, PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
@@ -58,13 +58,21 @@ class HandlerAnalysisRepository(Protocol):
 
 
 class HandlerSongRepository(Protocol):
-    """The narrow slice of `SongRepository` the handler needs -- just
-    enough to build the `AnalysisContext` and check the cache flag during
-    cleanup. Writing the cache (`save_lyrics`/`mark_vocal_stem_processed`)
-    is each stage's own concern.
+    """The slice of `SongRepository` the handler needs: building the
+    `AnalysisContext`/checking the cache flag during cleanup, and writing
+    the spec 6.6 cache once the pipeline finishes. Transcribe/pitch cannot
+    write it themselves -- their `StageResult` is produced inside
+    `PipelineRunner`'s spawn-based subprocess (runner.py), and a
+    `SongRepository` holding a live DB connection can't survive being
+    pickled across that boundary -- so the handler does it here instead,
+    in the parent process where the real connection lives.
     """
 
     def get_by_id(self, song_id: str) -> SongRecord: ...
+
+    def save_lyrics(self, song_id: str, lyrics: Lyrics) -> None: ...
+
+    def mark_vocal_stem_processed(self, song_id: str, reference_pitch: PitchCurve) -> None: ...
 
 
 class AnalysisJobHandler:
@@ -108,16 +116,23 @@ class AnalysisJobHandler:
             )
             self._analyses.mark_failed(analysis_id, exc.error_code)
             self._events.publish_failed(analysis_id, exc.error_code, str(exc))
-            self._cleanup(context, recording_done=False)
+            # A failed analysis stays retryable (FR-26) without re-uploading
+            # anything, which depends on already-completed stages' cached
+            # results in stages_json still resolving to real files --
+            # preprocess writes its canonical recording.wav/reference.wav
+            # into work_dir, so removing work_dir here would make the very
+            # next retry crash trying to open files this run just deleted.
+            self._cleanup(context, recording_done=False, remove_work_dir=False)
             return True
 
         if outcome is RunOutcome.INTERRUPTED:
             return False
 
         self._persist_scores(analysis_id)
+        self._persist_song_cache(analysis_id, context.song_id)
         self._analyses.mark_done(analysis_id, self._model_versions)
         self._events.publish_done(analysis_id)
-        self._cleanup(context, recording_done=True)
+        self._cleanup(context, recording_done=True, remove_work_dir=True)
         return True
 
     def mark_permanently_failed(self, analysis_id: str) -> None:
@@ -173,6 +188,38 @@ class AnalysisJobHandler:
             # to the handler, not the pipeline context.
             self._analyses.record_progress_snapshot(analysis_id, record.user_id, overall_score)
 
+    def _persist_song_cache(self, analysis_id: str, song_id: str) -> None:
+        """Writes transcribe's/pitch's spec 6.6 song-level cache
+        (`lyrics_json`, `reference_pitch_json` + `vocal_stem_processed`)
+        out of their `StageResult`s, now that the pipeline has fully
+        finished. Neither stage can write it itself (see transcribe.py/
+        pitch.py) -- both would need a `SongRepository` to survive being
+        pickled across `PipelineRunner`'s spawn-based subprocess boundary,
+        which a live DB connection cannot. Skips whichever stage already
+        served its answer from cache (`cached`/`reference_cached`), so a
+        song already warm for this analysis is never re-written with the
+        same values.
+        """
+        record = self._analyses.get_by_id(analysis_id)
+
+        transcribe_result = record.stages.get("transcribe")
+        if (
+            transcribe_result is not None
+            and not transcribe_result.data.get("cached", False)
+            and "lyrics" in transcribe_result.data
+        ):
+            lyrics = Lyrics.model_validate(transcribe_result.data["lyrics"])
+            self._songs.save_lyrics(song_id, lyrics)
+
+        pitch_result = record.stages.get("pitch")
+        if (
+            pitch_result is not None
+            and not pitch_result.data.get("reference_cached", False)
+            and "reference_pitch_curve" in pitch_result.data
+        ):
+            reference_pitch = PitchCurve.model_validate(pitch_result.data["reference_pitch_curve"])
+            self._songs.mark_vocal_stem_processed(song_id, reference_pitch)
+
     def _build_context(self, analysis_id: str, user_id: str, song: SongRecord) -> AnalysisContext:
         return AnalysisContext(
             analysis_id=analysis_id,
@@ -191,8 +238,11 @@ class AnalysisJobHandler:
             model_weights_dir=self._settings.model_weights_dir,
         )
 
-    def _cleanup(self, context: AnalysisContext, *, recording_done: bool) -> None:
-        shutil.rmtree(context.work_dir, ignore_errors=True)
+    def _cleanup(
+        self, context: AnalysisContext, *, recording_done: bool, remove_work_dir: bool
+    ) -> None:
+        if remove_work_dir:
+            shutil.rmtree(context.work_dir, ignore_errors=True)
 
         if recording_done:
             # FR-43: the recording is only needed for a possible retry
@@ -201,8 +251,9 @@ class AnalysisJobHandler:
             context.recording_path.unlink(missing_ok=True)
 
         # Re-read rather than trust context's copy: this job may be the one
-        # that just flipped the flag in stage 5, and once it's true no
-        # future analysis of this song ever reads the original upload again.
+        # _persist_song_cache just flipped the flag for (pitch's reference
+        # curve), and once it's true no future analysis of this song ever
+        # reads the original upload again.
         song = self._songs.get_by_id(context.song_id)
         if song.vocal_stem_processed:
             context.reference_path.unlink(missing_ok=True)

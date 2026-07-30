@@ -4,8 +4,10 @@ import { cancelAnalysis, retryAnalysis, type Analysis } from '../../api/client'
 import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { AnalysisResult } from './AnalysisResult'
+import { formatDurationSeconds } from './stageTiming'
 import { useAnalysisQueueSocket } from './useAnalysisQueueSocket'
 import { analysisQueryKey, useAnalysisStatus } from './useAnalysisStatus'
+import { useElapsedSeconds } from './useElapsedSeconds'
 
 interface QueueStatusProps {
   analysisId: string
@@ -28,6 +30,10 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
   const queryClient = useQueryClient()
   const { data: analysis, error, isLoading } = useAnalysisStatus(analysisId)
   useAnalysisQueueSocket(analysisId, true)
+  const elapsedSeconds = useElapsedSeconds(
+    analysis?.currentStage ? analysis.currentStageStartedAt : undefined,
+  )
+  const completedStages = Object.entries(analysis?.stages ?? {})
 
   const cancel = useMutation({
     mutationFn: () => cancelAnalysis(analysisId),
@@ -54,7 +60,27 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
           {analysis.status === 'queued' && analysis.queuePosition !== undefined && (
             <p className="text-ink-700">You are number {analysis.queuePosition} in the queue.</p>
           )}
-          {analysis.currentStage && <p className="text-ink-700">Stage: {analysis.currentStage}</p>}
+          {analysis.currentStage && (
+            <p className="text-ink-700">
+              Stage
+              {analysis.currentStageIndex !== undefined && analysis.totalStages !== undefined
+                ? ` ${analysis.currentStageIndex} of ${analysis.totalStages}`
+                : ''}
+              : {analysis.currentStage}
+              {elapsedSeconds !== undefined &&
+                ` — running ${formatDurationSeconds(elapsedSeconds)}`}
+            </p>
+          )}
+          {completedStages.length > 0 && (
+            <ul className="text-ink-500 flex flex-col gap-0.5 text-xs">
+              {completedStages.map(([name, stage]) => (
+                <li key={name}>
+                  {stage.status === 'done' ? '✓' : '✗'} {name} —{' '}
+                  {formatDurationSeconds(stage.durationMs / 1000)}
+                </li>
+              ))}
+            </ul>
+          )}
           {analysis.status === 'failed' && analysis.errorCode && (
             <p className="text-danger">Error: {analysis.errorCode}</p>
           )}

@@ -6,10 +6,17 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant
 }
 
+// Every variant keeps a visible border in every state, disabled included:
+// primary/danger previously had none, so a disabled submit button (pale
+// bg-ink-300 on the page's white background, e.g. AddSongForm before its
+// required fields are filled) read as a flat, borderless gray rectangle
+// rather than a recognizable button.
 const variantClasses: Record<Variant, string> = {
-  primary: 'bg-ink-950 text-ink-0 hover:bg-ink-700 disabled:bg-ink-300',
-  secondary: 'bg-ink-0 text-ink-950 border border-ink-300 hover:bg-ink-100 disabled:text-ink-300',
-  danger: 'bg-danger text-ink-0 hover:opacity-90 disabled:bg-ink-300',
+  primary:
+    'border border-ink-950 bg-ink-950 text-ink-0 hover:bg-ink-700 hover:border-ink-700 disabled:border-ink-300 disabled:bg-ink-300 disabled:text-ink-500',
+  secondary: 'border border-ink-300 bg-ink-0 text-ink-950 hover:bg-ink-100 disabled:text-ink-300',
+  danger:
+    'border border-danger bg-danger text-ink-0 hover:opacity-90 disabled:border-ink-300 disabled:bg-ink-300 disabled:text-ink-500',
 }
 
 export function Button({

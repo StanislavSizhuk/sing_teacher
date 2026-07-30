@@ -36,6 +36,17 @@ _TIMBRE_DISCLAIMER = (
     "reference, not a diagnosis of your vocal technique."
 )
 
+# Spec 6.9: shown when the recording-condition stage flags likely non-vocal
+# energy (instruments, background noise) -- a warning, never a blocker or a
+# score penalty (spec 2.3's a cappella assumption is a product requirement,
+# not something the pipeline enforces by failing the analysis).
+_BACKGROUND_MUSIC_WARNING = (
+    "Heads up: parts of your recording have energy that doesn't look like a "
+    "clean solo voice. This app assumes you sing a cappella, without "
+    "background music or instruments picked up by the mic -- if that "
+    "wasn't the case here, treat the scores above as less precise than usual."
+)
+
 _TIER_EXCELLENT = "excellent"
 _TIER_GOOD = "good"
 _TIER_FAIR = "fair"
@@ -198,16 +209,23 @@ def _overall_summary(aspect_scores: dict[str, float], overall_score: float) -> s
     )
 
 
-def build_feedback_report(aspect_results: dict[str, StageResult], overall_score: float) -> str:
-    """Builds the FR-32 text report: one summary line, then one paragraph
-    per aspect in spec 6.4's order, each grounded in that aspect's own
-    stage data rather than generic advice. `aspect_results` must have one
-    entry per `config.ASPECTS`, each carrying a `"score"` key.
+def build_feedback_report(
+    aspect_results: dict[str, StageResult],
+    overall_score: float,
+    background_music_detected: bool = False,
+) -> str:
+    """Builds the FR-32 text report: one summary line, an optional spec 6.9
+    warning, then one paragraph per aspect in spec 6.4's order, each
+    grounded in that aspect's own stage data rather than generic advice.
+    `aspect_results` must have one entry per `config.ASPECTS`, each
+    carrying a `"score"` key.
     """
     aspect_scores = {
         aspect: float(result.data["score"]) for aspect, result in aspect_results.items()
     }
     sections = [_overall_summary(aspect_scores, overall_score)]
+    if background_music_detected:
+        sections.append(_BACKGROUND_MUSIC_WARNING)
     for aspect in ASPECTS:
         result = aspect_results[aspect]
         label = _ASPECT_LABELS[aspect]

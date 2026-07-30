@@ -1,9 +1,11 @@
 # ML Pipeline
 
-Status: reflects stages E4-E5 -- all eleven stages (spec 6.2), including
+Status: reflects stages E4-E5 -- all eleven spec-6.2 stages, including
 aggregation, the text report, and the piano-roll data (spec 18: "Агрегація
-балів, текстовий звіт, piano-roll"), plus stage 11 now also recording a
-`progress_snapshots` point (spec 18/E5, FR-35).
+балів, текстовий звіт, piano-roll"), plus a twelfth stage recording a
+`progress_snapshots` point (spec 18/E5, FR-35), and an eleventh implementing
+spec 6.9's recording-condition check (a post-E5 audit fix; spec 6.2's table
+does not assign it a stage number of its own).
 
 ## Where the code lives
 
@@ -13,7 +15,7 @@ aggregation, the text report, and the piano-roll data (spec 18: "Агрегац�
 | `worker/src/vocalcoach/pipeline/runner.py` | Orchestration: order, per-stage subprocess/timeout, retries, progress persistence (ADR-0012) |
 | `worker/src/vocalcoach/pipeline/registry.py` | `ModelRegistry`: lazy Demucs/Whisper/CREPE/pYIN construction behind narrow `Protocol`s |
 | `worker/src/vocalcoach/pipeline/stages/` | One file per stage, `preprocess.py` .. `aggregate.py` |
-| `worker/src/vocalcoach/pipeline/report.py` | Stage 11's FR-32 per-aspect text report, built from the same stage data |
+| `worker/src/vocalcoach/pipeline/report.py` | Stage 12's FR-32 per-aspect text report, built from the same stage data |
 | `worker/src/vocalcoach/audio/` | Shared DSP helpers: ffmpeg wrapper, loudness, WAV IO, RMS envelope, DTW time-mapping |
 | `worker/src/vocalcoach/queue/` | Redis Streams consumer, job handler, Redis Pub/Sub event publisher (ADR-0010) |
 | `worker/src/vocalcoach/repositories/` | `AnalysisRepository`/`SongRepository` Postgres implementations |
@@ -33,7 +35,8 @@ aggregation, the text report, and the piano-roll data (spec 18: "Агрегац�
 | 8 | `dynamics` | `librosa.feature.rms` + the stage-4 time map | 30s | no |
 | 9 | `timbre` | `librosa.feature.mfcc` + the stage-4 time map | 30s | no |
 | 10 | `breath` | RMS-envelope silence detection | 30s | no |
-| 11 | `aggregate` | weighted sum + text report (own logic) | 10s | no |
+| 11 | `recording_condition` | RMS envelope + stage-5 pitch curve (own logic, spec 6.9) | 30s | no |
+| 12 | `aggregate` | weighted sum + text report (own logic) | 10s | no |
 
 Every stage runs in its own spawned child process (ADR-0012) -- this is
 what makes each timeout an enforceable ceiling rather than an advisory one,
@@ -67,9 +70,11 @@ retry resumes from (see "Resumability" below).
    even when the vocal buried in it is.
 3. **`transcribe`** -- Whisper (`WHISPER_MODEL`) transcribes the vocal
    stem to words with per-word timecodes (`Lyrics`/`LyricsWord`). Also
-   short-circuits on `vocal_stem_processed`; on a cache miss, persists the
-   result to `songs.lyrics_json` (`SongRepository.save_lyrics`) before
-   returning.
+   short-circuits on `vocal_stem_processed`. Does not write
+   `songs.lyrics_json` itself -- it returns `lyrics`/`cached` in its
+   `StageResult` and `AnalysisJobHandler._persist_song_cache` writes the
+   cache once the whole pipeline finishes, in the parent process (see
+   "Caching" below for why).
 4. **`align`** -- 13-coefficient MFCC frames (`ALIGN_MFCC_COEFFICIENTS`,
    `ALIGN_HOP_SECONDS = 0.05`) for the recording and the reference stem,
    windowed DTW (`dtw-python`, `symmetric2` step pattern, Sakoe-Chiba
@@ -81,7 +86,13 @@ retry resumes from (see "Resumability" below).
    moments despite the user's different tempo/timing. Raises
    `ALIGNMENT_FAILED` if the normalized DTW distance exceeds
    `ALIGN_MAX_NORMALIZED_DISTANCE = 40.0` (an empirical starting point,
-   not yet calibrated -- see "Known limitations").
+   not yet calibrated -- see "Known limitations"), and also if `dtw-python`
+   itself raises first: a length difference between the two signals alone
+   can exceed what the Sakoe-Chiba window can bridge, which the library
+   reports as a bare `ValueError` ("no warping path found") before a
+   distance is ever computed -- caught and reclassified the same way, so
+   it is non-retryable like any other alignment failure rather than an
+   opaque, retried `INTERNAL` error.
 
    A `TimeMap` built from a coarse (50ms) alignment hop is not indexed
    into directly by a finer-hop signal (pitch runs at 10ms); every stage
@@ -96,9 +107,11 @@ retry resumes from (see "Resumability" below).
    is still too slow on real hardware is to switch to `pyin`);
    `PITCH_ENGINE=pyin` uses `librosa.pyin`. Raises `NO_VOICE_DETECTED` if
    fewer than `MIN_VOICED_FRACTION = 5%` of the recording's frames are
-   voiced. The reference curve is cached the same way as stages 2/3
-   (`songs.reference_pitch_json` + `vocal_stem_processed`, set together in
-   one write once this stage computes it fresh -- see "Caching" below).
+   voiced. The reference curve is cached the same way as stage 3: this
+   stage returns `reference_pitch_curve`/`reference_cached` in its
+   `StageResult`, and `AnalysisJobHandler._persist_song_cache` writes
+   `songs.reference_pitch_json` + flips `vocal_stem_processed` in one
+   write once the pipeline finishes (see "Caching" below).
    Deviation is cents (`1200 * log2(user_hz / reference_hz)`) at each user
    frame, looked up against the reference curve through the stage-4
    `TimeMap` (`_align_and_compare`); this stage's own 0-100 score is
@@ -146,7 +159,7 @@ retry resumes from (see "Resumability" below).
    Score is `100 * max(0, mean cosine similarity)`. Per spec 6.3.9, this
    is a rough "how similar does it sound" indicator, not a diagnosis of
    vocal technique -- this stage only produces the honest number; stage
-   11's report is what carries the mandatory disclaimer to the user.
+   12's report is what carries the mandatory disclaimer to the user.
 10. **`breath`** -- reuses the stage-8 RMS envelope; a run at least
     `BREATH_MIN_PAUSE_SECONDS = 0.2` long and quieter than
     `BREATH_SILENCE_RELATIVE_DB = -35` dB relative to the track's own
@@ -155,7 +168,22 @@ retry resumes from (see "Resumability" below).
     `BREATH_PAUSE_MATCH_TOLERANCE_SECONDS = 0.5` of the expected time, it
     counts as matched. Score is `100 * matched / reference_pause_count`
     (100 if the reference has no pauses to match against at all).
-11. **`aggregate`** (spec 6.3.11, 6.4, FR-32) -- reads the six aspect
+11. **`recording_condition`** (spec 2.3, 6.9) -- a soft, non-blocking
+    heuristic for likely background-music/instrument contamination in the
+    user's own recording, which (per ADR-0003/spec 2.3's a cappella
+    assumption) is never run through Demucs, so there is no real source
+    separation to lean on here. Reuses the stage-5 pitch curve's per-frame
+    voiced/unvoiced classification plus a fresh RMS envelope
+    (`rms_envelope`, same `PITCH_HOP_SECONDS` hop) over the recording: a
+    frame louder than `RECORDING_CONDITION_LOUD_RELATIVE_DB = -20` dB
+    relative to the recording's own peak, yet unvoiced, is "loud and
+    unvoiced" -- energetic but with no single clear pitch, i.e. plausibly an
+    instrument rather than a pause/consonant. `background_music_detected`
+    is set once that fraction reaches
+    `RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3`. Never fails the
+    analysis or changes any score; stage 12 reads the flag to add one
+    warning paragraph to the FR-32 report, nothing else.
+12. **`aggregate`** (spec 6.3.11, 6.4, FR-32) -- reads the six aspect
     stages' own `score` values (never recomputes them) and weighted-sums
     them into `overall_score` via `SCORING_WEIGHTS`
     (`ScoringWeights.as_dict()`, so no `getattr`-on-`Any` typing hazard),
@@ -179,17 +207,24 @@ retry resumes from (see "Resumability" below).
 ## Caching (spec 6.6)
 
 `songs.vocal_stem_processed` gates stages 2, 3, and the reference half of
-5 together, as one flag -- flipped in a single write
-(`SongRepository.mark_vocal_stem_processed`) at the end of stage 5, the
-last of the three cached artifacts to complete, alongside
-`reference_pitch_json`. Stage 3's `lyrics_json` write happens independently
-at the end of stage 3 itself, since it has no ordering dependency on stage
-5. This means a crash between stages 2/3 and 5 can leave
-`vocal_stem_processed = false` with `lyrics_json` already populated -- that
-is expected: the flag's contract (spec 6.6) is specifically "all three
-ready," and the next analysis of that song simply redoes stages 2/3 (cheap
-relative to running the whole pipeline once, and each is independently
-idempotent per spec 6.1's stage contract).
+5 together, as one flag. Neither stage 3 nor stage 5 writes its own cache:
+both run inside `PipelineRunner`'s spawn-based subprocess (ADR-0012), and
+a `SongRepository` holding a live DB connection cannot be pickled across
+that boundary to get there (a stage that tried this crashed the instant a
+real job reached it). Instead each returns its cacheable payload in its
+own `StageResult` (`lyrics`/`cached` for stage 3,
+`reference_pitch_curve`/`reference_cached` for stage 5), and
+`AnalysisJobHandler._persist_song_cache` -- which runs in the parent
+process, after the whole pipeline finishes -- writes `songs.lyrics_json`
+(`SongRepository.save_lyrics`) and `reference_pitch_json` +
+`vocal_stem_processed` (`mark_vocal_stem_processed`, one write) from
+whichever of the two actually ran fresh (skipped when `cached`/
+`reference_cached` is already true, so a warm song is never re-written
+with the same values). A run that fails before stage 12 never reaches
+this write at all, so a song's cache only ever warms on a fully
+successful analysis -- an accepted trade-off given spec NFR-04 (one active
+worker, jobs processed strictly in sequence): nothing else is going to
+race to reuse a half-finished cache in that window anyway.
 
 The separated stem lives in its own `song-stems` Docker volume, not
 `audio-tmp`: `audio-tmp` is swept by age (FR-43, <=5 minutes after
@@ -230,7 +265,7 @@ all (subprocess isolation, not `signal.alarm`).
 All from the same `.env` the Go API reads (spec 20.5):
 `PITCH_ENGINE` (`crepe`|`pyin`), `WHISPER_MODEL`, `DEMUCS_MODEL`,
 `SCORING_VERSION`, `SCORING_WEIGHTS` (parsed and checked to sum to 1.0 at
-startup, consumed by stage 11's `AggregateStage`).
+startup, consumed by stage 12's `AggregateStage`).
 `worker/src/vocalcoach/config.py` fails fast, listing every problem at
 once, exactly like `api/internal/config`.
 
@@ -258,7 +293,11 @@ fixed string to key. Localizing it (e.g. building the same sentences from
 Ukrainian templates) is deferred until there is a concrete need.
 
 Spec 6.9's "significant non-vocal energy in the recording" soft-detection
-and report warning is not implemented by any stage yet -- it is not
-assigned to a specific stage number in spec 6.2's table, and none of
-E1-E4's acceptance criteria call for it. A future stage (or an addition
-to `preprocess`) needs to own it.
+is a DSP heuristic (stage 11, `recording_condition`), not a real
+classifier: it only catches contamination loud enough, and consistently
+enough, to dominate the loud-but-unvoiced frame fraction past
+`RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3`. Quiet background
+music, or music that happens to share the vocal's pitch range densely
+enough to still read as "voiced" to the pitch detector, will not trip it.
+Its two thresholds are exactly the kind of "starting point, not
+calibrated" value the rest of this section already flags.

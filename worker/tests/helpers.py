@@ -41,21 +41,6 @@ class FakeTranscriber:
         pass
 
 
-class FakeSongRepository:
-    def __init__(self) -> None:
-        self.saved_lyrics: Lyrics | None = None
-        self.saved_pitch_curve: PitchCurve | None = None
-
-    def get_by_id(self, song_id: str):  # pragma: no cover - not used by stage tests
-        raise NotImplementedError
-
-    def save_lyrics(self, song_id: str, lyrics: Lyrics) -> None:
-        self.saved_lyrics = lyrics
-
-    def mark_vocal_stem_processed(self, song_id: str, reference_pitch: PitchCurve) -> None:
-        self.saved_pitch_curve = reference_pitch
-
-
 def make_context(
     tmp_path: Path,
     *,

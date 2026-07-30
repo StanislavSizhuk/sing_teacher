@@ -75,15 +75,44 @@ class Consumer:
     def should_stop(self) -> bool:
         return self._stopping
 
-    def run_forever(self) -> None:
-        self._reclaim_stuck_jobs()
-        while not self._stopping:
-            entries = cast(
+    def _ensure_group(self) -> None:
+        """Idempotent: the Go API also creates this group at its own
+        startup (`queue.Producer.EnsureGroup`); whichever process starts
+        first wins. Also the recovery path if the group ever goes missing
+        mid-run (see `run_forever`) -- re-creating it is safe and cheap
+        either way."""
+        try:
+            self._client.xgroup_create(STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        except redis.ResponseError as exc:
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+    def _read_next(self) -> _ReadGroupReply:
+        try:
+            return cast(
                 _ReadGroupReply,
                 self._client.xreadgroup(
                     GROUP_NAME, self._consumer_name, {STREAM_NAME: ">"}, count=1, block=BLOCK_MS
                 ),
             )
+        except redis.ResponseError as exc:
+            if "NOGROUP" not in str(exc):
+                raise
+            # The stream/group disappeared out from under a running worker
+            # (observed in practice, cause not pinned down -- Redis
+            # eviction under memory pressure is one candidate). A hard
+            # crash here previously took the whole process down, silently
+            # abandoning whatever job Redis still had pending for it until
+            # something else restarted the container.
+            logger.warning("consumer group missing, re-creating", extra={"error": str(exc)})
+            self._ensure_group()
+            return []
+
+    def run_forever(self) -> None:
+        self._ensure_group()
+        self._reclaim_stuck_jobs()
+        while not self._stopping:
+            entries = self._read_next()
             if not entries:
                 continue
             _stream_name, messages = entries[0]
