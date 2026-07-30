@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pytest
 
-from vocalcoach.dsp.dtw import banded_dtw, refine_center
+from vocalcoach.dsp.dtw import WarpingPath, banded_dtw, refine_center
 from vocalcoach.errors import AlignmentFailed, AlignmentTooLarge
 
 
@@ -78,8 +80,6 @@ def test_refine_center_tracks_a_uniform_time_offset() -> None:
     fine_hop = 0.01
     index1 = list(range(20))
     index2 = list(range(10, 30))
-    from vocalcoach.dsp.dtw import WarpingPath
-
     coarse = WarpingPath(index1=index1, index2=index2, normalized_distance=0.0)
 
     full_center = refine_center(coarse, coarse_hop, fine_hop, n_fine=200, m_fine=300)
@@ -116,3 +116,65 @@ def test_refine_center_last_row_lands_within_a_narrow_band_of_m_fine() -> None:
     band = 20
     assert abs(int(full_center[n_fine]) - m_fine) <= band
     assert full_center[n_fine] == m_fine
+
+
+def test_T8_six_minute_recordings_align_within_memory_and_time_budget() -> None:
+    """T8 (spec 15.2): DTW on two 6-minute (360s) recordings must stay
+    within the banded memory bound and the align stage's time budget, and
+    must not raise ALIGNMENT_TOO_LARGE. 360s at PITCH_HOP_SECONDS (10ms) is
+    36,000 frames -- the same fine-hop scale `align`'s level-2 refinement
+    actually runs at (spec 6.7) -- with the real ALIGN_REFINE_WINDOW_SECONDS
+    (0.2s / 10ms = 20 frames) band radius. 36,001 * 41 cells is comfortably
+    under DTW_MAX_CELLS (50,000,000): this is what "O(n * band), not
+    O(n * m)" (NFR-16) buys -- a full 36,000 x 36,000 matrix would be
+    ~1.3 billion cells.
+    """
+    n = 36_000  # 360s at a 10ms hop
+    band = 20  # ALIGN_REFINE_WINDOW_SECONDS / PITCH_HOP_SECONDS = 0.2 / 0.01
+    a = _ramp(n)
+    b = _ramp(n)
+
+    start = time.monotonic()
+    path = banded_dtw(a, b, band)
+    elapsed = time.monotonic() - start
+
+    assert path.normalized_distance < 1e-3
+    assert path.index1[-1] == n - 1
+    assert path.index2[-1] == n - 1
+    assert elapsed < 45.0, f"level-2 DTW alone budgets 45s at this scale, took {elapsed:.1f}s"
+
+
+def test_T9_incompatible_six_minute_recordings_fail_honestly() -> None:
+    """T9 (spec 15.2): "DTW on incompatible recordings (different songs) ->
+    an honest ALIGNMENT_FAILED, not random scores." Rejection happens at
+    two levels, both exercised here at 6-minute scale:
+
+    1. `banded_dtw` itself raises when the band makes the target
+       structurally unreachable -- a length/tempo divergence too large for
+       any path through the corridor to exist at all, same mechanism
+       `test_length_difference_beyond_band_raises_alignment_failed` checks
+       at a smaller scale.
+    2. Two *same-length* but musically unrelated recordings don't hit that
+       structural check (a path through the band always exists when both
+       sides are the same length) -- `banded_dtw` returns a real path with
+       a real cost instead of raising, and it is `align.py`'s
+       `ALIGN_MAX_NORMALIZED_DISTANCE` ceiling that turns "aligned, but at
+       absurd cost" into `ALIGNMENT_FAILED` (exercised end-to-end, on real
+       audio/MFCC, by `test_align_wildly_different_signals_raises_alignment_failed`
+       in `test_align_stage.py`). What this level can honestly assert with
+       synthetic feature vectors is the *relative* separation the ceiling
+       check depends on existing at all: unrelated content costs
+       substantially more than identical content, at the same 6-minute
+       scale as case 1.
+    """
+    n = 36_000
+
+    with pytest.raises(AlignmentFailed):
+        banded_dtw(_ramp(n), _ramp(n // 4), band=20)
+
+    rng = np.random.default_rng(0)
+    a = rng.standard_normal((n, 13)).astype(np.float32)
+    b = rng.standard_normal((n, 13)).astype(np.float32)
+    identical_cost = banded_dtw(a, a.copy(), band=20).normalized_distance
+    unrelated_cost = banded_dtw(a, b, band=20).normalized_distance
+    assert unrelated_cost > identical_cost * 10
