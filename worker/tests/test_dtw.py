@@ -89,3 +89,30 @@ def test_refine_center_tracks_a_uniform_time_offset() -> None:
     assert 95 <= full_center[1] <= 105
     # At fine frame 100 (t=1s), reference should be near t=2s -> frame ~200.
     assert 195 <= full_center[101] <= 205
+
+
+def test_refine_center_last_row_lands_within_a_narrow_band_of_m_fine() -> None:
+    """Regression: a coarse path's nominal time coverage
+    (`n_coarse * coarse_hop`) and a fine sequence's (`n_fine * fine_hop`)
+    don't line up exactly (`librosa`'s frame-count rounding differs per
+    hop), so the naive per-frame projection clamped flat for the whole
+    tail once `user_time` ran past the coarse path's own covered range --
+    every trailing fine frame collapsed onto the same center and fell
+    outside a real DTW refine band (spec 6.7's whole point). This measured
+    ~42 frames of drift on a real ~207s song; a synthetic identity path
+    long enough to exhibit the same rounding gap must still land the last
+    row within a realistic refine band of the true endpoint.
+    """
+    from vocalcoach.dsp.dtw import WarpingPath
+
+    n_coarse = 4142  # matches the real measurement that caught this bug
+    identity = list(range(n_coarse))
+    coarse = WarpingPath(index1=identity, index2=identity, normalized_distance=0.0)
+    coarse_hop, fine_hop = 0.05, 0.01
+    n_fine = m_fine = 20748
+
+    full_center = refine_center(coarse, coarse_hop, fine_hop, n_fine=n_fine, m_fine=m_fine)
+
+    band = 20
+    assert abs(int(full_center[n_fine]) - m_fine) <= band
+    assert full_center[n_fine] == m_fine

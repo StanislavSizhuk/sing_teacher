@@ -195,12 +195,35 @@ def refine_center(
     center: turns the coarse path into a time correspondence (`TimeMap`,
     the same class every other stage already resamples through) and reads
     off the reference frame each fine-grained recording frame maps to.
+
+    A coarse frame's nominal timestamp (`index * coarse_hop_seconds`) and a
+    fine frame's (`index * fine_hop_seconds`) don't cover exactly the same
+    total duration -- `librosa`'s `1 + n_samples // hop_length` frame count
+    rounds differently at each hop, and `np.interp` clamps rather than
+    extrapolates past the coarse path's own covered range. Left alone, every
+    fine frame past that range collapses onto the same clamped center,
+    which can fall outside the (deliberately narrow) refine band entirely
+    for a track long enough that the two hops' rounding drifts far apart.
+    Both fine sequences describe the same track end-to-end, so that drift
+    is spread proportionally across the whole projection instead, which
+    keeps the middle of the track anchored to the real (interpolated)
+    correspondence and only nudges the tail.
     """
     time_map = TimeMap.from_warping_path(coarse.index1, coarse.index2, coarse_hop_seconds)
+    user_times = np.arange(n_fine, dtype=np.float64) * fine_hop_seconds
+    reference_times = np.interp(user_times, time_map.user_times, time_map.reference_times)
+    raw_center = np.clip(np.round(reference_times / fine_hop_seconds), 0, m_fine).astype(np.int64)
+
     full_center = np.zeros(n_fine + 1, dtype=np.int64)
-    for i in range(1, n_fine + 1):
-        user_time = (i - 1) * fine_hop_seconds
-        reference_time = time_map.user_to_reference(user_time)
-        center = round(reference_time / fine_hop_seconds)
-        full_center[i] = min(max(center, 0), m_fine)
+    full_center[1:] = raw_center
+
+    end_gap = int(m_fine - full_center[n_fine])
+    if end_gap != 0 and n_fine > 0:
+        drift = np.round(end_gap * np.arange(n_fine + 1, dtype=np.float64) / n_fine).astype(
+            np.int64
+        )
+        full_center += drift
+        full_center[n_fine] = m_fine
+
+    full_center[1:] = np.clip(full_center[1:], 0, m_fine)
     return full_center
