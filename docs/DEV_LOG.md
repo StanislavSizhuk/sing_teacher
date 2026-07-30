@@ -136,6 +136,39 @@ project has no provisioned VPS or staging server. Also fixed
 `docker-compose.dev.yml`: it silently required manually-set
 `GOOGLE_CLIENT_ID`/`SECRET` despite docs claiming otherwise.
 
+## 2026-07-30 -- post-E6 audit
+
+**Done:** Full tech.md compliance pass plus a real end-to-end analysis run
+(never actually exercised before this), which found the ML pipeline could
+not complete one: `worker/Dockerfile`'s dev stage never installed its own
+package (missing `.dockerignore` let a stale host `.venv` overwrite the
+image's); `separate_reference`'s stem-path closure and `transcribe`'s/
+`pitch`'s injected `SongRepository` cannot survive `PipelineRunner`'s
+spawn-based subprocess pickling (moved the song-cache write to
+`AnalysisJobHandler`); `DemucsSeparator` passed Demucs' `repo=`, which
+disables its own download fallback entirely; a failed-but-retryable job's
+`work_dir` was deleted unconditionally, so retry always crashed re-opening
+files that were already gone; a Redis `NOGROUP` response crashed the whole
+consumer instead of recreating the group; `dtw-python`'s bare `ValueError`
+on an unbridgeable length gap fell through as a retried `INTERNAL` instead
+of `ALIGNMENT_FAILED`. Also: spec 6.9's recording-condition heuristic
+(previously unimplemented), per-stage timer/index/duration surfaced
+end-to-end (migration -> worker -> `GET /analyses/{id}` -> `QueueStatus`),
+YouTube import verified for real (works once `FEATURE_YOUTUBE_IMPORT` is
+on -- now defaulted on in the dev compose stack only), and a borderless
+disabled-button contrast fix (`Button.tsx`).
+
+**Next:** FR-34 (paginated `GET /analyses` history) is still the one open
+functional requirement from E2/E5.
+
+**Blockers:** none.
+
+**Risks:** None of the above had a golden-fixture regression test before
+this pass (spec 15.1's ML regression tier is still not built), so nothing
+caught nine real bugs in a pipeline that "passed" every existing unit
+test. The recording-condition heuristic's two thresholds are unvalidated
+starting points, same caveat as every other scoring constant (spec 19).
+
 **Next:** FR-34 (paginated `GET /analyses` history) is still the one open
 functional requirement from E2/E5; otherwise the spec's stage list ends
 at E6 -- remaining work is whatever the tech lead prioritizes from the
