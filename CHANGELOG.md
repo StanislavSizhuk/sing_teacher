@@ -231,3 +231,10 @@ tagged yet.
   doesn't apply to how this deployment actually uses Caddy, with a
   three-month expiry so the ignore starts failing the scan again instead
   of hiding a finding indefinitely.
+- Real-song `transcribe` runs failed with `TIMEOUT` (spec 6.2's 180s
+  budget), consistently: Whisper `small` on CPU with `word_timestamps=True`
+  measured at 176.7-186s+ against a real ~4-minute song, right on top of
+  its ceiling instead of under it. `WHISPER_MODEL` now defaults to `base`
+  (ADR-0014, measured at 143.5s on the same song -- real margin) --
+  exactly the fallback spec 19's risk table already prescribed for this
+  measured outcome.
