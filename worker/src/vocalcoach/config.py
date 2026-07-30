@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     # before this settings object is ever built (spec 6.11) -- 0 here would
     # only mean "autodetect wasn't applied yet", which should never happen.
     worker_cpu_threads: int = Field(0, alias="WORKER_CPU_THREADS")
+    # Spec 6.10/15.3: off only for deterministic tests that need an exact,
+    # reproducible stage order -- production always wants this on.
+    pipeline_parallel_aspects: bool = Field(True, alias="PIPELINE_PARALLEL_ASPECTS")
 
     pitch_engine: PitchEngine = Field("crepe", alias="PITCH_ENGINE")
     # "base", not spec 6.2's named "small": ADR-0014, real hardware measured
