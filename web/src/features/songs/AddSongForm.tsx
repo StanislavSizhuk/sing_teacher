@@ -112,6 +112,13 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
       <Button type="submit" disabled={!canSubmit || mutation.isPending}>
         {mutation.isPending ? 'Adding song…' : 'Add song'}
       </Button>
+      {!canSubmit && (
+        <p className="text-ink-500 text-xs">
+          {sourceType === 'upload'
+            ? 'Enter a title and choose an audio file to continue.'
+            : 'Enter a YouTube URL to continue.'}
+        </p>
+      )}
     </form>
   )
 }
