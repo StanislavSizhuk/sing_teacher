@@ -77,7 +77,7 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
               accept={ACCEPTED_AUDIO}
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               required
-              className="text-ink-700 text-sm file:border file:border-ink-950 file:bg-ink-950 file:text-ink-0"
+              className="text-ink-700 text-sm file:mr-3 file:cursor-pointer file:rounded file:border file:border-ink-950 file:bg-ink-950 file:px-4 file:py-2 file:text-sm file:font-medium file:text-ink-0 file:transition-colors hover:file:bg-ink-700 hover:file:border-ink-700"
             />
             <p className="text-ink-500 text-xs">
               mp3, wav, m4a, flac or ogg. Up to 15 MB / 6 minutes.
