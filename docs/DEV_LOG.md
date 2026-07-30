@@ -183,3 +183,36 @@ a real public launch. `deploy/deploy.sh` has never run against a real VPS
 or a genuinely different git tag under production traffic, only a local
 rehearsal with a deliberately-broken migration; the first real production
 deploy is still the actual first test of the full sequence end to end.
+
+## 2026-07-30 -- transcribe TIMEOUT investigation
+
+**Done:** Reported bug ("Error: TIMEOUT" analyzing a song) reproduced with
+two real files (SadSvit -- "Небо", the original, as reference; a fan cover
+by Августа as the recording) through `deploy/docker-compose.dev.yml`.
+Worker logs showed `transcribe` (Whisper `small`, CPU, `word_timestamps=
+True`) landing right on top of its 180s budget -- 5 of 7 real attempts hit
+`TIMEOUT` outright, the one clean success measured 176.7s. This is exactly
+spec 19's risk table's own anticipated risk ("Demucs/Whisper на CPU
+повільніші за цільові 3 хв"), never actually measured on real hardware
+before (E3's own acceptance criterion) because no prior session ran a real
+song through `transcribe` enough times to notice it sits on the edge
+rather than under it. Applied the risk table's own first prescribed
+fallback: `WHISPER_MODEL` now defaults to `base` (ADR-0014), re-measured
+clean at 143.5s on the same song -- real margin instead of a coin flip.
+Separately, the same song pair reaches `ALIGNMENT_FAILED` once `transcribe`
+completes -- a fan cover genuinely diverges in tempo/arrangement from the
+original past DTW's bounded window, spec 6.8's correct classification, not
+a bug.
+
+**Next:** No functional work queued from this; FR-34 remains the one open
+item from E2/E5.
+
+**Blockers:** none.
+
+**Risks:** `base`'s 143.5s measurement is one data point on one dev
+machine with no CPU limit set (12 vCPUs visible, torch defaulting to 6
+threads) against one ~225s song -- not yet validated against the
+production VPS's actual 4 vCPU target (spec 5.1/NFR-04), which has never
+been provisioned. If real margin there turns out smaller, spec 19's
+remaining fallback (transcribe only the chorus) is still on the table
+(ADR-0014, alternatives considered).

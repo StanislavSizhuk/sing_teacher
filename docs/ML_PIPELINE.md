@@ -27,7 +27,7 @@ does not assign it a stage number of its own).
 |---|---|---|---|---|
 | 1 | `preprocess` | `pyloudnorm`, ffmpeg resample | 30s | no |
 | 2 | `separate_reference` | Demucs v4 (`htdemucs`, ADR-0003) | 300s | yes, per song |
-| 3 | `transcribe` | Whisper (`WHISPER_MODEL`) | 180s | yes, per song |
+| 3 | `transcribe` | Whisper (`WHISPER_MODEL`, ADR-0014) | 180s | yes, per song |
 | 4 | `align` | `dtw-python` (ADR-0004) | 60s | no |
 | 5 | `pitch` | CREPE (`torchcrepe`) or pYIN (`PITCH_ENGINE`) | 180s | reference curve: yes |
 | 6 | `rhythm` | `librosa.onset` + the stage-4 time map | 30s | no |
@@ -268,6 +268,12 @@ All from the same `.env` the Go API reads (spec 20.5):
 startup, consumed by stage 12's `AggregateStage`).
 `worker/src/vocalcoach/config.py` fails fast, listing every problem at
 once, exactly like `api/internal/config`.
+
+`WHISPER_MODEL` defaults to `base`, not spec 6.2's named `small` (ADR-0014):
+real-hardware measurement (a real several-minute song, not a synthetic
+fixture) showed `small` landing on top of `TRANSCRIBE_TIMEOUT_SECONDS`
+instead of comfortably under it, exactly the risk spec 19's risk table
+anticipated and prescribed this same fallback for.
 
 ## Known limitations (not yet calibrated)
 
