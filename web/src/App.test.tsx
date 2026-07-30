@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,7 +52,12 @@ describe('AuthenticatedApp', () => {
       screen.getByLabelText('Audio file'),
       new File(['data'], 'song.mp3', { type: 'audio/mpeg' }),
     )
-    await user.click(screen.getByRole('button', { name: 'Add song' }))
+    // jsdom doesn't reliably clear a file input's `required` validity after
+    // user-event sets `.files`, so a real click silently no-ops instead of
+    // submitting; dispatch the submit event directly instead.
+    const form = screen.getByRole('button', { name: 'Add song' }).closest('form')
+    if (!form) throw new Error('Add song button is not inside a form')
+    fireEvent.submit(form)
 
     await screen.findByRole('heading', { name: 'Record your take' })
 
