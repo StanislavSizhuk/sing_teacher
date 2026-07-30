@@ -96,7 +96,9 @@ class Settings(BaseSettings):
     audio_ttl_seconds: int = Field(300, alias="AUDIO_TTL_SECONDS")
 
     pitch_engine: PitchEngine = Field("crepe", alias="PITCH_ENGINE")
-    whisper_model: str = Field("small", alias="WHISPER_MODEL")
+    # "base", not spec 6.2's named "small": ADR-0014, real hardware measured
+    # "small" landing on top of TRANSCRIBE_TIMEOUT_SECONDS instead of under it.
+    whisper_model: str = Field("base", alias="WHISPER_MODEL")
     demucs_model: str = Field("htdemucs", alias="DEMUCS_MODEL")
     scoring_version: str = Field("1.0", alias="SCORING_VERSION")
     # Raw string, not a nested model: pydantic-settings' env source tries to

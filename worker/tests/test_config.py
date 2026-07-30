@@ -25,7 +25,7 @@ def test_load_settings_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None
     _base_env(monkeypatch)
     settings = load_settings()
     assert settings.pitch_engine == "crepe"
-    assert settings.whisper_model == "small"
+    assert settings.whisper_model == "base"
     assert settings.postgres_dsn() == (
         "host=postgres port=5432 dbname=vocalcoach user=vocalcoach password=pw sslmode=disable"
     )
