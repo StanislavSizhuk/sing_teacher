@@ -38,17 +38,30 @@ MIN_VOICED_FRACTION = 0.05
 # golden fixtures once they exist).
 PITCH_SCORE_CENTS_FOR_ZERO = 100.0
 
-# Stage 4 alignment (spec ADR-0004): MFCC hop and a Sakoe-Chiba window that
-# bounds DTW to a plausible tempo drift, both to keep the O(window * N) cost
-# matrix tractable within the 60s timeout and to reject wildly diverging
-# takes outright instead of forcing a bad alignment (spec 6.8 risk table).
-ALIGN_HOP_SECONDS = 0.05
+# Stage 3 shared feature cache (spec 6.9): one MFCC and one RMS envelope per
+# audio file, computed once and reused by every stage that used to compute
+# its own (align + timbre shared this exact MFCC hop/coefficient count
+# already; dynamics + breath shared this exact RMS hop already -- the cache
+# just stops paying for that twice). ALIGN_WINDOW_SECONDS/MAX_NORMALIZED_DISTANCE
+# stay with the align stage itself (spec 6.7) since they describe its DTW,
+# not a cached representation.
+FEATURES_TIMEOUT_SECONDS = 30
+FEATURES_HOP_SECONDS = 0.05
+FEATURES_MFCC_COEFFICIENTS = 13
+
+# Stage 5 alignment (spec ADR-0004, 6.7): a Sakoe-Chiba window that bounds
+# DTW to a plausible tempo drift, both to keep the banded cost matrix
+# tractable within the timeout and to reject wildly diverging takes outright
+# instead of forcing a bad alignment (spec 6.8 risk table).
 ALIGN_WINDOW_SECONDS = 10.0
-ALIGN_MFCC_COEFFICIENTS = 13
-# Empirical starting point for dtw-python's per-step normalized distance on
-# ALIGN_MFCC_COEFFICIENTS-dimensional MFCC frames; recalibrate once golden
+# Empirical starting point for the banded DTW's per-step normalized cost on
+# FEATURES_MFCC_COEFFICIENTS-dimensional MFCC frames; recalibrate once golden
 # fixtures exist (spec 19).
 ALIGN_MAX_NORMALIZED_DISTANCE = 40.0
+# Upfront size guard (spec 6.7, NFR-16): refuses to even start a DTW whose
+# banded cell count would exceed this, rather than let a pathological input
+# (near-duplicate, but each hours long) eat unbounded memory/time.
+DTW_MAX_CELLS = 50_000_000
 
 # Stage 6 rhythm: an onset within this many milliseconds of the reference's
 # (mapped through DTW) counts as on time; the score decays linearly to 0 at
@@ -66,13 +79,6 @@ VIBRATO_AUTOCORR_PEAK_THRESHOLD = 0.3  # normalized autocorrelation peak needed 
 VIBRATO_RATE_TOLERANCE_HZ = 2.0  # rate error at which the rate-match half-score reaches 0
 VIBRATO_DEPTH_TOLERANCE_CENTS = 50.0  # depth error at which the depth-match half-score reaches 0
 VIBRATO_PRESENCE_MISMATCH_SCORE = 40.0  # one signal has vibrato and the other doesn't
-
-# RMS envelope hop, shared by stage 8 (dynamics) and stage 10 (breath):
-# loudness contour shape doesn't need pitch-grade (10ms) resolution.
-ENVELOPE_HOP_SECONDS = 0.05
-
-# Stage 9 timbre: MFCC coefficient count for the profile comparison (spec 6.3.9).
-TIMBRE_MFCC_COEFFICIENTS = 13
 
 # Stage 10 breath: a frame quieter than this, relative to the track's own
 # peak RMS, counts as silence; sustained for MIN_PAUSE_SECONDS it is a

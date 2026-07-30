@@ -1,4 +1,4 @@
-"""Stage 6: compare onset timing between the recording and the reference
+"""Stage 7: compare onset timing between the recording and the reference
 vocal stem, after DTW alignment (spec 6.3.6): how early or late the user
 comes in on each note/syllable.
 """
@@ -8,22 +8,14 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import librosa
-
-from vocalcoach.audio.io import read_mono
 from vocalcoach.audio.timemap import TimeMap
 from vocalcoach.constants import RHYTHM_ONSET_TOLERANCE_MS, RHYTHM_TIMEOUT_SECONDS
+from vocalcoach.dsp.features import load_shared_features
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 
 STAGE_NAME = "rhythm"
-
-
-def _onset_times(path: Path) -> list[float]:
-    samples, sample_rate = read_mono(path)
-    onsets = librosa.onset.onset_detect(y=samples, sr=sample_rate, units="time")
-    return [float(onset_time) for onset_time in onsets]
 
 
 def _score_from_mean_abs_offset_ms(mean_abs_offset_ms: float) -> float:
@@ -44,11 +36,10 @@ class RhythmStage(PipelineStage):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        user_onsets = _onset_times(Path(preprocess["recording_path"]))
-        reference_onsets = _onset_times(
-            Path(context.result("separate_reference").data["stem_path"])
-        )
+        features_path = Path(context.result("features").data["features_path"])
+        features = load_shared_features(features_path)
+        user_onsets = [float(t) for t in features.user.onset_times]
+        reference_onsets = [float(t) for t in features.reference.onset_times]
         time_map = TimeMap.from_align_stage_data(context.result("align").data)
 
         offsets_ms: list[float] = []

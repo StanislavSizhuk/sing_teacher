@@ -1,14 +1,14 @@
-"""Stage 11: soft heuristic flagging likely background-music contamination
+"""Stage 13: soft heuristic flagging likely background-music contamination
 in the user's own recording (spec 2.3, 6.9).
 
 The product assumption is a cappella singing in headphones (ADR-0003), so
 the user's recording is never run through Demucs -- unlike the reference,
 there is no real source separation to lean on here. This is a cheap stand-
 in: a frame loud enough to matter, relative to the recording's own peak
-RMS, where the pitch stage (5) still found no single clear pitch, is a
-signal of non-vocal energy (instruments, background noise) rather than a
-pause in singing. Never fails the analysis -- spec 6.9 is explicit that
-this only adds a report warning, it does not block the result.
+RMS, where the pitch stage found no single clear pitch, is a signal of
+non-vocal energy (instruments, background noise) rather than a pause in
+singing. Never fails the analysis -- spec 6.9 is explicit that this only
+adds a report warning, it does not block the result.
 """
 
 from __future__ import annotations
@@ -18,13 +18,12 @@ from pathlib import Path
 
 import numpy as np
 
-from vocalcoach.audio.envelope import rms_envelope
 from vocalcoach.constants import (
-    PITCH_HOP_SECONDS,
     RECORDING_CONDITION_LOUD_RELATIVE_DB,
     RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION,
     RECORDING_CONDITION_TIMEOUT_SECONDS,
 )
+from vocalcoach.dsp.features import load_shared_features
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
@@ -38,11 +37,11 @@ def _loud_unvoiced_fraction(rms: np.ndarray, user_hz: list[float | None]) -> flo
     this stays low for a clean solo vocal even though every recording has
     some unvoiced frames.
 
-    `rms` and `user_hz` are framed independently (rms_envelope vs. the
-    pitch detector), each at PITCH_HOP_SECONDS but not necessarily with
-    identical centering -- close enough for an aggregate fraction over the
-    whole recording, so frames are compared index-for-index up to the
-    shorter length rather than resampled to match exactly.
+    `rms` and `user_hz` are framed independently (the shared feature cache's
+    `rms_fine` vs. the pitch detector), each at `PITCH_HOP_SECONDS` but not
+    necessarily with identical centering -- close enough for an aggregate
+    fraction over the whole recording, so frames are compared index-for-index
+    up to the shorter length rather than resampled to match exactly.
     """
     frame_count = min(len(rms), len(user_hz))
     if frame_count == 0:
@@ -71,11 +70,11 @@ class RecordingConditionStage(PipelineStage):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        rms = rms_envelope(Path(preprocess["recording_path"]), PITCH_HOP_SECONDS)
+        features_path = Path(context.result("features").data["features_path"])
+        features = load_shared_features(features_path)
         user_hz = context.result("pitch").data["user_pitch_curve"]["hz"]
 
-        fraction = _loud_unvoiced_fraction(rms, user_hz)
+        fraction = _loud_unvoiced_fraction(features.user.rms_fine, user_hz)
         detected = fraction >= RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION
 
         return StageResult(

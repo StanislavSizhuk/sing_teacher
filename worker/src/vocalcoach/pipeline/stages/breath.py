@@ -1,4 +1,4 @@
-"""Stage 10: detect pauses (breaths/phrase boundaries) from the loudness
+"""Stage 12: detect pauses (breaths/phrase boundaries) from the loudness
 envelope and compare their placement between the recording and the
 reference vocal stem, after DTW alignment (spec 6.3.10).
 """
@@ -10,15 +10,15 @@ from pathlib import Path
 
 import numpy as np
 
-from vocalcoach.audio.envelope import rms_envelope
 from vocalcoach.audio.timemap import TimeMap
 from vocalcoach.constants import (
     BREATH_MIN_PAUSE_SECONDS,
     BREATH_PAUSE_MATCH_TOLERANCE_SECONDS,
     BREATH_SILENCE_RELATIVE_DB,
     BREATH_TIMEOUT_SECONDS,
-    ENVELOPE_HOP_SECONDS,
+    FEATURES_HOP_SECONDS,
 )
+from vocalcoach.dsp.features import load_shared_features
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
@@ -82,15 +82,12 @@ class BreathStage(PipelineStage):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        user_rms = rms_envelope(Path(preprocess["recording_path"]), ENVELOPE_HOP_SECONDS)
-        reference_rms = rms_envelope(
-            Path(context.result("separate_reference").data["stem_path"]), ENVELOPE_HOP_SECONDS
-        )
+        features_path = Path(context.result("features").data["features_path"])
+        features = load_shared_features(features_path)
         time_map = TimeMap.from_align_stage_data(context.result("align").data)
 
-        user_regions = _pause_regions(user_rms, ENVELOPE_HOP_SECONDS)
-        reference_regions = _pause_regions(reference_rms, ENVELOPE_HOP_SECONDS)
+        user_regions = _pause_regions(features.user.rms_envelope, FEATURES_HOP_SECONDS)
+        reference_regions = _pause_regions(features.reference.rms_envelope, FEATURES_HOP_SECONDS)
         score, matched = _score(user_regions, reference_regions, time_map)
 
         return StageResult(

@@ -1,4 +1,4 @@
-"""Stage 4: DTW-align the user's recording to the reference vocal stem
+"""Stage 5: DTW-align the user's recording to the reference vocal stem
 (spec 6.3.4, ADR-0004). Every later stage compares the two signals through
 the mapping this stage produces, since the user did not sing at exactly the
 reference's tempo.
@@ -9,32 +9,21 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import librosa
-import numpy as np
 from dtw import dtw
 
-from vocalcoach.audio.io import read_mono
 from vocalcoach.constants import (
-    ALIGN_HOP_SECONDS,
     ALIGN_MAX_NORMALIZED_DISTANCE,
-    ALIGN_MFCC_COEFFICIENTS,
     ALIGN_TIMEOUT_SECONDS,
     ALIGN_WINDOW_SECONDS,
+    FEATURES_HOP_SECONDS,
 )
+from vocalcoach.dsp.features import load_shared_features
 from vocalcoach.errors import AlignmentFailed
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 
 STAGE_NAME = "align"
-
-
-def _mfcc_frames(path: Path, hop_length: int) -> np.ndarray:
-    samples, sample_rate = read_mono(path)
-    mfcc = librosa.feature.mfcc(
-        y=samples, sr=sample_rate, n_mfcc=ALIGN_MFCC_COEFFICIENTS, hop_length=hop_length
-    )
-    return np.asarray(mfcc.T)  # (n_frames, n_mfcc), one row per time step
 
 
 class AlignStage(PipelineStage):
@@ -48,16 +37,11 @@ class AlignStage(PipelineStage):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        sample_rate = int(preprocess["sample_rate_hz"])
-        hop_length = max(1, round(sample_rate * ALIGN_HOP_SECONDS))
+        features_path = Path(context.result("features").data["features_path"])
+        features = load_shared_features(features_path)
+        user_mfcc, reference_mfcc = features.user.mfcc, features.reference.mfcc
 
-        user_mfcc = _mfcc_frames(Path(preprocess["recording_path"]), hop_length)
-        reference_mfcc = _mfcc_frames(
-            Path(context.result("separate_reference").data["stem_path"]), hop_length
-        )
-
-        window_size = max(1, round(ALIGN_WINDOW_SECONDS / ALIGN_HOP_SECONDS))
+        window_size = max(1, round(ALIGN_WINDOW_SECONDS / FEATURES_HOP_SECONDS))
         try:
             alignment = dtw(
                 user_mfcc,
@@ -69,7 +53,8 @@ class AlignStage(PipelineStage):
                 distance_only=False,
             )
         except ValueError as exc:
-            # dtw-python raises a bare ValueError, not one of its own
+            # dtw-python raises a bare ValueError ("No warping path found
+            # compatible with the local constraints"), not one of its own
             # exception types, when the two signals diverge so far in
             # length/tempo that no path exists inside the Sakoe-Chiba
             # window at all -- a property of this input, exactly like the
@@ -95,7 +80,7 @@ class AlignStage(PipelineStage):
             data={
                 "index1": [int(i) for i in alignment.index1],
                 "index2": [int(i) for i in alignment.index2],
-                "hop_seconds": ALIGN_HOP_SECONDS,
+                "hop_seconds": FEATURES_HOP_SECONDS,
                 "normalized_distance": normalized_distance,
             },
         )

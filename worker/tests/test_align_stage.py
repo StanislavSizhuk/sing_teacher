@@ -11,6 +11,7 @@ from tests.helpers import FakeVocalSeparator, make_context
 from vocalcoach.errors import AlignmentFailed
 from vocalcoach.models.results import StageStatus
 from vocalcoach.pipeline.stages.align import AlignStage
+from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.separate_reference import SeparateReferenceStage
 
@@ -26,6 +27,7 @@ def _through_separation(tmp_path: Path, recording, reference):
             stem_path_for_song=lambda song_id: tmp_path / f"stem-{song_id}.wav",
         ).run(context)
     )
+    context = context.with_result(FeaturesStage().run(context))
     return context
 
 

@@ -22,6 +22,7 @@ from vocalcoach.pipeline.stages.aggregate import AggregateStage
 from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.breath import BreathStage
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
+from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.recording_condition import RecordingConditionStage
@@ -48,8 +49,9 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 
 def build_stages(settings: Settings, registry: ModelRegistry) -> list[PipelineStage]:
-    """Stages 1-10 in spec 6.2 order, plus the spec 6.9 recording-condition
-    check (11) and aggregation (12).
+    """Stages 1-9 in spec 6.2 order (stage 3 is the spec 6.9 shared feature
+    cache), plus the spec 6.9 recording-condition check (12) and
+    aggregation (13).
 
     No stage here takes a `SongRepository`: every stage instance is
     pickled across `PipelineRunner`'s spawn-based subprocess boundary
@@ -66,6 +68,7 @@ def build_stages(settings: Settings, registry: ModelRegistry) -> list[PipelineSt
             # a plain function plus its already-bound arguments.
             stem_path_for_song=functools.partial(song_stem_path, settings.song_stems_dir),
         ),
+        FeaturesStage(),
         TranscribeStage(registry.transcriber()),
         AlignStage(),
         PitchStage(registry.pitch_detector()),

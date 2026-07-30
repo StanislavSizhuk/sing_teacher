@@ -42,6 +42,6 @@ def test_every_stage_is_picklable(settings, tmp_path: Path) -> None:
 
     stages = build_stages(settings, registry)
 
-    assert len(stages) == 12
+    assert len(stages) == 13
     for stage in stages:
         pickle.dumps(stage)

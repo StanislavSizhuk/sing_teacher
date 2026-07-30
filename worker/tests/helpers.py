@@ -9,11 +9,12 @@ from pathlib import Path
 
 import numpy as np
 
-from vocalcoach.constants import ALIGN_HOP_SECONDS
+from vocalcoach.constants import FEATURES_HOP_SECONDS
 from vocalcoach.models.audio import Lyrics, PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.stages.align import AlignStage
+from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.separate_reference import SeparateReferenceStage
 
@@ -69,11 +70,13 @@ def make_context(
     )
 
 
-def build_context_through_align(
+def _through_features(
     tmp_path: Path, recording_path: Path, reference_path: Path
 ) -> AnalysisContext:
-    """Runs preprocess -> separate_reference (faked) -> align for real, and
-    returns the resulting context so a stage 5-10 test can start from it.
+    """Runs preprocess -> separate_reference (faked) -> features for real --
+    the shared setup every stage 5+ test needs, since those stages now read
+    MFCC/RMS/onsets out of the stage-3 shared feature cache (spec 6.9)
+    instead of computing their own.
     """
     context = make_context(tmp_path, recording_path=recording_path, reference_path=reference_path)
 
@@ -85,6 +88,18 @@ def build_context_through_align(
     ).run(context)
     context = context.with_result(separate_result)
 
+    features_result = FeaturesStage().run(context)
+    return context.with_result(features_result)
+
+
+def build_context_through_align(
+    tmp_path: Path, recording_path: Path, reference_path: Path
+) -> AnalysisContext:
+    """Runs preprocess -> separate_reference (faked) -> features -> align for
+    real, and returns the resulting context so a stage 6-13 test can start
+    from it.
+    """
+    context = _through_features(tmp_path, recording_path, reference_path)
     align_result = AlignStage().run(context)
     return context.with_result(align_result)
 
@@ -95,28 +110,20 @@ def build_context_with_identity_align(
     """Like `build_context_through_align`, but injects a trivial identity
     warping path instead of running real DTW.
 
-    Some tests deliberately feed the aspect stages (8 dynamics, 9 timbre)
-    two signals that differ exactly in what that stage measures -- which is
+    Some tests deliberately feed the aspect stages (dynamics, timbre) two
+    signals that differ exactly in what that stage measures -- which is
     also what makes them differ enough in MFCC space to legitimately fail
     real alignment first (align mixes timbre and energy information into
     the same distance metric). This decouples such a test from align's own
     threshold tuning, which is unrelated to what the test is checking.
     """
-    context = make_context(tmp_path, recording_path=recording_path, reference_path=reference_path)
-
-    preprocess_result = PreprocessStage(ffmpeg_path="ffmpeg").run(context)
-    context = context.with_result(preprocess_result)
-
-    separate_result = SeparateReferenceStage(
-        FakeVocalSeparator(), stem_path_for_song=lambda song_id: tmp_path / f"stem-{song_id}.wav"
-    ).run(context)
-    context = context.with_result(separate_result)
+    context = _through_features(tmp_path, recording_path, reference_path)
 
     identity = list(range(frame_count))
     align_result = StageResult(
         stage="align",
         status=StageStatus.DONE,
         duration_ms=1,
-        data={"index1": identity, "index2": identity, "hop_seconds": ALIGN_HOP_SECONDS},
+        data={"index1": identity, "index2": identity, "hop_seconds": FEATURES_HOP_SECONDS},
     )
     return context.with_result(align_result)
