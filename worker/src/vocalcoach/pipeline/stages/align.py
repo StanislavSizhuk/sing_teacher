@@ -58,15 +58,27 @@ class AlignStage(PipelineStage):
         )
 
         window_size = max(1, round(ALIGN_WINDOW_SECONDS / ALIGN_HOP_SECONDS))
-        alignment = dtw(
-            user_mfcc,
-            reference_mfcc,
-            step_pattern="symmetric2",
-            window_type="sakoechiba",
-            window_args={"window_size": window_size},
-            keep_internals=False,
-            distance_only=False,
-        )
+        try:
+            alignment = dtw(
+                user_mfcc,
+                reference_mfcc,
+                step_pattern="symmetric2",
+                window_type="sakoechiba",
+                window_args={"window_size": window_size},
+                keep_internals=False,
+                distance_only=False,
+            )
+        except ValueError as exc:
+            # dtw-python raises a bare ValueError, not one of its own
+            # exception types, when the two signals diverge so far in
+            # length/tempo that no path exists inside the Sakoe-Chiba
+            # window at all -- a property of this input, exactly like the
+            # normalized-distance check below, so it must not retry
+            # (spec 6.8) or surface as an opaque INTERNAL error.
+            raise AlignmentFailed(
+                f"DTW found no warping path within the {ALIGN_WINDOW_SECONDS}s window -- "
+                f"recording and reference diverge too far in tempo/content to align: {exc}"
+            ) from exc
         normalized_distance = float(alignment.normalizedDistance)
 
         if normalized_distance > ALIGN_MAX_NORMALIZED_DISTANCE:
