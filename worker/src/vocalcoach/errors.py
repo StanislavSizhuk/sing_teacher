@@ -64,3 +64,12 @@ class AlignmentFailed(LogicalPipelineError):
     configured warping window (spec ADR-0004, risk table: tempo diverged too far)."""
 
     error_code = "ALIGNMENT_FAILED"
+
+
+class AlignmentTooLarge(LogicalPipelineError):
+    """The banded DTW's cell count (spec 6.7) exceeds `DTW_MAX_CELLS` before
+    a single cell is computed -- refused upfront rather than let a
+    pathological input (e.g. both signals hours long) eat unbounded memory
+    (NFR-16)."""
+
+    error_code = "ALIGNMENT_TOO_LARGE"

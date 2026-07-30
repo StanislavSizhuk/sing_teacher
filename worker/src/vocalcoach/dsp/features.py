@@ -43,6 +43,22 @@ class SharedFeatures:
     onset_times: np.ndarray
 
 
+def compute_mfcc(
+    path: Path, hop_seconds: float, n_mfcc: int = FEATURES_MFCC_COEFFICIENTS
+) -> np.ndarray:
+    """MFCC at an arbitrary hop, `(n_frames, n_mfcc)`. Used both by the
+    shared cache (`FEATURES_HOP_SECONDS`) and by level 2 of the banded DTW
+    (spec 6.7), which needs a finer hop nothing else in the pipeline does --
+    computing that one representation once, here, in one place, is still
+    spec 6.9's rule even though the shared-cache `.npz` itself only ever
+    holds the coarser one.
+    """
+    samples, sample_rate = read_mono(path)
+    hop_length = max(1, round(sample_rate * hop_seconds))
+    mfcc = librosa.feature.mfcc(y=samples, sr=sample_rate, n_mfcc=n_mfcc, hop_length=hop_length)
+    return np.asarray(mfcc.T, dtype=np.float32)
+
+
 def compute_shared_features(path: Path) -> SharedFeatures:
     """Reads `path` once and derives every representation later stages need
     from that one in-memory signal (spec 6.9: "кожне представлення

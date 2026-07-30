@@ -49,15 +49,21 @@ FEATURES_TIMEOUT_SECONDS = 30
 FEATURES_HOP_SECONDS = 0.05
 FEATURES_MFCC_COEFFICIENTS = 13
 
-# Stage 5 alignment (spec ADR-0004, 6.7): a Sakoe-Chiba window that bounds
-# DTW to a plausible tempo drift, both to keep the banded cost matrix
-# tractable within the timeout and to reject wildly diverging takes outright
-# instead of forcing a bad alignment (spec 6.8 risk table).
+# Stage 5 alignment (spec ADR-0004, 6.7): level 1's Sakoe-Chiba band, around
+# the literal diagonal, bounds DTW to a plausible tempo drift -- both to keep
+# the banded cost matrix tractable within the timeout and to reject wildly
+# diverging takes outright instead of forcing a bad alignment (spec 6.8 risk
+# table). Level 2 then refines within a much narrower band centered on level
+# 1's own path, at a finer hop (PITCH_HOP_SECONDS).
 ALIGN_WINDOW_SECONDS = 10.0
+ALIGN_REFINE_WINDOW_SECONDS = 0.2
 # Empirical starting point for the banded DTW's per-step normalized cost on
-# FEATURES_MFCC_COEFFICIENTS-dimensional MFCC frames; recalibrate once golden
-# fixtures exist (spec 19).
-ALIGN_MAX_NORMALIZED_DISTANCE = 40.0
+# FEATURES_MFCC_COEFFICIENTS-dimensional MFCC frames at PITCH_HOP_SECONDS
+# (level 2's own hop, since that is the pass this ceiling is checked
+# against); recalibrate once golden fixtures exist (spec 19). Calibrated
+# against this test suite's synthetic fixtures: legitimate-but-different
+# takes measured 2-43, unrelated signals measured 120-1050.
+ALIGN_MAX_NORMALIZED_DISTANCE = 70.0
 # Upfront size guard (spec 6.7, NFR-16): refuses to even start a DTW whose
 # banded cell count would exceed this, rather than let a pathological input
 # (near-duplicate, but each hours long) eat unbounded memory/time.
