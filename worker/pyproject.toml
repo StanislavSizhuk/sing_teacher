@@ -16,7 +16,10 @@ dependencies = [
     "torch>=2.5,<3",
     "torchaudio>=2.5,<3",
     "demucs>=4.0.1,<5",
-    "openai-whisper>=20240930",
+    # CTranslate2 int8 runtime, not openai-whisper's own inference (spec
+    # 5.1/ADR-0021): same Whisper models, substantially faster and lighter
+    # on CPU at the same accuracy -- a runtime swap, not a model swap.
+    "faster-whisper>=1.0,<2",
     "torchcrepe>=0.0.23,<0.1",
     # Used directly for the banded DTW (spec 6.7, dsp/dtw.py), not just a
     # transitive pin anymore -- openai-whisper's own pin still resolves to a
@@ -82,7 +85,7 @@ module = [
     "soundfile.*",
     "pyloudnorm.*",
     "demucs.*",
-    "whisper.*",
+    "faster_whisper.*",
     "torchcrepe.*",
     "scipy.*",
 ]

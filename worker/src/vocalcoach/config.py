@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     # "base", not spec 6.2's named "small": ADR-0014, real hardware measured
     # "small" landing on top of TRANSCRIBE_TIMEOUT_SECONDS instead of under it.
     whisper_model: str = Field("base", alias="WHISPER_MODEL")
+    # faster-whisper's CTranslate2 quantization (spec 6.6/ADR-0021); int8 is
+    # what makes it substantially faster/lighter than openai-whisper's own
+    # float32 inference on CPU at comparable accuracy.
+    whisper_compute_type: str = Field("int8", alias="WHISPER_COMPUTE_TYPE")
     demucs_model: str = Field("htdemucs", alias="DEMUCS_MODEL")
     scoring_version: str = Field("1.0", alias="SCORING_VERSION")
     # Raw string, not a nested model: pydantic-settings' env source tries to

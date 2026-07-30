@@ -144,6 +144,7 @@ def run() -> None:
     registry = ModelRegistry(
         demucs_model=settings.demucs_model,
         whisper_model=settings.whisper_model,
+        whisper_compute_type=settings.whisper_compute_type,
         pitch_engine=settings.pitch_engine,
         weights_dir=settings.model_weights_dir,
     )
