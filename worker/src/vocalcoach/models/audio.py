@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import numpy as np
 from pydantic import BaseModel
 
 
@@ -32,6 +35,24 @@ class PitchCurve(BaseModel):
 
     def duration_seconds(self) -> float:
         return len(self.hz) * self.hop_seconds
+
+    def to_bytes(self) -> tuple[bytes, dict[str, Any]]:
+        """Packs `hz` as `float32` little-endian (spec 7.3: dense curves are
+        `bytea`, never JSONB) -- `None` (unvoiced) becomes `NaN`, the
+        standard sentinel for "no value" in a float array, decoded back to
+        `None` by `from_bytes`. The returned dict is the sidecar
+        `*_meta` JSONB: everything needed to interpret the bytes that isn't
+        itself a per-frame value.
+        """
+        array = np.array([value if value is not None else np.nan for value in self.hz], dtype="<f4")
+        meta = {"hop_seconds": self.hop_seconds, "length": len(self.hz), "engine": "float32le"}
+        return array.tobytes(), meta
+
+    @classmethod
+    def from_bytes(cls, data: bytes, meta: dict[str, Any]) -> PitchCurve:
+        array = np.frombuffer(data, dtype="<f4")
+        hz: list[float | None] = [None if np.isnan(value) else float(value) for value in array]
+        return cls(hop_seconds=float(meta["hop_seconds"]), hz=hz)
 
 
 class PianoRollData(BaseModel):

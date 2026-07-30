@@ -47,6 +47,8 @@ class HandlerAnalysisRepository(Protocol):
     def get_by_id(self, analysis_id: str) -> AnalysisRecord: ...
     def save_aspect_score(self, analysis_id: str, aspect: str, score: float) -> None: ...
     def save_piano_roll(self, analysis_id: str, data: PianoRollData) -> None: ...
+    def save_user_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None: ...
+    def prune_dense_stage_fields(self, analysis_id: str) -> None: ...
     def save_scoring_result(
         self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
     ) -> None: ...
@@ -130,6 +132,11 @@ class AnalysisJobHandler:
 
         self._persist_scores(analysis_id)
         self._persist_song_cache(analysis_id, context.song_id)
+        # Once the dense curves above are durably saved into their own
+        # bytea/JSONB columns, stages_json no longer needs to carry them too
+        # (spec 7.3) -- stages_json's per-stage write exists for mid-run
+        # resumability (spec 6.8), which a `done` analysis never needs again.
+        self._analyses.prune_dense_stage_fields(analysis_id)
         self._analyses.mark_done(analysis_id, self._model_versions)
         self._events.publish_done(analysis_id)
         self._cleanup(context, recording_done=True, remove_work_dir=True)
@@ -151,10 +158,12 @@ class AnalysisJobHandler:
         `stages_json` into its own column (`analyses.pitch_score`, etc.) --
         stage names equal `config.ASPECTS` exactly by construction, so no
         separate mapping table is needed. `pitch`'s `piano_roll` goes into
-        `analyses.pitch_curve_json` the same way (spec 7, FR-31), and
-        stage 11's `overall_score`/`feedback_text`/`scoring_version` go into
-        their own columns (spec 6.4, FR-32), and `overall_score` also lands
-        as one `progress_snapshots` row for the FR-35 progress chart.
+        `analyses.pitch_curve_json` the same way (spec 7, FR-31), its dense
+        `user_pitch_curve` into `analyses.user_pitch` as packed bytes (spec
+        7.3), and stage 11's `overall_score`/`feedback_text`/`scoring_version`
+        go into their own columns (spec 6.4, FR-32), and `overall_score`
+        also lands as one `progress_snapshots` row for the FR-35 progress
+        chart.
 
         `PipelineRunner` never does this itself: it stays agnostic of which
         stages happen to produce a score, so adding a stage there never
@@ -171,6 +180,9 @@ class AnalysisJobHandler:
         if pitch_result is not None and "piano_roll" in pitch_result.data:
             piano_roll = PianoRollData.model_validate(pitch_result.data["piano_roll"])
             self._analyses.save_piano_roll(analysis_id, piano_roll)
+        if pitch_result is not None and "user_pitch_curve" in pitch_result.data:
+            user_pitch = PitchCurve.model_validate(pitch_result.data["user_pitch_curve"])
+            self._analyses.save_user_pitch_curve(analysis_id, user_pitch)
 
         aggregate_result = record.stages.get("aggregate")
         if aggregate_result is not None:
@@ -190,7 +202,7 @@ class AnalysisJobHandler:
 
     def _persist_song_cache(self, analysis_id: str, song_id: str) -> None:
         """Writes transcribe's/pitch's spec 6.6 song-level cache
-        (`lyrics_json`, `reference_pitch_json` + `vocal_stem_processed`)
+        (`lyrics_json`, `reference_pitch` + `vocal_stem_processed`)
         out of their `StageResult`s, now that the pipeline has fully
         finished. Neither stage can write it itself (see transcribe.py/
         pitch.py) -- both would need a `SongRepository` to survive being

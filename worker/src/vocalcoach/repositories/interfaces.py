@@ -74,6 +74,20 @@ class AnalysisRepository(Protocol):
         `analyses.pitch_curve_json` (spec 7)."""
         ...
 
+    def save_user_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None:
+        """Persists the user's own dense pitch curve into `analyses.user_pitch`
+        as packed `float32` bytes, not JSONB (spec 7.3)."""
+        ...
+
+    def prune_dense_stage_fields(self, analysis_id: str) -> None:
+        """Strips the pitch stage's dense curves back out of `stages_json`
+        once they are durably saved elsewhere (`save_user_pitch_curve`,
+        `save_piano_roll`, `SongRepository.mark_vocal_stem_processed`) --
+        `stages_json`'s per-stage write exists for mid-run resumability
+        (spec 6.8), not as permanent storage for data spec 7.3 says never
+        belongs in JSONB."""
+        ...
+
     def save_scoring_result(
         self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
     ) -> None:
