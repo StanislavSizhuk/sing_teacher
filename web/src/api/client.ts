@@ -244,12 +244,7 @@ export async function addSong(input: AddSongByUpload | AddSongByYouTube): Promis
  * path reached ready; it transitions to queued automatically once the song
  * is ready (spec 6.2, 10.3, FR-16) -- no client action needed. */
 export type AnalysisStatus =
-  | 'queued'
-  | 'waiting_for_reference'
-  | 'processing'
-  | 'done'
-  | 'failed'
-  | 'canceled'
+  'queued' | 'waiting_for_reference' | 'processing' | 'done' | 'failed' | 'canceled'
 
 /** FR-31 piano-roll overlay data: the user's and reference's pitch curves,
  * already resampled onto the same (the user's) time grid frame for frame,
