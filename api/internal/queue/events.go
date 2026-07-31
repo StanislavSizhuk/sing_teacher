@@ -21,6 +21,12 @@ type EventSink interface {
 	BroadcastStage(analysisID uuid.UUID, name string, index, total int)
 	BroadcastDone(analysisID uuid.UUID)
 	BroadcastFailed(analysisID uuid.UUID, errorCode, message string)
+	// BroadcastPositions relays a "queued" event the worker itself
+	// published -- specifically, an analysis woken from
+	// waiting_for_reference once its song's cold path reached ready (spec
+	// 10.3, FR-16). The HTTP-driven Enqueue/Cancel path calls this
+	// directly, in-process; this is the worker-initiated equivalent.
+	BroadcastPositions(positions map[uuid.UUID]int)
 }
 
 // workerEvent mirrors the JSON the worker's queue.events.RedisEventPublisher sends.
@@ -30,6 +36,7 @@ type workerEvent struct {
 	Name       string `json:"name"`
 	Index      int    `json:"index"`
 	Total      int    `json:"total"`
+	Position   int    `json:"position"`
 	ErrorCode  string `json:"error_code"`
 	Message    string `json:"message"`
 }
@@ -76,6 +83,8 @@ func relayOne(payload string, sink EventSink, logger *slog.Logger) {
 		sink.BroadcastDone(analysisID)
 	case "failed":
 		sink.BroadcastFailed(analysisID, evt.ErrorCode, evt.Message)
+	case "queued":
+		sink.BroadcastPositions(map[uuid.UUID]int{analysisID: evt.Position})
 	default:
 		logger.Error("worker event: unknown type", "type", evt.Type)
 	}

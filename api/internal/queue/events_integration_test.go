@@ -39,6 +39,7 @@ type recordedCall struct {
 	name       string
 	index      int
 	total      int
+	position   int
 	errorCode  string
 	message    string
 }
@@ -64,6 +65,14 @@ func (s *recordingSink) BroadcastFailed(analysisID uuid.UUID, errorCode, message
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, recordedCall{kind: "failed", analysisID: analysisID, errorCode: errorCode, message: message})
+}
+
+func (s *recordingSink) BroadcastPositions(positions map[uuid.UUID]int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, pos := range positions {
+		s.calls = append(s.calls, recordedCall{kind: "queued", analysisID: id, position: pos})
+	}
 }
 
 func (s *recordingSink) snapshot() []recordedCall {
@@ -94,15 +103,18 @@ func TestRelayEvents_DecodesAndDispatchesToSink(t *testing.T) {
 		`{"analysis_id":"`+analysisID.String()+`","type":"done"}`).Err())
 	require.NoError(t, client.Publish(ctx, queue.EventsChannel,
 		`{"analysis_id":"`+analysisID.String()+`","type":"failed","error_code":"NO_VOICE_DETECTED","message":"no voice"}`).Err())
+	require.NoError(t, client.Publish(ctx, queue.EventsChannel,
+		`{"analysis_id":"`+analysisID.String()+`","type":"queued","position":2}`).Err())
 
 	require.Eventually(t, func() bool {
-		return len(sink.snapshot()) == 3
-	}, 3*time.Second, 20*time.Millisecond, "expected exactly the 3 valid messages to be dispatched")
+		return len(sink.snapshot()) == 4
+	}, 3*time.Second, 20*time.Millisecond, "expected exactly the 4 valid messages to be dispatched")
 
 	calls := sink.snapshot()
 	require.Equal(t, recordedCall{kind: "stage", analysisID: analysisID, name: "pitch", index: 5, total: 10}, calls[0])
 	require.Equal(t, recordedCall{kind: "done", analysisID: analysisID}, calls[1])
 	require.Equal(t, recordedCall{kind: "failed", analysisID: analysisID, errorCode: "NO_VOICE_DETECTED", message: "no voice"}, calls[2])
+	require.Equal(t, recordedCall{kind: "queued", analysisID: analysisID, position: 2}, calls[3])
 
 	cancel()
 	require.NoError(t, <-relayErr)
