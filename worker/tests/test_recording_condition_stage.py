@@ -59,9 +59,7 @@ def _frame_count(context: AnalysisContext) -> int:
     return len(load_shared_features(features_path).user.rms_fine)
 
 
-def test_flags_loud_unvoiced_recording_as_likely_accompaniment(
-    tmp_path: Path, wav_writer
-) -> None:
+def test_flags_loud_unvoiced_recording_as_likely_accompaniment(tmp_path: Path, wav_writer) -> None:
     # A steady, constant-amplitude tone: the fake pitch curve below claims
     # half its frames are unvoiced even though the *audio* itself never gets
     # quieter there -- stands in for an instrument ringing through pauses
@@ -139,9 +137,7 @@ def test_real_pitch_stage_on_clean_tone_does_not_flag(tmp_path: Path, wav_writer
 # --- FR-29/FR-30 mode reconciliation (spec 6.16, T5/T6) ---------------------
 
 
-def test_clean_with_accompaniment_warns_but_keeps_declared_mode(
-    tmp_path: Path, wav_writer
-) -> None:
+def test_clean_with_accompaniment_warns_but_keeps_declared_mode(tmp_path: Path, wav_writer) -> None:
     recording = wav_writer("recording.wav", sine_wave(3.0, 44100, 220.0, amplitude=0.8), 44100)
     reference = wav_writer("reference.wav", sine_wave(3.0, 44100, 220.0), 44100)
     context = _context_through_features(tmp_path, recording, reference, mode="clean")
