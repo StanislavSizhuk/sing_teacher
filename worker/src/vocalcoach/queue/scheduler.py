@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import logging
 import signal
+from collections.abc import Callable
 from types import FrameType
-from typing import Protocol
+from typing import Any, Protocol
 
-from vocalcoach.queue.consumer import Consumer, ReadGroupReply
+from vocalcoach.queue.consumer import ReadGroupReply
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,24 @@ class WaitingSongsLookup(Protocol):
     def oldest_waiting_song_id(self) -> str | None: ...
 
 
+class StreamConsumer(Protocol):
+    """The narrow slice of `queue.consumer.Consumer` the scheduler needs
+    (spec 12.2's "interfaces declared by the consumer" applied to Python) --
+    declared here rather than depending on that concrete class, so the
+    priority logic below is testable against a fake stream instead of real
+    Redis."""
+
+    def ensure_group(self) -> None: ...
+    def reclaim_stuck_jobs(self) -> None: ...
+    def read_next(self, *, block_ms: int | None = None) -> ReadGroupReply: ...
+    def claim_new_entries(self) -> None: ...
+    def pending_entries(self) -> list[dict[str, Any]]: ...
+    def fields_for(self, entry_id: str) -> dict[str, str] | None: ...
+    def process_entry(
+        self, entry_id: str, fields: dict[str, str], should_stop: Callable[[], bool]
+    ) -> None: ...
+
+
 class Scheduler:
     """Drives the worker's main loop across both spec 10.1 streams,
     forever until asked to stop.
@@ -37,8 +56,8 @@ class Scheduler:
 
     def __init__(
         self,
-        analyses: Consumer,
-        songs_prep: Consumer,
+        analyses: StreamConsumer,
+        songs_prep: StreamConsumer,
         waiting_songs: WaitingSongsLookup,
     ) -> None:
         self._analyses = analyses
@@ -137,7 +156,7 @@ class Scheduler:
         self._songs_prep.process_entry(entry_id, fields, self.should_stop)
         return True
 
-    def _process_first(self, consumer: Consumer, entries: ReadGroupReply) -> None:
+    def _process_first(self, consumer: StreamConsumer, entries: ReadGroupReply) -> None:
         _stream_name, messages = entries[0]
         for entry_id, fields in messages:
             if self._stopping:
