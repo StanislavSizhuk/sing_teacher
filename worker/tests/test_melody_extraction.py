@@ -94,7 +94,8 @@ def _mix_at_snr(vocal: np.ndarray, accompaniment: np.ndarray, snr_db: float) -> 
     accompaniment_rms = float(np.sqrt(np.mean(accompaniment**2)))
     target_accompaniment_rms = vocal_rms / (10.0 ** (snr_db / 20.0))
     scaled_accompaniment = accompaniment * (target_accompaniment_rms / (accompaniment_rms + 1e-12))
-    return (vocal.astype(np.float64) + scaled_accompaniment).astype(np.float32)
+    mixture: np.ndarray = (vocal.astype(np.float64) + scaled_accompaniment).astype(np.float32)
+    return mixture
 
 
 def _median_cents_error(estimated_hz: list[float | None], truth_hz: np.ndarray) -> float:

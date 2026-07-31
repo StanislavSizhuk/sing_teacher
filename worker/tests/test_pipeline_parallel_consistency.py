@@ -16,6 +16,7 @@ from tests.conftest import sine_wave
 from tests.helpers import canonical_stem_path, reference_pitch_curve_for
 from vocalcoach.config import ScoringWeights
 from vocalcoach.models.context import AnalysisContext
+from vocalcoach.models.mode import Mode
 from vocalcoach.pipeline.base import ParallelGroup
 from vocalcoach.pipeline.registry import PyinPitchDetector
 from vocalcoach.pipeline.runner import PipelineRunner, RunOutcome
@@ -34,7 +35,7 @@ from vocalcoach.pipeline.stages.vibrato import VibratoStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
-_WEIGHTS = {
+_WEIGHTS: dict[Mode, ScoringWeights] = {
     "clean": ScoringWeights.parse(
         "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10", "clean"
     ),

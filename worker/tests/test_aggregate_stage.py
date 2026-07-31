@@ -5,11 +5,12 @@ from pathlib import Path
 from tests.helpers import EMPTY_REFERENCE_PITCH
 from vocalcoach.config import ScoringWeights
 from vocalcoach.models.context import AnalysisContext
+from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.report import build_feedback_report
 from vocalcoach.pipeline.stages.aggregate import AggregateStage
 
-_WEIGHTS = {
+_WEIGHTS: dict[Mode, ScoringWeights] = {
     "clean": ScoringWeights.parse(
         "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10", "clean"
     ),
@@ -65,7 +66,7 @@ def _align_result(normalized_distance: float = 5.0) -> StageResult:
     )
 
 
-def _context_with_aspect_results(tmp_path: Path, mode: str = "clean") -> AnalysisContext:
+def _context_with_aspect_results(tmp_path: Path, mode: Mode = "clean") -> AnalysisContext:
     context = AnalysisContext(
         analysis_id="a",
         user_id="u",

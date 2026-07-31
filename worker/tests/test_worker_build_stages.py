@@ -16,9 +16,12 @@ from pathlib import Path
 import pytest
 
 from vocalcoach.config import load_settings
-from vocalcoach.pipeline.base import ParallelGroup
+from vocalcoach.models.context import AnalysisContext
+from vocalcoach.pipeline.base import ParallelGroup, PipelineStage
 from vocalcoach.pipeline.registry import ModelRegistry
 from vocalcoach.worker import build_prep_stages, build_stages
+
+_WarmEntries = list[PipelineStage[AnalysisContext] | ParallelGroup[AnalysisContext]]
 
 VALID_CLEAN_WEIGHTS = "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10"
 VALID_MIXED_WEIGHTS = "pitch:0.50,rhythm:0.30,dynamics:0.10,vibrato:0.10"
@@ -35,7 +38,7 @@ def settings(monkeypatch: pytest.MonkeyPatch):
     return load_settings()
 
 
-def _flatten_stage_names(entries) -> list[str]:
+def _flatten_stage_names(entries: _WarmEntries) -> list[str]:
     names: list[str] = []
     for entry in entries:
         if isinstance(entry, ParallelGroup):
@@ -45,8 +48,8 @@ def _flatten_stage_names(entries) -> list[str]:
     return names
 
 
-def _flatten_stages(entries):
-    stages = []
+def _flatten_stages(entries: _WarmEntries) -> list[PipelineStage[AnalysisContext]]:
+    stages: list[PipelineStage[AnalysisContext]] = []
     for entry in entries:
         if isinstance(entry, ParallelGroup):
             stages.extend(entry.stages)
@@ -55,7 +58,7 @@ def _flatten_stages(entries):
     return stages
 
 
-def _names_for_mode(entries, mode: str) -> list[str]:
+def _names_for_mode(entries: _WarmEntries, mode: str) -> list[str]:
     return [stage.name for stage in _flatten_stages(entries) if mode in stage.modes]
 
 
