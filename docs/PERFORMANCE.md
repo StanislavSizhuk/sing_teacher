@@ -58,6 +58,21 @@ of this path; the table below is the post-M2 shape):**
 | A10 aggregation/report | 3s |
 | **Total** | **≤ 86s** (NFR-01b: 90s) |
 
+**Warm path, `mixed` mode (M3, spec 6.17): the same path without A5, plus A4:**
+
+| Stage | Budget |
+|---|---|
+| A1 decode/normalize | 12s |
+| A2 VAD | 5s |
+| A3 input classification | 4s |
+| A4 melody extraction (mixed only, spec 6.6/M3) | 60s |
+| A6 shared feature cache | 12s |
+| A7 two-level DTW | 15s |
+| A8 key normalization | 2s |
+| A9 aspect stages (parallel, no timbre/breath) | 15s |
+| A10 aggregation/report | 3s |
+| **Total** | **≤ 128s** (NFR-01c: 150s) |
+
 ## Latest measurements
 
 **Date:** 2026-07-30
@@ -213,6 +228,69 @@ the pre-M2 warm path already had.
 - Not yet measured against the eventual 4 vCPU/8 GB production VPS shape
   (spec 16.3) -- neither was M1's.
 
+## M3 measurement: NFR-01c (mixed warm path) -- partial
+
+**Date:** 2026-07-31
+**Commit:** M3 branch (`feat/m3-mixed-mode-spike`).
+**Machine:** same development machine as M1/M2 (12 vCPU, 31 GB RAM) -- same
+production-VPS caveat as both prior measurements.
+
+**Methodology, and why this one is partial:** M1/M2 both measured a real
+end-to-end run against a real song. M3 has no equivalent: a `mixed`
+recording needs real singing *plus* real accompaniment mixed together, and
+no such test recording exists in this environment (spec 15.3 also bans
+committing one to the repo either way). What is measured directly instead
+is `dsp/melody.py::extract_melody` -- A4, the one new stage expensive
+enough to matter for the budget -- run on synthetic mixtures (harmonic
+vocal + accompaniment, the same construction `tests/test_melody_extraction.py`
+uses) at several durations, wall-clock, via a standalone script outside the
+worker process (same thread-configuration caveat as M1/M2: `runtime.threads
+.configure_worker_threads()`, spec 6.11, not applied here).
+
+| Synthetic mixture duration | A4 `extract_melody` wall time |
+|---:|---:|
+| 30s | 2.9s |
+| 60s | 4.1s |
+| 180s | 13.0s |
+| 225s (M2's real reference track's own duration) | 15.5s |
+| 360s (spec 6.17's cold-path reference duration) | 24.9s |
+
+Scaling is roughly linear (the chunked candidate/frame tensor,
+`MELODY_CHUNK_FRAMES`, bounds per-chunk work independent of total length) --
+no evidence of the quadratic blowup a naive per-frame implementation would
+show. `key_normalization` (A8) was also measured directly, on a
+22,552-frame synthetic `deviation_cents` array (matching a 225s recording
+at the 10ms pitch hop): **7ms** -- negligible against its 2s budget line.
+
+**Estimated mixed-path total**, built from real numbers where they exist:
+A1/A6/A7 unchanged from M2's measured `clean`-path numbers (0.6s + 1.8s +
+2.1s = 4.5s, mode-independent -- none of those three stages' work depends
+on which pitch source runs), A4 measured above (15.5s at the M2 reference
+track's own 225s duration), A8 measured above (~0.01s), A9's three
+remaining aspects (rhythm/vibrato/dynamics, no timbre/breath) carried
+forward from the M1 table (well under 50ms combined), A10 ~0ms:
+
+| Component | Value | Source |
+|---|---:|---|
+| A1 preprocess | 0.6s | measured, M2 (mode-independent) |
+| A6 features | 1.8s | measured, M2 (mode-independent) |
+| A7 align | 2.1s | measured, M2 (mode-independent) |
+| A4 melody extraction | 15.5s | measured, M3, synthetic, this table |
+| A8 key normalization | ~0.0s | measured, M3, synthetic, this table |
+| A9 aspects (rhythm/vibrato/dynamics only) | ~0.05s | measured, M1 (mode-independent, minus timbre/breath) |
+| A10 aggregate | ~0.0s | measured, M1 |
+| **Estimated total** | **~20.1s** | **≤ 128s** (NFR-01c: 150s), 13-16% of budget |
+
+**Reading this table:** even as an estimate assembled from two different
+sessions' measurements rather than one real end-to-end run, the margin
+(~20s against a 150s ceiling) is wide enough that the composition method
+itself is very unlikely to be hiding a budget violation -- A4 would have
+to be roughly 6x slower than measured, on top of every other component
+being free, before this got close to 150s. Re-measure end-to-end once a
+real `mixed` test recording exists (see "Known limitations" in
+`docs/ML_PIPELINE.md`) before treating NFR-01c as fully validated the way
+NFR-01a/NFR-01b now are.
+
 ## Optimisation log
 
 | Change | Why | Measured effect |
@@ -224,6 +302,7 @@ the pre-M2 warm path already had.
 | Parallel aspect stages (6.10) | Independent stages ran sequentially | T13-verified score parity; wall-clock benefit scales with per-stage cost and available cores |
 | `faster-whisper` runtime (ADR-0021) | `openai-whisper`'s float32 PyTorch inference | transcribe: 22.9s -> 11.3s (-51%) |
 | Dense curves as `bytea` (7.3, ADR-0022) | JSONB text for ~18k-point float arrays, stored redundantly in `stages_json` | Not wall-clock (storage/IO, not measured here); removes duplicate storage of the reference/user pitch curves |
+| Chunked (frame x candidate x harmonic) tensor in melody extraction (M3, `MELODY_CHUNK_FRAMES`) | Bounds A4's peak memory independent of recording length, same principle as the banded DTW's corridor | Linear wall-time scaling measured 30s-360s (this file's M3 table); no quadratic blowup |
 
 ## When it gets slow
 

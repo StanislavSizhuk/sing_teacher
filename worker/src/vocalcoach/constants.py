@@ -14,6 +14,7 @@ TARGET_LOUDNESS_LUFS = -23.0
 PREPROCESS_TIMEOUT_SECONDS = 45  # A1: recording only, the reference half moved to P1 (M2)
 ALIGN_TIMEOUT_SECONDS = 60
 PITCH_TIMEOUT_SECONDS = 180
+MELODY_TIMEOUT_SECONDS = 90  # A4 (`mixed` only, spec 6.5 table)
 RHYTHM_TIMEOUT_SECONDS = 30
 VIBRATO_TIMEOUT_SECONDS = 30
 DYNAMICS_TIMEOUT_SECONDS = 30
@@ -130,23 +131,22 @@ PENDING_CLAIM_MIN_IDLE = (
 SONGS_PREP_PENDING_CLAIM_MIN_IDLE = 20 * 60
 MAX_CLAIM_ATTEMPTS = 3  # after this many reclaims the job is given up on as failed
 
-# Stage 11 recording-condition check (spec 2.3, 6.9): the user's own
+# Stage A3 recording-condition check (spec 2.3, 6.16): the user's own
 # recording is never run through Demucs (ADR-0003), so this is a cheap
-# substitute for real source separation -- a frame loud enough to matter,
-# relative to this recording's own peak RMS, yet where the pitch stage (5)
-# found no single clear pitch, is a soft signal of non-vocal energy
-# (instruments, noise) rather than a singing voice. -20 dB is well above
-# BREATH_SILENCE_RELATIVE_DB, deliberately: this only wants to catch frames
-# energetic enough to plausibly be an instrument, not normal room tone
-# under a quiet vocal.
+# substitute for real source separation -- see pipeline/stages/
+# recording_condition.py for the accompaniment_level formula itself.
 RECORDING_CONDITION_TIMEOUT_SECONDS = 30
-RECORDING_CONDITION_LOUD_RELATIVE_DB = -20.0
-# A recording where at least this fraction of frames are loud-yet-unvoiced
-# is flagged in the report (spec 6.9) -- a starting point, not calibrated
-# against real recordings (same caveat as every other threshold here, spec
-# 19 risk table); every voice has *some* loud-but-momentarily-unvoiced
-# frames (consonants, breath noise), so this sits well above zero.
-RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3
+# A median over a handful of unvoiced frames is noise, not a signal -- a
+# single pitch-detector edge artifact (observed: pYIN's very first frame,
+# on an otherwise perfectly voiced clean tone) would otherwise set the
+# entire "unvoiced" median off one sample. Below this many unvoiced frames,
+# accompaniment_level is reported as 0 rather than computed from too little
+# data to be meaningful.
+RECORDING_CONDITION_MIN_UNVOICED_FRAMES = 10
+
+# Stage A8 key-shift normalization (spec 6.8). Budget is 5s (spec 6.17);
+# timeout carries the usual margin over budget the other stages use.
+KEY_NORMALIZATION_TIMEOUT_SECONDS = 10
 
 # Stage 12 aggregation (spec 6.2/6.3.11, FR-32).
 AGGREGATE_TIMEOUT_SECONDS = 10
@@ -164,3 +164,58 @@ FEEDBACK_FAIR_THRESHOLD = 50.0
 # an off-pitch note. Half a semitone is comfortably past normal intonation
 # wobble but well inside a genuinely wrong note.
 PIANO_ROLL_OFF_PITCH_CENTS = 50.0
+
+# Stage A10 confidence model (spec 6.15). Each is the trigger point for one
+# named warning/confidence step-down; deliberately below the *hard-failure*
+# threshold covering the same signal (MIN_VOICED_FRACTION,
+# ALIGN_MAX_NORMALIZED_DISTANCE) -- this is "worth a caveat", not "worth
+# failing the analysis outright".
+CONFIDENCE_LOW_VOICED_RATIO = 0.5
+CONFIDENCE_WEAK_ALIGNMENT_COST = 45.0
+
+# Stage A4 melody extraction (spec 6.5/6.6, `mixed` mode only, M3 spike):
+# harmonic-summation salience over the mixture's own STFT, in place of the
+# ONNX model spec 6.6 names -- see docs/adr/0025 for why. MELODY_HOP_SECONDS
+# matches PITCH_HOP_SECONDS so mixed and clean pitch curves stay comparable
+# downstream (pitch/vibrato aspect stages, piano-roll).
+MELODY_HOP_SECONDS = PITCH_HOP_SECONDS
+# ~93ms analysis window: long enough that the salience peak from summing
+# several harmonics is sharp relative to MELODY_CANDIDATE_CENTS_STEP, short
+# enough to still track a singer's vibrato (spec 6.3.7's 3.5-9 Hz range).
+MELODY_WINDOW_SECONDS = 0.093
+# Zero-padded past the analysis window: does not narrow the window's own
+# frequency resolution, but gives the linear interpolation between bins
+# (`dsp/melody.py`) a smoother salience curve to search over.
+MELODY_N_FFT = 4096
+MELODY_HARMONICS = 6
+# Each successive harmonic counts for less (a real voice's own harmonics
+# decay in amplitude too) -- keeps one loud accompaniment harmonic from
+# outweighing several correctly-aligned but quieter vocal ones.
+MELODY_HARMONIC_WEIGHT_DECAY = 0.85
+# Candidate F0 grid step. Far finer than raw FFT bin spacing at the low end
+# of the vocal range on purpose: harmonic summation's composite salience
+# peak is much sharper than any single bin's width, so a fine grid resolves
+# it well past what one harmonic's own frequency resolution would allow.
+MELODY_CANDIDATE_CENTS_STEP = 5.0
+# Rolling window a candidate's own recent salience is subtracted over
+# (spec 6.6 spike): long enough to span a fixed accompaniment note's typical
+# ring time, short enough that a moving melody line's own vibrato/portamento
+# keeps it from looking "static" over the same window (see dsp/melody.py's
+# module docstring for the measured effect).
+MELODY_BACKGROUND_WINDOW_SECONDS = 0.6
+# A frame's winning candidate is "voiced" only if its background-suppressed
+# salience explains at least this fraction of the frame's total spectral
+# energy -- silence or inharmonic noise never concentrates energy this
+# narrowly once the static accompaniment has already been subtracted out.
+# Background subtraction (above) already zeroes out most of a frame's raw
+# salience, so this ratio sits far lower than a threshold on raw salience
+# would (calibrated against tests/test_melody_extraction.py's fixtures).
+MELODY_VOICING_SALIENCE_RATIO = 0.006
+# Post-processing (spec 6.5's mandatory median filter + octave-jump fix,
+# applied here the same way A5's pitch curve is meant to be, spec 6.5).
+MELODY_MEDIAN_FILTER_FRAMES = 5
+MELODY_OCTAVE_JUMP_TOLERANCE_CENTS = 50.0
+# Bounds the (frame x candidate x harmonic) tensor's memory regardless of
+# recording length -- the same bounded-resource principle as the banded
+# DTW's corridor (NFR-16), applied to this stage's own working set.
+MELODY_CHUNK_FRAMES = 2000

@@ -35,6 +35,9 @@ class TimbreStage(PipelineStage[AnalysisContext]):
 
     name = STAGE_NAME
     timeout_seconds = TIMBRE_TIMEOUT_SECONDS
+    #: spec 6.5/6.6: `mixed`'s MFCC describes the whole mix, not the voice
+    #: -- never scored there at all, not merely unreliable.
+    modes = frozenset({"clean"})
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()

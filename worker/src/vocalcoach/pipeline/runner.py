@@ -39,6 +39,7 @@ from vocalcoach.errors import (
     PipelineError,
     TransientPipelineError,
 )
+from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import ContextT, ParallelGroup, PipelineStage
 from vocalcoach.pipeline.events import EventPublisher
@@ -223,6 +224,31 @@ def _remaining_entries(
     return remaining
 
 
+def _stages_for_mode(
+    entries: Sequence[PipelineStage[ContextT] | ParallelGroup[ContextT]],
+    mode: Mode | None,
+) -> list[PipelineStage[ContextT] | ParallelGroup[ContextT]]:
+    """Drops any stage whose `modes` (spec 12.3) does not include `mode` --
+    e.g. A5 (`PitchStage`, `clean`-only) or A4 (melody extraction,
+    `mixed`-only, spec 6.5 table). `mode=None` (the cold path, which has no
+    concept of clean/mixed) runs every stage unfiltered. A `ParallelGroup`
+    with some members dropped keeps its remaining members; one with none
+    left is dropped entirely, same shape as `_remaining_entries` above.
+    """
+    if mode is None:
+        return list(entries)
+
+    filtered: list[PipelineStage[ContextT] | ParallelGroup[ContextT]] = []
+    for entry in entries:
+        if isinstance(entry, ParallelGroup):
+            members = tuple(stage for stage in entry.stages if mode in stage.modes)
+            if members:
+                filtered.append(ParallelGroup(members))
+        elif mode in entry.modes:
+            filtered.append(entry)
+    return filtered
+
+
 # Generic[ContextT] (not PEP 695's `class Foo[T]`), same reason as
 # pipeline/base.py's PipelineStage/ParallelGroup: this instance's ContextT
 # must stay tied to it across __init__ and every method (run,
@@ -247,6 +273,7 @@ class PipelineRunner(Generic[ContextT]):  # noqa: UP046
         already_done: dict[str, StageResult],
         progress: ProgressReporter,
         should_stop: Callable[[], bool] = lambda: False,
+        mode: Mode | None = None,
     ) -> RunOutcome:
         """Runs every stage not already in `already_done` (spec 6.8: a
         retried job resumes from the first unfinished stage, not from
@@ -256,20 +283,26 @@ class PipelineRunner(Generic[ContextT]):  # noqa: UP046
         event, since it also owns the queue-level ack/retry decision (spec
         10.1). An optional stage (`required = False`) never raises -- see
         `_run_stage_with_retries`.
+
+        `mode` (spec 12.3) drops any stage whose own `modes` does not
+        include it before anything else runs -- the cold path (no
+        clean/mixed concept) always passes `None`, meaning unfiltered.
         """
         context = initial_context
         for result in already_done.values():
             context = context.with_result(result)
 
+        active_stages = _stages_for_mode(self._stages, mode)
+
         # Positions/total are numbered over the *flattened* stage order
         # (spec 8.5's WS `stage` event reports "N of total" per stage, group
         # membership is an execution detail the client never sees) -- a
         # ParallelGroup counts as however many stages it contains, not one.
-        flat_all = _flatten(self._stages)
+        flat_all = _flatten(active_stages)
         total = len(flat_all)
         stage_positions = {stage.name: i + 1 for i, stage in enumerate(flat_all)}
 
-        remaining_entries = _remaining_entries(self._stages, already_done)
+        remaining_entries = _remaining_entries(active_stages, already_done)
         remaining_flat = _flatten(remaining_entries)
 
         if remaining_flat:

@@ -14,6 +14,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from vocalcoach.models.audio import Lyrics, PitchCurve
+from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult
 
 
@@ -38,6 +39,16 @@ class AnalysisContext(BaseModel):
     reference_vocal_stem_path: Path
     reference_pitch: PitchCurve
     reference_lyrics: Lyrics | None = None
+
+    #: FR-27 default: a cappella is the recommended, default choice (spec
+    #: 2.3) -- defaulting here too means every existing test/call site that
+    #: never cared about mode keeps behaving exactly as before.
+    mode: Mode = "clean"
+    #: FR-31: off by default in `clean` (nowhere to transpose to when
+    #: singing straight over the reference in headphones), on by default in
+    #: `mixed` -- that mode-dependent default is chosen by whoever builds
+    #: this context (the queue handler), not by this model itself.
+    allow_transposition: bool = False
 
     completed: dict[str, StageResult] = Field(default_factory=dict)
 

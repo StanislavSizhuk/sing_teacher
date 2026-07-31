@@ -59,6 +59,13 @@ class NoVoiceDetected(LogicalPipelineError):
     error_code = "NO_VOICE_DETECTED"
 
 
+class MelodyExtractionFailed(LogicalPipelineError):
+    """`mixed` mode (spec 6.6, A4): melody extraction found too little of
+    the recording confidently voiced to score against the reference."""
+
+    error_code = "MELODY_EXTRACTION_FAILED"
+
+
 class AlignmentFailed(LogicalPipelineError):
     """DTW could not align the recording to the reference within the
     configured warping window (spec ADR-0004, risk table: tempo diverged too far)."""

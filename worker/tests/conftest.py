@@ -38,6 +38,26 @@ def sine_wave(
     return signal.astype(np.float32)
 
 
+def harmonic_tone(
+    f0_curve: np.ndarray,
+    sample_rate_hz: int,
+    *,
+    amplitude: float = 0.3,
+    n_harmonics: int = 5,
+    harmonic_decay: float = 0.6,
+) -> np.ndarray:
+    """A harmonic-rich tone tracking `f0_curve` (one Hz value per sample),
+    each successive harmonic quieter than the last -- closer to a sung voice
+    than `sine_wave`'s single partial, which matters for anything exercising
+    harmonic structure (spec 6.6 melody extraction, T4)."""
+    phase = 2 * np.pi * np.cumsum(f0_curve) / sample_rate_hz
+    signal = np.zeros(len(f0_curve), dtype=np.float64)
+    for harmonic in range(1, n_harmonics + 1):
+        signal += (harmonic_decay ** (harmonic - 1)) * np.sin(harmonic * phase)
+    signal *= amplitude / np.max(np.abs(signal))
+    return signal.astype(np.float32)
+
+
 @pytest.fixture
 def sample_rate_hz() -> int:
     return 22050
