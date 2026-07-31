@@ -13,7 +13,8 @@ const { song } = vi.hoisted(() => {
     sourceType: 'upload',
     title: 'Test song',
     durationSec: 180,
-    vocalStemProcessed: false,
+    prepStatus: 'pending',
+    lyricsAvailable: false,
     reused: false,
   }
   return { song }

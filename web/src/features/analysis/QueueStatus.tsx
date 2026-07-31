@@ -17,6 +17,7 @@ interface QueueStatusProps {
 }
 
 const STATUS_LABEL: Record<Analysis['status'], string> = {
+  waiting_for_reference: 'Waiting for song to be ready',
   queued: 'Queued',
   processing: 'Processing',
   done: 'Done',
@@ -59,6 +60,12 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
           <p className="text-ink-950 font-medium">{STATUS_LABEL[analysis.status]}</p>
           {analysis.status === 'queued' && analysis.queuePosition !== undefined && (
             <p className="text-ink-700">You are number {analysis.queuePosition} in the queue.</p>
+          )}
+          {analysis.status === 'waiting_for_reference' && (
+            <p className="text-ink-700">
+              This song is still being prepared. Your analysis will start automatically once it's
+              ready.
+            </p>
           )}
           {analysis.currentStage && (
             <p className="text-ink-700">

@@ -192,6 +192,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/songs/{id}/prepare': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Restart a song's cold path after it failed, without re-uploading (FR-17) */
+    post: operations['retrySongPrep']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/analyses': {
     parameters: {
       query?: never
@@ -399,8 +416,22 @@ export interface components {
       title: string
       artist?: string
       duration_sec: number
-      /** @description Reference separation+transcription status (FR-14). False until stage E3. */
-      vocal_stem_processed: boolean
+      /**
+       * @description Cold path lifecycle (spec 6.2, 10, FR-14). `ready` means the reference vocal stem and pitch curve are cached and any queued analysis of this song can run immediately.
+       * @enum {string}
+       */
+      prep_status: 'pending' | 'processing' | 'ready' | 'failed'
+      /** @description The P-stage currently running (P1-P4, spec 6.4). Absent when not processing. */
+      prep_stage?: string
+      /** @description Set once prep_status is 'failed' (FR-17); restart via POST /songs/{id}/prepare. */
+      prep_error_code?: string
+      /** @description False when P3 (Whisper transcription) failed or timed out for this song -- optional stage, never blocks the cold path (FR-18). */
+      lyrics_available: boolean
+      /**
+       * Format: date-time
+       * @description When prep_status last reached 'ready'. Absent until then.
+       */
+      prepared_at?: string
       /** @description True if this submission deduplicated onto an existing song (spec 6.6, FR-13). */
       reused: boolean
       /** Format: date-time */
@@ -421,8 +452,11 @@ export interface components {
       id: string
       /** Format: uuid */
       song_id: string
-      /** @enum {string} */
-      status: 'queued' | 'processing' | 'done' | 'failed' | 'canceled'
+      /**
+       * @description waiting_for_reference means the job was created before its song's cold path reached ready; it transitions to queued automatically once the song is ready (spec 6.2, 10.3, FR-16).
+       * @enum {string}
+       */
+      status: 'queued' | 'waiting_for_reference' | 'processing' | 'done' | 'failed' | 'canceled'
       /** @description 1-based position among currently queued jobs. Absent once no longer queued. */
       queue_position?: number
       /** @description Set by the worker once processing starts. */
@@ -802,7 +836,7 @@ export interface operations {
       }
     }
     responses: {
-      /** @description Song ready to reference. `reused: true` means an identical song (by content hash / YouTube video id) already existed and this upload was deduplicated (spec 6.6, FR-13). */
+      /** @description Song catalogued and its cold path (reference separation, transcription, pitch curve) queued immediately (spec 6.2, FR-15) -- poll GET /songs/{id} or watch prep_status for readiness. `reused: true` means an identical song (by content hash / YouTube video id) already existed, this upload was deduplicated (spec 6.6, FR-13), and no new cold path run was queued. */
       201: {
         headers: {
           [name: string]: unknown
@@ -831,6 +865,7 @@ export interface operations {
           'application/problem+json': components['schemas']['Problem']
         }
       }
+      429: components['responses']['TooManyRequests']
     }
   }
   getSong: {
@@ -865,6 +900,48 @@ export interface operations {
       }
     }
   }
+  retrySongPrep: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Re-queued onto songs:prep. Progress follows via GET /songs/{id} (FR-14). */
+      202: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['Song']
+        }
+      }
+      401: components['responses']['Unauthorized']
+      /** @description No song with this id. */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/problem+json': components['schemas']['Problem']
+        }
+      }
+      /** @description The song's prep_status is not 'failed' (`SONG_PREP_NOT_FAILED`). */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/problem+json': components['schemas']['Problem']
+        }
+      }
+      429: components['responses']['TooManyRequests']
+    }
+  }
   enqueueAnalysis: {
     parameters: {
       query?: never
@@ -878,7 +955,7 @@ export interface operations {
       }
     }
     responses: {
-      /** @description Queued. Position updates follow over the WebSocket channel. */
+      /** @description Queued, or waiting_for_reference if the song's cold path hasn't reached ready yet (spec 6.2, 10.3, FR-16) -- it transitions to queued automatically, no re-submission needed. Position updates follow over the WebSocket channel. */
       202: {
         headers: {
           [name: string]: unknown
@@ -889,6 +966,24 @@ export interface operations {
       }
       400: components['responses']['BadRequest']
       401: components['responses']['Unauthorized']
+      /** @description No song with this id. */
+      404: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/problem+json': components['schemas']['Problem']
+        }
+      }
+      /** @description The song's cold path already failed (`REFERENCE_PREP_FAILED`, FR-17). */
+      409: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/problem+json': components['schemas']['Problem']
+        }
+      }
       /** @description Recording exceeds MAX_UPLOAD_MB. */
       413: {
         headers: {
