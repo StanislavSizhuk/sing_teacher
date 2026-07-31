@@ -10,9 +10,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
-
-import redis
+from typing import Any, Protocol
 
 from vocalcoach.audio.paths import song_prep_work_dir, song_source_path, song_stem_path
 from vocalcoach.config import Settings
@@ -26,6 +24,19 @@ from vocalcoach.pipeline.runner import ProgressReporter, RunOutcome
 from vocalcoach.queue.streams import ANALYSES_STREAM_NAME
 
 logger = logging.getLogger(__name__)
+
+
+class AnalysesQueuePublisher(Protocol):
+    """The narrow slice of `redis.Redis` this handler needs: publishing a
+    woken analysis onto analyses:run (spec 10.3) -- declared here rather
+    than depending on the concrete client (spec 12.2's "interfaces
+    declared by the consumer" applied to Python). `fields: Any`: redis-py's
+    own `xadd` stub unions many key/value types dict's invariance can't
+    line up against a narrower one; this consumer only ever passes
+    `dict[str, str]`, enforced at the one call site, not by this signature.
+    """
+
+    def xadd(self, name: str, fields: Any) -> object: ...
 
 
 class Runner(Protocol):
@@ -118,7 +129,7 @@ class SongPrepJobHandler:
         songs: HandlerSongPrepRepository,
         analyses: HandlerWakeRepository,
         events: EventPublisher,
-        redis_client: redis.Redis,
+        redis_client: AnalysesQueuePublisher,
         settings: Settings,
     ) -> None:
         self._runner = runner
