@@ -28,24 +28,16 @@ def _context_with_pitch_result(
         user_id="u",
         song_id="s",
         recording_path=tmp_path / "r.wav",
-        reference_path=tmp_path / "ref.wav",
         work_dir=tmp_path / "work",
-        song_content_hash="h",
-        vocal_stem_processed=False,
-        pitch_engine="pyin",
-        whisper_model="tiny",
-        demucs_model="htdemucs",
-        model_weights_dir=tmp_path / "weights",
+        reference_vocal_stem_path=tmp_path / "ref.wav",
+        reference_pitch=reference_curve,
     )
     return context.with_result(
         StageResult(
             stage="pitch",
             status=StageStatus.DONE,
             duration_ms=1,
-            data={
-                "user_pitch_curve": user_curve.model_dump(mode="json"),
-                "reference_pitch_curve": reference_curve.model_dump(mode="json"),
-            },
+            data={"user_pitch_curve": user_curve.model_dump(mode="json")},
         )
     )
 

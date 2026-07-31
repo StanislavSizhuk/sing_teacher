@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.helpers import EMPTY_REFERENCE_PITCH
 from vocalcoach.config import ScoringWeights
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
@@ -25,14 +26,9 @@ def _context_with_aspect_results(tmp_path: Path) -> AnalysisContext:
         user_id="u",
         song_id="s",
         recording_path=tmp_path / "r.wav",
-        reference_path=tmp_path / "ref.wav",
         work_dir=tmp_path / "work",
-        song_content_hash="h",
-        vocal_stem_processed=False,
-        pitch_engine="pyin",
-        whisper_model="tiny",
-        demucs_model="htdemucs",
-        model_weights_dir=tmp_path / "weights",
+        reference_vocal_stem_path=tmp_path / "ref.wav",
+        reference_pitch=EMPTY_REFERENCE_PITCH,
     )
     results = [
         _stage("pitch", 80.0, mean_abs_cents=12.0),

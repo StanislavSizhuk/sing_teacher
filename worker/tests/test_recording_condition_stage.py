@@ -6,9 +6,10 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import sine_wave
-from tests.helpers import FakeVocalSeparator, make_context
+from tests.helpers import make_context, reference_pitch_curve_for
 from vocalcoach.constants import PITCH_HOP_SECONDS
 from vocalcoach.dsp.features import load_shared_features
+from vocalcoach.models.audio import PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.registry import PyinPitchDetector
@@ -16,20 +17,24 @@ from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.recording_condition import RecordingConditionStage
-from vocalcoach.pipeline.stages.separate_reference import SeparateReferenceStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
 
-def _context_through_features(tmp_path: Path, recording: Path, reference: Path) -> AnalysisContext:
-    context = make_context(tmp_path, recording_path=recording, reference_path=reference)
-    context = context.with_result(PreprocessStage(ffmpeg_path="ffmpeg").run(context))
-    context = context.with_result(
-        SeparateReferenceStage(
-            FakeVocalSeparator(),
-            stem_path_for_song=lambda song_id: tmp_path / f"stem-{song_id}.wav",
-        ).run(context)
+def _context_through_features(
+    tmp_path: Path,
+    recording: Path,
+    reference: Path,
+    *,
+    reference_pitch: PitchCurve | None = None,
+) -> AnalysisContext:
+    context = make_context(
+        tmp_path,
+        recording_path=recording,
+        reference_path=reference,
+        reference_pitch=reference_pitch,
     )
+    context = context.with_result(PreprocessStage(ffmpeg_path="ffmpeg").run(context))
     return context.with_result(FeaturesStage().run(context))
 
 
@@ -97,7 +102,10 @@ def test_real_pitch_stage_on_clean_tone_does_not_flag(tmp_path: Path, wav_writer
     hand-built curve: a clean sustained tone must not trip the heuristic."""
     recording = wav_writer("recording.wav", sine_wave(3.0, 44100, 300.0), 44100)
     reference = wav_writer("reference.wav", sine_wave(3.0, 44100, 300.0), 44100)
-    context = _context_through_features(tmp_path, recording, reference)
+    reference_pitch = reference_pitch_curve_for(tmp_path, reference)
+    context = _context_through_features(
+        tmp_path, recording, reference, reference_pitch=reference_pitch
+    )
     context = context.with_result(
         StageResult(
             stage="align",

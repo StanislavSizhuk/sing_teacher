@@ -7,13 +7,12 @@ import numpy as np
 import pytest
 
 from tests.conftest import sine_wave
-from tests.helpers import FakeVocalSeparator, make_context
+from tests.helpers import make_context
 from vocalcoach.errors import AlignmentFailed
 from vocalcoach.models.results import StageStatus
 from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
-from vocalcoach.pipeline.stages.separate_reference import SeparateReferenceStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
@@ -21,12 +20,6 @@ pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg n
 def _through_separation(tmp_path: Path, recording, reference):
     context = make_context(tmp_path, recording_path=recording, reference_path=reference)
     context = context.with_result(PreprocessStage(ffmpeg_path="ffmpeg").run(context))
-    context = context.with_result(
-        SeparateReferenceStage(
-            FakeVocalSeparator(),
-            stem_path_for_song=lambda song_id: tmp_path / f"stem-{song_id}.wav",
-        ).run(context)
-    )
     context = context.with_result(FeaturesStage().run(context))
     return context
 

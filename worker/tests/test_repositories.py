@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any, cast
 
 import psycopg
@@ -64,27 +65,60 @@ def seeded_ids(conn: psycopg.Connection) -> tuple[str, str, str]:
     return str(user_id), str(song_id), str(analysis_id)
 
 
-def test_song_repository_round_trip(
+def test_song_repository_prep_lifecycle_round_trip(
     conn: psycopg.Connection, seeded_ids: tuple[str, str, str]
 ) -> None:
     _user_id, song_id, _analysis_id = seeded_ids
     repo = PostgresSongRepository(conn)
 
     song = repo.get_by_id(song_id)
-    assert song.vocal_stem_processed is False
+    assert song.prep_status == "pending"
     assert song.lyrics is None
+    assert song.vocal_stem_path is None
+    assert song.reference_pitch is None
+    assert song.lyrics_available is False
+
+    repo.mark_prep_processing(song_id, "prep_reference", 1, 4)
+    song = repo.get_by_id(song_id)
+    assert song.prep_status == "processing"
+
+    stage_result = StageResult(
+        stage="prep_reference", status=StageStatus.DONE, duration_ms=10, data={"a": 1}
+    )
+    repo.save_prep_stage_progress(song_id, stage_result, "separate_reference", 2, 4)
+    song = repo.get_by_id(song_id)
+    assert set(song.prep_stages.keys()) == {"prep_reference"}
+    assert song.prep_stages["prep_reference"].duration_ms == 10
 
     lyrics = Lyrics(language="en", words=[LyricsWord(word="la", start=0.0, end=0.2)])
-    repo.save_lyrics(song_id, lyrics)
-    song = repo.get_by_id(song_id)
-    assert song.lyrics == lyrics
-    assert song.vocal_stem_processed is False  # save_lyrics alone never flips the cache flag
-
     curve = PitchCurve(hop_seconds=0.01, hz=[440.0, None, 441.5])
-    repo.mark_vocal_stem_processed(song_id, curve)
+    stem_path = Path("/data/song-stems") / f"song-stem-{song_id}.wav"
+    repo.mark_prep_ready(
+        song_id,
+        vocal_stem_path=stem_path,
+        reference_pitch=curve,
+        lyrics=lyrics,
+        lyrics_available=True,
+    )
     song = repo.get_by_id(song_id)
-    assert song.vocal_stem_processed is True
+    assert song.prep_status == "ready"
+    assert song.vocal_stem_path == stem_path
     assert song.reference_pitch == curve
+    assert song.lyrics == lyrics
+    assert song.lyrics_available is True
+
+
+def test_song_repository_mark_prep_failed(
+    conn: psycopg.Connection, seeded_ids: tuple[str, str, str]
+) -> None:
+    _user_id, song_id, _analysis_id = seeded_ids
+    repo = PostgresSongRepository(conn)
+
+    repo.mark_prep_processing(song_id, "separate_reference", 2, 4)
+    repo.mark_prep_failed(song_id, "REFERENCE_TOO_QUIET")
+
+    song = repo.get_by_id(song_id)
+    assert song.prep_status == "failed"
 
 
 def test_analysis_repository_progress_and_terminal_states(
