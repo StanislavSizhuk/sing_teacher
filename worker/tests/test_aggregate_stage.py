@@ -283,6 +283,60 @@ def test_report_handles_reference_with_no_breath_points() -> None:
     assert "no clear breath points to compare against" in report
 
 
+def test_t7_mixed_mode_reports_null_aspects_and_uses_mixed_v1_profile(tmp_path: Path) -> None:
+    """T7 (spec 15.2): in `mixed`, breath and timbre are `null` with a
+    reason (FR-41) -- never `0` -- and `overall_score` is computed under
+    `mixed_v1`, over exactly the four aspects that ran."""
+    context = AnalysisContext(
+        analysis_id="a",
+        user_id="u",
+        song_id="s",
+        recording_path=tmp_path / "r.wav",
+        work_dir=tmp_path / "work",
+        reference_vocal_stem_path=tmp_path / "ref.wav",
+        reference_pitch=EMPTY_REFERENCE_PITCH,
+        mode="mixed",
+    )
+    for result in (
+        _stage("pitch", 80.0, mean_abs_cents=12.0, voiced_fraction=0.9),
+        _stage(
+            "rhythm",
+            90.0,
+            mean_abs_offset_ms=40.0,
+            onsets_within_tolerance=18,
+            reference_onset_count=20,
+            user_onset_count=19,
+        ),
+        _stage("dynamics", 60.0, correlation=0.6),
+        _stage(
+            "vibrato",
+            100.0,
+            user={"detected": True, "rate_hz": 5.5, "depth_cents": 40.0},
+            reference={"detected": True, "rate_hz": 5.6, "depth_cents": 42.0},
+        ),
+        _recording_condition_result(effective_mode="mixed"),
+        _key_normalization_result(),
+        _align_result(),
+    ):
+        context = context.with_result(result)
+
+    result = AggregateStage(_WEIGHTS, scoring_version="2.0").run(context)
+
+    assert result.data["weights_profile"] == "mixed_v1"
+    assert result.data["unavailable_aspects"] == {
+        "breath": "NOT_MEASURABLE_WITH_ACCOMPANIMENT",
+        "timbre": "NOT_MEASURABLE_WITH_ACCOMPANIMENT",
+    }
+    assert "breath" not in result.data["aspect_scores"]
+    assert "timbre" not in result.data["aspect_scores"]
+    # 80*.50 + 90*.30 + 60*.10 + 100*.10 = 83.0
+    assert result.data["overall_score"] == 83.0
+    assert result.data["confidence"] == "medium"  # mode=mixed caps at medium
+    report = result.data["feedback_text"]
+    assert "Breath and phrasing: not scored this time" in report
+    assert "Timbre: not scored this time" in report
+
+
 def test_report_lists_unavailable_aspects_with_reason() -> None:
     aspect_results = {
         "pitch": _stage("pitch", 100.0, mean_abs_cents=0.0),
