@@ -79,6 +79,10 @@ class BreathStage(PipelineStage[AnalysisContext]):
 
     name = STAGE_NAME
     timeout_seconds = BREATH_TIMEOUT_SECONDS
+    #: spec 6.5/6.6: `mixed` has accompaniment sounding through pauses
+    #: between phrases, so the pause signal itself disappears -- never
+    #: scored there at all, not merely unreliable.
+    modes = frozenset({"clean"})
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()

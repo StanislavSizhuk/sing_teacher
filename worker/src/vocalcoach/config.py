@@ -14,62 +14,62 @@ from typing import Literal
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from vocalcoach.models.mode import Mode
+from vocalcoach.scoring.weights import MODE_ASPECTS
+
 PitchEngine = Literal["crepe", "pyin"]
 
-# Order matches spec 6.4's aggregation table; every stage/weights table in
-# this codebase iterates aspects in this order so logs and reports agree.
-ASPECTS: tuple[str, ...] = ("pitch", "rhythm", "breath", "dynamics", "vibrato", "timbre")
-
-# A misconfigured SCORING_WEIGHTS that doesn't sum to 1 would silently
+# A misconfigured SCORING_WEIGHTS_* that doesn't sum to 1 would silently
 # under- or over-weight the overall score; this is the tolerance for
 # floating-point roundoff in the .env value, not a scoring parameter.
 _WEIGHTS_SUM_TOLERANCE = 1e-6
 
 
 class ScoringWeights(BaseModel):
-    """Per-aspect weights for the overall score (spec 6.4), parsed from
-    `SCORING_WEIGHTS=pitch:0.35,rhythm:0.20,...` -- one source of truth
-    shared with `analyses.scoring_version` so old results stay reproducible."""
+    """One mode's per-aspect weights (spec 6.14), parsed from
+    `SCORING_WEIGHTS_CLEAN=pitch:0.35,rhythm:0.20,...` or
+    `SCORING_WEIGHTS_MIXED=pitch:0.50,...` -- keyed by exactly that mode's
+    own `MODE_ASPECTS`, never all six regardless of mode, since `mixed`
+    never has a weight to configure for breath/timbre in the first place
+    (FR-41: unavailable is `null`, not a zero weight). One source of truth
+    shared with `analyses.weights_profile` so old results stay reproducible.
+    """
 
-    pitch: float
-    rhythm: float
-    breath: float
-    dynamics: float
-    vibrato: float
-    timbre: float
+    weights: dict[str, float]
 
     @classmethod
-    def parse(cls, raw: str) -> ScoringWeights:
+    def parse(cls, raw: str, mode: Mode) -> ScoringWeights:
+        expected = set(MODE_ASPECTS[mode])
+        env_name = f"SCORING_WEIGHTS_{mode.upper()}"
         pairs: dict[str, float] = {}
         for item in raw.split(","):
             item = item.strip()
             if not item:
                 continue
             if ":" not in item:
-                raise ValueError(f"SCORING_WEIGHTS entry {item!r} is not 'aspect:weight'")
+                raise ValueError(f"{env_name} entry {item!r} is not 'aspect:weight'")
             name, _, value = item.partition(":")
             name = name.strip()
-            if name not in ASPECTS:
-                raise ValueError(f"SCORING_WEIGHTS has unknown aspect {name!r}")
+            if name not in expected:
+                raise ValueError(f"{env_name} has an aspect {mode} does not score: {name!r}")
             try:
                 pairs[name] = float(value.strip())
             except ValueError as exc:
                 raise ValueError(
-                    f"SCORING_WEIGHTS weight for {name!r} is not a number: {value!r}"
+                    f"{env_name} weight for {name!r} is not a number: {value!r}"
                 ) from exc
 
-        missing = set(ASPECTS) - pairs.keys()
+        missing = expected - pairs.keys()
         if missing:
-            raise ValueError(f"SCORING_WEIGHTS is missing aspects: {sorted(missing)}")
+            raise ValueError(f"{env_name} is missing aspects: {sorted(missing)}")
 
-        weights = cls(**pairs)
         total = sum(pairs.values())
         if abs(total - 1.0) > _WEIGHTS_SUM_TOLERANCE:
-            raise ValueError(f"SCORING_WEIGHTS must sum to 1.0, got {total}")
-        return weights
+            raise ValueError(f"{env_name} must sum to 1.0, got {total}")
+        return cls(weights=pairs)
 
     def as_dict(self) -> dict[str, float]:
-        return {aspect: getattr(self, aspect) for aspect in ASPECTS}
+        return dict(self.weights)
 
 
 class Settings(BaseSettings):
@@ -113,12 +113,22 @@ class Settings(BaseSettings):
     whisper_compute_type: str = Field("int8", alias="WHISPER_COMPUTE_TYPE")
     demucs_model: str = Field("htdemucs", alias="DEMUCS_MODEL")
     scoring_version: str = Field("1.0", alias="SCORING_VERSION")
-    # Raw string, not a nested model: pydantic-settings' env source tries to
+    # Raw strings, not nested models: pydantic-settings' env source tries to
     # JSON-decode any complex field type before validators run, which the
     # "aspect:weight,..." format is not. _parse_scoring_weights below is
-    # where SCORING_WEIGHTS actually gets validated (spec 12.1 fail-fast).
-    scoring_weights_raw: str = Field(..., alias="SCORING_WEIGHTS")
-    _scoring_weights: ScoringWeights = PrivateAttr()
+    # where SCORING_WEIGHTS_* actually gets validated (spec 12.1 fail-fast).
+    # Two profiles (spec 6.14, 20.5), not one: mixed scores fewer aspects at
+    # different weights, not a subset of clean's own.
+    scoring_weights_clean_raw: str = Field(..., alias="SCORING_WEIGHTS_CLEAN")
+    scoring_weights_mixed_raw: str = Field(..., alias="SCORING_WEIGHTS_MIXED")
+    _scoring_weights: dict[Mode, ScoringWeights] = PrivateAttr()
+
+    # spec 6.16, 6.8: named config, not constants, because the spec itself
+    # lists these under .env.example (20.5) as operator-tunable thresholds.
+    accompaniment_detect_threshold: float = Field(0.15, alias="ACCOMPANIMENT_DETECT_THRESHOLD")
+    key_shift_min_semitones: float = Field(0.6, alias="KEY_SHIFT_MIN_SEMITONES")
+    key_shift_max_iqr: float = Field(0.5, alias="KEY_SHIFT_MAX_IQR")
+    max_key_shift_semitones: float = Field(7.0, alias="MAX_KEY_SHIFT_SEMITONES")
 
     postgres_host: str = Field("postgres", alias="POSTGRES_HOST")
     postgres_port: int = Field(5432, alias="POSTGRES_PORT")
@@ -133,12 +143,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _parse_scoring_weights(self) -> Settings:
-        self._scoring_weights = ScoringWeights.parse(self.scoring_weights_raw)
+        self._scoring_weights = {
+            "clean": ScoringWeights.parse(self.scoring_weights_clean_raw, "clean"),
+            "mixed": ScoringWeights.parse(self.scoring_weights_mixed_raw, "mixed"),
+        }
         return self
 
-    @property
-    def scoring_weights(self) -> ScoringWeights:
-        return self._scoring_weights
+    def scoring_weights_for(self, mode: Mode) -> ScoringWeights:
+        return self._scoring_weights[mode]
 
     def postgres_dsn(self) -> str:
         return (

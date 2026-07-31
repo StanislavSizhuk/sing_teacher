@@ -28,6 +28,8 @@ from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.breath import BreathStage
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
+from vocalcoach.pipeline.stages.key_normalization import KeyNormalizationStage
+from vocalcoach.pipeline.stages.melody import MelodyPitchStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.prep_reference import PrepReferenceStage
 from vocalcoach.pipeline.stages.prep_reference_pitch import PrepReferencePitchStage
@@ -67,10 +69,19 @@ def build_stages(
     settings: Settings, registry: ModelRegistry
 ) -> list[PipelineStage[AnalysisContext] | ParallelGroup[AnalysisContext]]:
     """Warm path A1-A10 in spec 6.5 order (A6 is the spec 6.9 shared
-    feature cache), plus the spec 6.9 recording-condition check and
-    aggregation. Only ever run once a song's cold path has reached `ready`
-    (spec 6.2, M2) -- Demucs/Whisper/reference-pitch detection are not
-    here, they ran once in the cold path (`build_prep_stages`).
+    feature cache), plus the spec 6.16 recording-condition/reconciliation
+    check and aggregation. Only ever run once a song's cold path has
+    reached `ready` (spec 6.2, M2) -- Demucs/Whisper/reference-pitch
+    detection are not here, they ran once in the cold path
+    (`build_prep_stages`).
+
+    This one static list covers *both* modes: `PitchStage` (A5,
+    `clean`-only) and `MelodyPitchStage` (A4, `mixed`-only, spec 6.6/M3)
+    both write to stage name `"pitch"`, but their disjoint `modes` mean
+    `PipelineRunner.run(mode=...)` (spec 12.3) only ever lets one of them
+    actually run per analysis -- see ADR-0027. Likewise `TimbreStage`/
+    `BreathStage` declare `modes={"clean"}` and are simply absent from a
+    `mixed` run's flattened stage list, not present-but-null.
 
     The five aspect stages depend only on `align`/`pitch`'s already-finished
     output, never on each other, so they run as one `ParallelGroup` (spec
@@ -101,9 +112,21 @@ def build_stages(
         FeaturesStage(),
         AlignStage(),
         PitchStage(registry.pitch_detector()),
+        MelodyPitchStage(),
+        KeyNormalizationStage(
+            min_semitones=settings.key_shift_min_semitones,
+            max_iqr_semitones=settings.key_shift_max_iqr,
+            max_semitones=settings.max_key_shift_semitones,
+        ),
         *aspects,
-        RecordingConditionStage(),
-        AggregateStage(settings.scoring_weights, settings.scoring_version),
+        RecordingConditionStage(settings.accompaniment_detect_threshold),
+        AggregateStage(
+            {
+                "clean": settings.scoring_weights_for("clean"),
+                "mixed": settings.scoring_weights_for("mixed"),
+            },
+            settings.scoring_version,
+        ),
     ]
 
 

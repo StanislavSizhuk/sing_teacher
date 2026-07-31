@@ -14,6 +14,7 @@ TARGET_LOUDNESS_LUFS = -23.0
 PREPROCESS_TIMEOUT_SECONDS = 45  # A1: recording only, the reference half moved to P1 (M2)
 ALIGN_TIMEOUT_SECONDS = 60
 PITCH_TIMEOUT_SECONDS = 180
+MELODY_TIMEOUT_SECONDS = 90  # A4 (`mixed` only, spec 6.5 table)
 RHYTHM_TIMEOUT_SECONDS = 30
 VIBRATO_TIMEOUT_SECONDS = 30
 DYNAMICS_TIMEOUT_SECONDS = 30
@@ -130,23 +131,22 @@ PENDING_CLAIM_MIN_IDLE = (
 SONGS_PREP_PENDING_CLAIM_MIN_IDLE = 20 * 60
 MAX_CLAIM_ATTEMPTS = 3  # after this many reclaims the job is given up on as failed
 
-# Stage 11 recording-condition check (spec 2.3, 6.9): the user's own
+# Stage A3 recording-condition check (spec 2.3, 6.16): the user's own
 # recording is never run through Demucs (ADR-0003), so this is a cheap
-# substitute for real source separation -- a frame loud enough to matter,
-# relative to this recording's own peak RMS, yet where the pitch stage (5)
-# found no single clear pitch, is a soft signal of non-vocal energy
-# (instruments, noise) rather than a singing voice. -20 dB is well above
-# BREATH_SILENCE_RELATIVE_DB, deliberately: this only wants to catch frames
-# energetic enough to plausibly be an instrument, not normal room tone
-# under a quiet vocal.
+# substitute for real source separation -- see pipeline/stages/
+# recording_condition.py for the accompaniment_level formula itself.
 RECORDING_CONDITION_TIMEOUT_SECONDS = 30
-RECORDING_CONDITION_LOUD_RELATIVE_DB = -20.0
-# A recording where at least this fraction of frames are loud-yet-unvoiced
-# is flagged in the report (spec 6.9) -- a starting point, not calibrated
-# against real recordings (same caveat as every other threshold here, spec
-# 19 risk table); every voice has *some* loud-but-momentarily-unvoiced
-# frames (consonants, breath noise), so this sits well above zero.
-RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3
+# A median over a handful of unvoiced frames is noise, not a signal -- a
+# single pitch-detector edge artifact (observed: pYIN's very first frame,
+# on an otherwise perfectly voiced clean tone) would otherwise set the
+# entire "unvoiced" median off one sample. Below this many unvoiced frames,
+# accompaniment_level is reported as 0 rather than computed from too little
+# data to be meaningful.
+RECORDING_CONDITION_MIN_UNVOICED_FRAMES = 10
+
+# Stage A8 key-shift normalization (spec 6.8). Budget is 5s (spec 6.17);
+# timeout carries the usual margin over budget the other stages use.
+KEY_NORMALIZATION_TIMEOUT_SECONDS = 10
 
 # Stage 12 aggregation (spec 6.2/6.3.11, FR-32).
 AGGREGATE_TIMEOUT_SECONDS = 10
@@ -164,6 +164,14 @@ FEEDBACK_FAIR_THRESHOLD = 50.0
 # an off-pitch note. Half a semitone is comfortably past normal intonation
 # wobble but well inside a genuinely wrong note.
 PIANO_ROLL_OFF_PITCH_CENTS = 50.0
+
+# Stage A10 confidence model (spec 6.15). Each is the trigger point for one
+# named warning/confidence step-down; deliberately below the *hard-failure*
+# threshold covering the same signal (MIN_VOICED_FRACTION,
+# ALIGN_MAX_NORMALIZED_DISTANCE) -- this is "worth a caveat", not "worth
+# failing the analysis outright".
+CONFIDENCE_LOW_VOICED_RATIO = 0.5
+CONFIDENCE_WEAK_ALIGNMENT_COST = 45.0
 
 # Stage A4 melody extraction (spec 6.5/6.6, `mixed` mode only, M3 spike):
 # harmonic-summation salience over the mixture's own STFT, in place of the

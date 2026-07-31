@@ -14,7 +14,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from vocalcoach.audio.paths import analysis_work_dir, recording_source_path
-from vocalcoach.config import ASPECTS, Settings
+from vocalcoach.config import Settings
 from vocalcoach.errors import InternalPipelineError, PipelineError
 from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
@@ -23,6 +23,7 @@ from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
 from vocalcoach.pipeline.events import EventPublisher
 from vocalcoach.pipeline.runner import ProgressReporter, RunOutcome
+from vocalcoach.scoring.weights import ASPECTS
 
 logger = logging.getLogger(__name__)
 

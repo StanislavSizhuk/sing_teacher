@@ -20,7 +20,8 @@ from vocalcoach.pipeline.base import ParallelGroup
 from vocalcoach.pipeline.registry import ModelRegistry
 from vocalcoach.worker import build_prep_stages, build_stages
 
-VALID_WEIGHTS = "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10"
+VALID_CLEAN_WEIGHTS = "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10"
+VALID_MIXED_WEIGHTS = "pitch:0.50,rhythm:0.30,dynamics:0.10,vibrato:0.10"
 
 
 @pytest.fixture
@@ -29,7 +30,8 @@ def settings(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("POSTGRES_USER", "vocalcoach")
     monkeypatch.setenv("POSTGRES_PASSWORD", "pw")
     monkeypatch.setenv("REDIS_PASSWORD", "pw")
-    monkeypatch.setenv("SCORING_WEIGHTS", VALID_WEIGHTS)
+    monkeypatch.setenv("SCORING_WEIGHTS_CLEAN", VALID_CLEAN_WEIGHTS)
+    monkeypatch.setenv("SCORING_WEIGHTS_MIXED", VALID_MIXED_WEIGHTS)
     return load_settings()
 
 
@@ -41,6 +43,20 @@ def _flatten_stage_names(entries) -> list[str]:
         else:
             names.append(entry.name)
     return names
+
+
+def _flatten_stages(entries):
+    stages = []
+    for entry in entries:
+        if isinstance(entry, ParallelGroup):
+            stages.extend(entry.stages)
+        else:
+            stages.append(entry)
+    return stages
+
+
+def _names_for_mode(entries, mode: str) -> list[str]:
+    return [stage.name for stage in _flatten_stages(entries) if mode in stage.modes]
 
 
 def test_every_warm_stage_is_picklable_and_covers_the_full_pipeline(
@@ -56,15 +72,19 @@ def test_every_warm_stage_is_picklable_and_covers_the_full_pipeline(
     stages = build_stages(settings, registry)
 
     # The 5 independent aspect stages count as one ParallelGroup entry by
-    # default (spec 6.10), so top-level entries (7) are fewer than the 11
-    # actual stages they flatten to. separate_reference/transcribe are not
-    # here -- they moved to the cold path (build_prep_stages, M2).
-    assert len(stages) == 7
+    # default (spec 6.10), so top-level entries are fewer than the stages
+    # they flatten to. separate_reference/transcribe are not here -- they
+    # moved to the cold path (build_prep_stages, M2). `PitchStage` and
+    # `MelodyPitchStage` both appear (they share the stage name "pitch",
+    # ADR-0027) -- `PipelineRunner.run(mode=...)` filters to exactly one
+    # per analysis.
     assert _flatten_stage_names(stages) == [
         "preprocess",
         "features",
         "align",
-        "pitch",
+        "pitch",  # PitchStage (clean, A5)
+        "pitch",  # MelodyPitchStage (mixed, A4)
+        "key_normalization",
         "rhythm",
         "vibrato",
         "dynamics",
@@ -75,6 +95,38 @@ def test_every_warm_stage_is_picklable_and_covers_the_full_pipeline(
     ]
     for entry in stages:
         pickle.dumps(entry)
+
+
+def test_clean_mode_excludes_melody_and_scores_all_six_aspects(settings, tmp_path: Path) -> None:
+    registry = ModelRegistry(
+        demucs_model=settings.demucs_model,
+        whisper_model=settings.whisper_model,
+        pitch_engine=settings.pitch_engine,
+        weights_dir=tmp_path,
+    )
+
+    names = _names_for_mode(build_stages(settings, registry), "clean")
+
+    assert names.count("pitch") == 1  # PitchStage only, not MelodyPitchStage too
+    for aspect in ("rhythm", "vibrato", "dynamics", "timbre", "breath"):
+        assert aspect in names
+
+
+def test_mixed_mode_excludes_timbre_and_breath(settings, tmp_path: Path) -> None:
+    registry = ModelRegistry(
+        demucs_model=settings.demucs_model,
+        whisper_model=settings.whisper_model,
+        pitch_engine=settings.pitch_engine,
+        weights_dir=tmp_path,
+    )
+
+    names = _names_for_mode(build_stages(settings, registry), "mixed")
+
+    assert names.count("pitch") == 1  # MelodyPitchStage only, not PitchStage too
+    assert "timbre" not in names
+    assert "breath" not in names
+    for aspect in ("rhythm", "vibrato", "dynamics"):
+        assert aspect in names
 
 
 def test_pipeline_parallel_aspects_false_keeps_stages_flat(
@@ -92,7 +144,7 @@ def test_pipeline_parallel_aspects_false_keeps_stages_flat(
     stages = build_stages(settings, registry)
 
     assert not any(isinstance(entry, ParallelGroup) for entry in stages)
-    assert len(stages) == 11
+    assert len(stages) == 13
 
 
 def test_every_prep_stage_is_picklable_and_covers_the_full_cold_path(

@@ -6,10 +6,9 @@ scoring logic, just prose over numbers that already exist.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from vocalcoach.config import ASPECTS
 from vocalcoach.constants import (
     FEEDBACK_EXCELLENT_THRESHOLD,
     FEEDBACK_FAIR_THRESHOLD,
@@ -36,16 +35,25 @@ _TIMBRE_DISCLAIMER = (
     "reference, not a diagnosis of your vocal technique."
 )
 
-# Spec 6.9: shown when the recording-condition stage flags likely non-vocal
-# energy (instruments, background noise) -- a warning, never a blocker or a
-# score penalty (spec 2.3's a cappella assumption is a product requirement,
-# not something the pipeline enforces by failing the analysis).
-_BACKGROUND_MUSIC_WARNING = (
+# Spec 6.16: shown when A3 flags likely accompaniment in a `clean`-declared
+# recording -- a warning, never a blocker or a score penalty (`clean`'s a
+# cappella assumption, spec 2.3, is a product recommendation, not something
+# the pipeline enforces by failing the analysis).
+_ACCOMPANIMENT_IN_CLEAN_WARNING = (
     "Heads up: parts of your recording have energy that doesn't look like a "
-    "clean solo voice. This app assumes you sing a cappella, without "
-    "background music or instruments picked up by the mic -- if that "
-    "wasn't the case here, treat the scores above as less precise than usual."
+    "clean solo voice. This app assumes `clean` recordings are a cappella, "
+    "without background music or instruments picked up by the mic -- if "
+    "that wasn't the case here, treat the scores above as less precise than "
+    "usual, or retry this analysis in `mixed` mode."
 )
+
+# FR-41/6.19: unavailable aspects get their own block with the reason, never
+# a silently missing section.
+_UNAVAILABLE_REASON_TEXT: dict[str, str] = {
+    "NOT_MEASURABLE_WITH_ACCOMPANIMENT": (
+        "not measurable with accompaniment present in this recording"
+    ),
+}
 
 _TIER_EXCELLENT = "excellent"
 _TIER_GOOD = "good"
@@ -212,23 +220,32 @@ def _overall_summary(aspect_scores: dict[str, float], overall_score: float) -> s
 def build_feedback_report(
     aspect_results: dict[str, StageResult],
     overall_score: float,
-    background_music_detected: bool = False,
+    *,
+    aspects: Sequence[str],
+    unavailable_aspects: dict[str, str],
+    background_music_warning: bool = False,
 ) -> str:
-    """Builds the FR-32 text report: one summary line, an optional spec 6.9
-    warning, then one paragraph per aspect in spec 6.4's order, each
-    grounded in that aspect's own stage data rather than generic advice.
-    `aspect_results` must have one entry per `config.ASPECTS`, each
+    """Builds the FR-32 text report: one summary line, an optional spec 6.16
+    warning, then one paragraph per *available* aspect (spec 6.14's
+    per-mode set, in spec 6.4's canonical order), each grounded in that
+    aspect's own stage data rather than generic advice, and finally one
+    block per unavailable aspect explaining why (spec 6.19 -- never just
+    silently missing). `aspect_results` has one entry per `aspects`, each
     carrying a `"score"` key.
     """
     aspect_scores = {
         aspect: float(result.data["score"]) for aspect, result in aspect_results.items()
     }
     sections = [_overall_summary(aspect_scores, overall_score)]
-    if background_music_detected:
-        sections.append(_BACKGROUND_MUSIC_WARNING)
-    for aspect in ASPECTS:
+    if background_music_warning:
+        sections.append(_ACCOMPANIMENT_IN_CLEAN_WARNING)
+    for aspect in aspects:
         result = aspect_results[aspect]
         label = _ASPECT_LABELS[aspect]
         body: str = _ASPECT_FEEDBACK[aspect](result.data)
         sections.append(f"{label} ({aspect_scores[aspect]:.0f}/100): {body}")
+    for aspect, reason in unavailable_aspects.items():
+        label = _ASPECT_LABELS[aspect]
+        reason_text = _UNAVAILABLE_REASON_TEXT.get(reason, reason)
+        sections.append(f"{label}: not scored this time -- {reason_text}.")
     return "\n\n".join(sections)

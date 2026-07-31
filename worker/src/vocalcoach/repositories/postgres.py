@@ -13,10 +13,10 @@ from typing import Any
 import psycopg
 from psycopg.types.json import Jsonb
 
-from vocalcoach.config import ASPECTS
 from vocalcoach.models.audio import Lyrics, PianoRollData, PitchCurve
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
+from vocalcoach.scoring.weights import ASPECTS
 
 _SONG_COLUMNS = """id, content_hash, duration_sec, prep_status, vocal_stem_path,
                    reference_pitch, reference_pitch_meta, lyrics_json, lyrics_available,

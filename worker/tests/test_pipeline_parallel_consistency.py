@@ -24,6 +24,7 @@ from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.breath import BreathStage
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
+from vocalcoach.pipeline.stages.key_normalization import KeyNormalizationStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.recording_condition import RecordingConditionStage
@@ -33,10 +34,18 @@ from vocalcoach.pipeline.stages.vibrato import VibratoStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
-_WEIGHTS = ScoringWeights.parse(
-    "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10"
-)
+_WEIGHTS = {
+    "clean": ScoringWeights.parse(
+        "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10", "clean"
+    ),
+    "mixed": ScoringWeights.parse("pitch:0.50,rhythm:0.30,dynamics:0.10,vibrato:0.10", "mixed"),
+}
 _SCORED_ASPECTS = ("pitch", "rhythm", "vibrato", "dynamics", "timbre", "breath")
+# `clean`'s defaults (spec 20.5): this test never enables transposition, so
+# a shift is never eligible to apply regardless of these exact values.
+_KEY_SHIFT_MIN_SEMITONES = 0.6
+_KEY_SHIFT_MAX_IQR = 0.5
+_MAX_KEY_SHIFT_SEMITONES = 7.0
 
 
 class _NoOpProgress:
@@ -77,8 +86,11 @@ def _build_stages(*, parallel: bool):
         FeaturesStage(),
         AlignStage(),
         PitchStage(PyinPitchDetector()),
+        KeyNormalizationStage(
+            _KEY_SHIFT_MIN_SEMITONES, _KEY_SHIFT_MAX_IQR, _MAX_KEY_SHIFT_SEMITONES
+        ),
         *aspects,
-        RecordingConditionStage(),
+        RecordingConditionStage(accompaniment_detect_threshold=0.15),
         AggregateStage(_WEIGHTS, "test"),
     ]
 

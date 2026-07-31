@@ -123,9 +123,10 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("POSTGRES_PASSWORD", "pw")
     monkeypatch.setenv("REDIS_PASSWORD", "pw")
     monkeypatch.setenv(
-        "SCORING_WEIGHTS",
+        "SCORING_WEIGHTS_CLEAN",
         "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10",
     )
+    monkeypatch.setenv("SCORING_WEIGHTS_MIXED", "pitch:0.50,rhythm:0.30,dynamics:0.10,vibrato:0.10")
     settings = load_settings()
     settings.audio_storage_dir = tmp_path / "audio-tmp"
     settings.song_stems_dir = tmp_path / "song-stems"
