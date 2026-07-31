@@ -252,7 +252,7 @@ export interface paths {
     }
     get?: never
     put?: never
-    /** Cancel an analysis while it is still queued (FR-25) */
+    /** Cancel an analysis while it is queued or waiting_for_reference (FR-25) */
     post: operations['cancelAnalysis']
     delete?: never
     options?: never
@@ -1058,7 +1058,7 @@ export interface operations {
           'application/problem+json': components['schemas']['Problem']
         }
       }
-      /** @description The analysis is no longer queued (`ANALYSIS_NOT_QUEUED`). */
+      /** @description The analysis is not queued or waiting_for_reference anymore (`ANALYSIS_NOT_QUEUED`). */
       409: {
         headers: {
           [name: string]: unknown
