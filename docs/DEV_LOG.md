@@ -261,3 +261,44 @@ new value (70.0, recalibrated for the own DTW's cost scale) is an empirical
 starting point against this repo's synthetic test fixtures, same
 calibration caveat as every other scoring threshold (spec 19) -- worth
 revisiting once golden fixtures exist.
+
+## 2026-07-31 -- M3: mixed mode, spike-gated
+
+**Done:** Spec 18's spike-first ordering, run for real before anything
+else: built a harmonic-salience melody extractor (`dsp/melody.py`) with
+rolling background subtraction, measured 5-24 cents median F0 error across
+several melody/chord/register scenarios at SNR 0dB and -6dB -- well under
+spec 6.6's 50-cent go/no-go threshold. **Go**, recorded in ADR-0025 along
+with why a DSP approach was chosen over an ONNX model (no vendorable,
+checksummed weights exist for this, unlike Silero VAD). Proceeded to the
+rest of M3's scope: A4 (`MelodyPitchStage`, writes to stage name `"pitch"`
+under a `modes` disjoint from `PitchStage`'s, ADR-0027), A3
+(`recording_condition` fixed to spec 6.16's actual
+median-unvoiced/median-voiced formula, plus FR-29/FR-30 mode reconciliation
+-- scoped as diagnostic/confidence-only for now, ADR-0026), A8
+(`key_normalization`, spec 6.8's median-shift + IQR guard conditions), and
+`scoring/weights.py` + `scoring/confidence.py` (clean_v1/mixed_v1,
+FR-41's null-not-zero unavailable aspects, the high/medium/low confidence
+model, spec 6.14/6.15). T1-T7 (spec 15.2) all green; T4 is the spike
+measurement itself, made a permanent regression test. NFR-01c estimated
+(not yet a real end-to-end run -- no real `mixed` test recording available
+this session) at ~20s against the 150s budget, `docs/PERFORMANCE.md`.
+
+**Next:** M4 (spec 18) wires `mode`/`allow_transposition`/`confidence`/
+`warnings` through `POST /analyses`, `analyses` (new columns), and the web
+UI -- none of that landed here. `AnalysisContext.mode` defaults to `clean`
+until then, so every real analysis today still runs the `clean` path
+exactly as before.
+
+**Blockers:** none.
+
+**Risks:** FR-29's "cheaper and more accurate" auto-downgrade is only
+"more accurate" (reported `effective_mode`/warning) for now, not
+"cheaper" (stage selection is fixed by the declared mode, not
+retroactively corrected) -- ADR-0026 has the reasoning and the concrete
+next step if this proves common in practice. `dsp/melody.py`'s background
+subtraction can partly suppress a note held perfectly steady longer than
+0.6s (no vibrato/portamento) -- mitigated via the confidence model, not
+eliminated. NFR-01c's estimate combines measurements from two different
+sessions rather than one real end-to-end run; re-measure once a real
+`mixed` test recording exists.

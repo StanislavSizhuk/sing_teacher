@@ -1,6 +1,6 @@
 # ML Pipeline
 
-Status: reflects stages E4-E5, M1, and M2 (spec 18). M1: the single-
+Status: reflects stages E4-E5, M1, M2, and M3 (spec 18). M1: the single-
 pipeline performance pass -- a shared feature cache, a VAD gate on pitch
 detection, an own banded two-level DTW, parallel aspect stages,
 `faster-whisper`, and dense curves stored as `bytea`. M2 (spec 6.2, 6.4,
@@ -10,9 +10,13 @@ its pitch curve -- run exactly once per song, asynchronously, starting the
 moment the song is added) and a **warm path** (A1-A10: everything an
 analysis itself needs, run only once its song's cold path has reached
 `ready`, always reading the reference vocal stem/pitch curve/lyrics the
-cold path already cached instead of recomputing any of it). See
-`docs/PERFORMANCE.md` for measured before/after numbers and
-`docs/adr/0015`, `0017`, `0021`, `0022`, `0023`, `0024` for the M1/M2
+cold path already cached instead of recomputing any of it). M3 (spec 6.6,
+6.8, 6.14-6.16): adds the `mixed` analysis mode -- melody extraction as an
+alternate pitch source, key-shift normalization, and the weight-profile/
+confidence model that make an aspect's absence in `mixed` an honest `null`
+rather than a silent `0` (FR-41). See "Mixed mode (M3)" below for the
+mode-specific stages and `docs/PERFORMANCE.md` for measured before/after
+numbers and `docs/adr/0015`, `0017`, `0021`-`0027` for the M1/M2/M3
 decisions.
 
 ## Where the code lives
@@ -22,9 +26,10 @@ decisions.
 | `worker/src/vocalcoach/pipeline/base.py` | `PipelineStage`/`ParallelGroup` contract, generic over `ContextT` (M2) so the same classes drive both paths |
 | `worker/src/vocalcoach/pipeline/runner.py` | Orchestration: order, per-stage subprocess/timeout, retries, optional-stage skipping (M2), progress persistence (ADR-0012) |
 | `worker/src/vocalcoach/pipeline/registry.py` | `ModelRegistry`: lazy Demucs/Whisper/CREPE/pYIN construction behind narrow `Protocol`s, shared by both paths |
-| `worker/src/vocalcoach/pipeline/stages/` | One file per stage: `preprocess.py`/`features.py`/`align.py`/`pitch.py`/aspect stages/`recording_condition.py`/`aggregate.py` (warm), `prep_reference.py`/`separate_reference.py`/`transcribe.py`/`prep_reference_pitch.py` (cold) |
-| `worker/src/vocalcoach/pipeline/report.py` | The FR-32 per-aspect text report, built from the same stage data |
-| `worker/src/vocalcoach/dsp/` | Shared feature cache (`features.py`), VAD gate (`vad.py`), banded two-level DTW (`dtw.py`), VAD-gated pitch detection (`pitch_detection.py`, M2 -- shared by warm A6 and cold P4) |
+| `worker/src/vocalcoach/pipeline/stages/` | One file per stage: `preprocess.py`/`features.py`/`align.py`/`pitch.py`/`melody.py` (M3, `mixed` only)/`key_normalization.py` (M3)/aspect stages/`recording_condition.py`/`aggregate.py` (warm), `prep_reference.py`/`separate_reference.py`/`transcribe.py`/`prep_reference_pitch.py` (cold) |
+| `worker/src/vocalcoach/pipeline/report.py` | The FR-32 per-aspect text report, built from the same stage data -- M3: only the mode's own available aspects, plus an unavailable-aspect block (FR-41) |
+| `worker/src/vocalcoach/scoring/` | M3, spec 12.3: `weights.py` (`MODE_ASPECTS`, the weighted-sum formula, `unavailable_aspects_for`), `confidence.py` (the high/medium/low model, spec 6.15) -- pure functions, no `PipelineContext` knowledge |
+| `worker/src/vocalcoach/dsp/` | Shared feature cache (`features.py`), VAD gate (`vad.py`), banded two-level DTW (`dtw.py`), VAD-gated pitch detection (`pitch_detection.py`, M2 -- shared by warm A6 and cold P4), pitch-vs-reference scoring (`pitch_scoring.py`, M3 -- shared by `pitch.py` and `melody.py`), melody extraction (`melody.py`, M3, `mixed` only, ADR-0025) |
 | `worker/src/vocalcoach/runtime/` | M1: explicit BLAS/torch thread configuration (`threads.py`, spec 6.11) |
 | `worker/src/vocalcoach/audio/` | Shared DSP helpers: ffmpeg wrapper (`decode_and_normalize`, M2: the one decode/normalize implementation both A1 and P1 call), loudness, WAV IO, DTW time-mapping |
 | `worker/src/vocalcoach/queue/` | `scheduler.py` (M2: the two-stream priority loop, spec 10.2), `consumer.py` (Redis Streams, one instance per stream), `handler.py`/`prep_handler.py` (per-job-kind lifecycle), `streams.py` (M2: stream/group names), `events.py` (Redis Pub/Sub event publisher, ADR-0010) |
@@ -291,42 +296,101 @@ checks both orderings score identically.
     `BREATH_PAUSE_MATCH_TOLERANCE_SECONDS = 0.5` of the expected time, it
     counts as matched. Score is `100 * matched / reference_pause_count`
     (100 if the reference has no pauses to match against at all).
-14. **`recording_condition`** (A10, spec 2.3, 6.9) -- a soft, non-blocking
-    heuristic for likely background-music/instrument contamination in the
-    user's own recording, which (per ADR-0003/spec 2.3's a cappella
-    assumption) is never run through Demucs, so there is no real source
-    separation to lean on here. Reuses A4's pitch curve's per-frame
-    voiced/unvoiced classification plus A2's cached fine RMS envelope
-    (same `PITCH_HOP_SECONDS` hop, M1: previously its own `rms_envelope`
-    call) over the recording: a frame louder than
-    `RECORDING_CONDITION_LOUD_RELATIVE_DB = -20` dB relative to the
-    recording's own peak, yet unvoiced, is "loud and unvoiced" --
-    energetic but with no single clear pitch, i.e. plausibly an
-    instrument rather than a pause/consonant. `background_music_detected`
-    is set once that fraction reaches
-    `RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3`. Never fails the
-    analysis or changes any score; A11 reads the flag to add one warning
-    paragraph to the FR-32 report, nothing else.
-15. **`aggregate`** (A11, spec 6.3.11, 6.4, FR-32) -- reads the six aspect
-    stages' own `score` values (never recomputes them) and weighted-sums
-    them into `overall_score` via `SCORING_WEIGHTS`
-    (`ScoringWeights.as_dict()`, so no `getattr`-on-`Any` typing hazard),
-    rounded to one decimal. `pipeline/report.py` builds the FR-32 text
-    report from the *same* stage data: one summary line naming the
-    lowest-scoring aspect as the suggested focus, then one paragraph per
-    aspect in `config.ASPECTS` order, each grounded in that aspect's own
-    numbers (mean cents, ms offset, matched-pause counts, correlation,
-    vibrato rate/depth, ...) rather than generic advice. Feedback is
+14. **`recording_condition`** (A10, spec 2.3, 6.16, reworked M3) -- a soft,
+    non-blocking classifier for accompaniment in the user's own recording,
+    which (per ADR-0003/spec 2.3) is never run through Demucs, so there is
+    no real source separation to lean on here. Reuses stage `"pitch"`'s
+    per-frame voiced/unvoiced classification (whichever of `PitchStage`/
+    `MelodyPitchStage` actually ran, spec 12.3 -- this stage runs
+    identically in both modes) plus A2's cached fine RMS envelope:
+    `accompaniment_level = median(RMS of unvoiced frames) / median(RMS of
+    voiced frames)` (spec 6.16). Below `RECORDING_CONDITION_MIN_UNVOICED_FRAMES
+    = 10` unvoiced frames the ratio is reported as `0` rather than computed
+    from a statistically meaningless sample (a single pitch-detector edge
+    artifact was enough to false-positive a genuinely clean tone during
+    testing). `accompaniment_detected` is set once the level reaches
+    `ACCOMPANIMENT_DETECT_THRESHOLD = 0.15` (config, spec 20.5); reconciled
+    against the declared mode into `effective_mode` and a warning
+    (`ACCOMPANIMENT_IN_CLEAN_MODE` / `MODE_DOWNGRADED_TO_CLEAN`, FR-29/
+    FR-30) -- see "Mixed mode (M3)" below for what this reconciliation does
+    and, importantly, does not do. Never fails the analysis or changes any
+    score by itself; A11 reads the result to add a report warning and feed
+    the confidence model (spec 6.15).
+15. **`aggregate`** (A11, spec 6.3.11, 6.4, 6.14, 6.15, FR-32, reworked M3)
+    -- reads exactly `MODE_ASPECTS[context.mode]`'s aspect stages' own
+    `score` values (never all six regardless of mode, never recomputes
+    them; `scoring/weights.py`), substitutes `key_normalization`'s
+    `adjusted_score` for `"pitch"` when a shift was applied (spec 6.8), and
+    weighted-sums them into `overall_score` via that mode's own
+    `SCORING_WEIGHTS_CLEAN`/`SCORING_WEIGHTS_MIXED` profile
+    (`weighted_overall_score`), rounded to one decimal. Also computes the
+    confidence model (`scoring/confidence.py`, spec 6.15) from
+    `recording_condition`/`pitch`/`align`/`key_normalization`'s already-
+    computed signals, and `unavailable_aspects_for(mode)` (FR-41: the
+    aspects this mode never scores, each with a machine-readable reason,
+    never a bare `0`). `pipeline/report.py` builds the FR-32 text report
+    from the *same* stage data: one summary line naming the lowest-scoring
+    *available* aspect as the suggested focus, one paragraph per available
+    aspect in spec 6.4 order, each grounded in that aspect's own numbers
+    rather than generic advice, then one block per unavailable aspect
+    explaining why (spec 6.19) -- never just silently missing. Feedback is
     tiered by score against `FEEDBACK_EXCELLENT_THRESHOLD = 90` /
     `FEEDBACK_GOOD_THRESHOLD = 75` / `FEEDBACK_FAIR_THRESHOLD = 50`. The
     timbre paragraph always includes spec 6.3.9's mandatory disclaimer,
-    both when it reads well and when it doesn't. The job handler persists
+    both when it reads well and when it doesn't (and is entirely absent, as
+    an unavailable-aspect block, in `mixed`). The job handler persists
     `overall_score`/`feedback_text`/`scoring_version` in one write
     (`AnalysisRepository.save_scoring_result`) once every stage's result
     is already in `stages_json`, then upserts the same `overall_score` into
     `progress_snapshots` (`record_progress_snapshot`, E5, FR-35) -- keyed
     on `analysis_id` so a job that fails and later succeeds on retry
-    updates its one chart point instead of duplicating it.
+    updates its one chart point instead of duplicating it. `weights_profile`/
+    `confidence`/`aspect_confidence`/`unavailable_aspects`/`key_shift_semitones`
+    live in `stages_json["aggregate"]` today; dedicated `analyses` columns
+    for them are M4's job (docs/adr/0026).
+
+## Mixed mode (M3, spec 6.6, 6.8, 6.14-6.16)
+
+`mixed` runs the same warm-path stage list as `clean`, but
+`PipelineRunner.run(mode=...)` (spec 12.3) filters out any stage whose
+`modes` excludes it *before* the run starts (`worker.py::build_stages`
+builds one static list covering both modes). Three stages differ:
+
+- **`pitch` via `MelodyPitchStage`** (`pipeline/stages/melody.py`,
+  `modes={"mixed"}`) instead of `PitchStage` (`modes={"clean"}`) -- both
+  write to the *same* stage name, so `key_normalization`, the aspect
+  stages, `aggregate`, and the job handler's score persistence never know
+  or care which one ran (ADR-0027). The F0 curve itself comes from
+  `dsp/melody.py::extract_melody`: harmonic-summation salience over the
+  mixture's own STFT, with a rolling per-candidate background subtraction
+  that tells a moving melody line apart from a held accompaniment note --
+  not the ONNX model spec 6.6 originally named (ADR-0025 has the go
+  decision and the measured accuracy, `tests/test_melody_extraction.py`,
+  T4).
+- **`timbre`/`breath`** (`modes={"clean"}`) do not run in `mixed` at all --
+  structurally unavailable (FR-41's `null`), not merely unreliable.
+- **`key_normalization`** (`pipeline/stages/key_normalization.py`, spec
+  6.8) runs in *both* modes, but only ever applies a shift if
+  `context.mode == "mixed"` or the user opted into `allow_transposition`
+  in `clean`, and only if the measured median shift is large enough
+  (`KEY_SHIFT_MIN_SEMITONES`), stable enough (`KEY_SHIFT_MAX_IQR`), and
+  in range (`MAX_KEY_SHIFT_SEMITONES`) -- see `tests/
+  test_key_normalization_stage.py` (T1-T3) for the guard conditions
+  directly. Reads `"pitch"`'s already-computed `piano_roll.deviation_cents`
+  rather than re-detecting or re-aligning anything.
+
+**`recording_condition` (A3, spec 6.16) does not gate which of the above
+ran.** It runs *after* them (unchanged position from the table above) and
+reports `effective_mode`/warnings as a diagnostic, confidence-affecting
+signal alongside whatever this run already computed under its *declared*
+mode -- not a retroactive "redo this with the other stage set" decision.
+A `mixed`-declared analysis A3 finds is actually a cappella still reports
+`mixed_v1`'s four aspects; it additionally reports `effective_mode: "clean"`
+and `MODE_DOWNGRADED_TO_CLEAN`, prompting a retry rather than silently
+substituting a different result. This is a real, documented gap from
+FR-29's literal "cheaper and more accurate" -- `docs/adr/0026` has the
+full reasoning and what would need to change (a two-phase pipeline run) to
+close it.
 
 ## Caching (spec 6.6, restructured by M2)
 
@@ -399,7 +463,8 @@ recomputed.
 | `error_code` | Raised by | Retryable |
 |---|---|---|
 | `REFERENCE_TOO_QUIET` | P2 (`separate_reference`) | no |
-| `NO_VOICE_DETECTED` | A4 (`pitch`) | no |
+| `NO_VOICE_DETECTED` | A4 (`pitch`, `PitchStage`, `clean` only) | no |
+| `MELODY_EXTRACTION_FAILED` | A4 (`pitch`, `MelodyPitchStage`, `mixed` only, M3, spec 6.6) | no |
 | `ALIGNMENT_FAILED` | A3 (`align`) | no |
 | `ALIGNMENT_TOO_LARGE` | A3 (`align`), `DTW_MAX_CELLS` guard (M1, spec 6.7, NFR-16) | no |
 | `TIMEOUT` | the runner, on any stage exceeding its budget | yes, up to `MAX_STAGE_RETRIES = 2` |
@@ -430,14 +495,19 @@ the table above describes.
 All from the same `.env` the Go API reads (spec 20.5):
 `PITCH_ENGINE` (`crepe`|`pyin`), `WHISPER_MODEL`, `WHISPER_COMPUTE_TYPE`
 (M1, ADR-0021, default `int8`), `DEMUCS_MODEL`, `SCORING_VERSION`,
-`SCORING_WEIGHTS` (parsed and checked to sum to 1.0 at startup, consumed by
-A11's `AggregateStage`), `WORKER_CPU_THREADS` (M1, spec 6.11; `0`
-autodetects from the container's cgroup CPU limit, applied to every BLAS
-env var before numpy/torch is ever imported --
-`runtime/threads.py::configure_worker_threads`, called from `__main__.py`
-before `vocalcoach.worker` is), `PIPELINE_PARALLEL_ASPECTS` (M1, spec 6.10,
-default `true`). `worker/src/vocalcoach/config.py` fails fast, listing
-every problem at once, exactly like `api/internal/config`.
+`SCORING_WEIGHTS_CLEAN`/`SCORING_WEIGHTS_MIXED` (M3, spec 6.14 -- two
+profiles, not one; each parsed and checked to sum to 1.0 over exactly that
+mode's own `MODE_ASPECTS` at startup, consumed by A11's `AggregateStage`),
+`ACCOMPANIMENT_DETECT_THRESHOLD` (M3, spec 6.16, default `0.15`,
+`recording_condition`'s detection threshold), `KEY_SHIFT_MIN_SEMITONES`/
+`KEY_SHIFT_MAX_IQR`/`MAX_KEY_SHIFT_SEMITONES` (M3, spec 6.8, defaults
+`0.6`/`0.5`/`7.0`, `key_normalization`'s guard conditions),
+`WORKER_CPU_THREADS` (M1, spec 6.11; `0` autodetects from the container's
+cgroup CPU limit, applied to every BLAS env var before numpy/torch is ever
+imported -- `runtime/threads.py::configure_worker_threads`, called from
+`__main__.py` before `vocalcoach.worker` is), `PIPELINE_PARALLEL_ASPECTS`
+(M1, spec 6.10, default `true`). `worker/src/vocalcoach/config.py` fails
+fast, listing every problem at once, exactly like `api/internal/config`.
 
 `WHISPER_MODEL` defaults to `base`, not spec 6.2's named `small` (ADR-0014):
 real-hardware measurement (a real several-minute song, not a synthetic
@@ -468,12 +538,34 @@ prose built from per-analysis numbers, not static UI copy, so there is no
 fixed string to key. Localizing it (e.g. building the same sentences from
 Ukrainian templates) is deferred until there is a concrete need.
 
-Spec 6.9's "significant non-vocal energy in the recording" soft-detection
-is a DSP heuristic (A10, `recording_condition`), not a real
-classifier: it only catches contamination loud enough, and consistently
-enough, to dominate the loud-but-unvoiced frame fraction past
-`RECORDING_CONDITION_NON_VOCAL_ENERGY_FRACTION = 0.3`. Quiet background
-music, or music that happens to share the vocal's pitch range densely
-enough to still read as "voiced" to the pitch detector, will not trip it.
-Its two thresholds are exactly the kind of "starting point, not
-calibrated" value the rest of this section already flags.
+Spec 6.16's accompaniment classification (A10, `recording_condition`) is a
+DSP heuristic, not a real classifier: it only catches accompaniment loud
+enough, relative to the vocal, to move the unvoiced/voiced RMS ratio past
+`ACCOMPANIMENT_DETECT_THRESHOLD = 0.15`. Quiet background music, or music
+that happens to share the vocal's pitch range densely enough to still read
+as "voiced" to the pitch/melody stage, will not trip it. This threshold is
+exactly the kind of "starting point, not calibrated" value the rest of
+this section already flags.
+
+M3's mode reconciliation (FR-29/FR-30) is diagnostic, not stage-selecting
+(`docs/adr/0026`): a `mixed`-declared analysis A3 finds is actually a
+cappella still pays melody extraction's cost and does not unlock
+timbre/breath in the same run, only reports `effective_mode`/a warning
+suggesting a `clean` retry. Revisit if this proves common in practice
+(spec 19 already names "users always pick `mixed`" as a risk).
+
+`dsp/melody.py`'s known limitation (ADR-0025): a note held perfectly
+steady, without vibrato or portamento, for longer than
+`MELODY_BACKGROUND_WINDOW_SECONDS = 0.6` gets partly suppressed by its own
+recent history, the same as a static accompaniment note would be --
+mitigated, not eliminated, by feeding its own voicing ratio into the
+confidence model (spec 6.15) rather than reporting an unqualified score.
+
+NFR-01c (mixed warm path, <=150s) is only partially measured: `dsp/melody.py`'s
+own cost was measured directly on synthetic audio at several durations (see
+`docs/PERFORMANCE.md`), but the full mixed warm path has not yet had a real
+end-to-end run the way M1/M2's `clean`-path numbers did (no real `mixed`
+test recording -- vocal plus accompaniment -- was available this session).
+The estimate in `docs/PERFORMANCE.md` combines measured numbers from both
+milestones; treat it as a reasonable estimate; re-measure end-to-end before
+this is considered fully validated.
