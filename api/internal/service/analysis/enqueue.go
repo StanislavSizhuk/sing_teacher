@@ -25,7 +25,11 @@ import (
 // song's cold path already failed, the request is rejected outright: no
 // point creating a job that can only ever sit waiting for a prep that will
 // never retry itself (FR-17).
-func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recording io.Reader) (a *domain.Analysis, positions map[uuid.UUID]int, err error) {
+//
+// mode/allowTransposition are the caller's own FR-27/FR-31 choice, already
+// validated and defaulted by the transport layer (spec 8.3) -- this service
+// only stores them, it never second-guesses the client's selection.
+func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, mode domain.AnalysisMode, allowTransposition bool, recording io.Reader) (a *domain.Analysis, positions map[uuid.UUID]int, err error) {
 	song, err := s.songs.GetByID(ctx, songID)
 	if err != nil {
 		return nil, nil, err
@@ -86,7 +90,10 @@ func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recordi
 	if songReady {
 		initialStatus = domain.AnalysisStatusQueued
 	}
-	created := &domain.Analysis{ID: analysisID, UserID: userID, SongID: songID, Status: initialStatus}
+	created := &domain.Analysis{
+		ID: analysisID, UserID: userID, SongID: songID, Status: initialStatus,
+		Mode: mode, AllowTransposition: allowTransposition,
+	}
 	if err := s.analyses.Create(ctx, created); err != nil {
 		_ = s.files.Remove(canonicalPath)
 		return nil, nil, fmt.Errorf("create analysis: %w", err)

@@ -6,6 +6,30 @@ import (
 	"github.com/google/uuid"
 )
 
+// AnalysisMode is which kind of recording an analysis was run against
+// (spec 2.3, 6.1): `clean` (a cappella) scores all six aspects at the
+// highest accuracy; `mixed` (sung over any accompaniment) scores four,
+// via melody extraction instead of direct pitch detection (spec 6.6).
+type AnalysisMode string
+
+// Valid values of AnalysisMode (spec 2.3, FR-27, migration 00011).
+const (
+	AnalysisModeClean AnalysisMode = "clean"
+	AnalysisModeMixed AnalysisMode = "mixed"
+)
+
+// ConfidenceLevel is how reliable an analysis's scores are (spec 6.15,
+// FR-47) -- never cosmetic: a mode or measurement that is inherently less
+// reliable must say so instead of handing back a precise-looking number.
+type ConfidenceLevel string
+
+// Valid values of ConfidenceLevel (spec 6.15, migration 00011).
+const (
+	ConfidenceHigh   ConfidenceLevel = "high"
+	ConfidenceMedium ConfidenceLevel = "medium"
+	ConfidenceLow    ConfidenceLevel = "low"
+)
+
 // AnalysisStatus is the lifecycle state of one analysis job (spec 7).
 type AnalysisStatus string
 
@@ -31,6 +55,31 @@ type Analysis struct {
 	UserID uuid.UUID
 	SongID uuid.UUID
 	Status AnalysisStatus
+
+	// Mode is the user's own choice at POST /analyses (FR-27), clean by
+	// default (spec 2.3). EffectiveMode is what the worker's stage A3
+	// actually reconciled it to once it saw the recording -- nil until an
+	// analysis reaches the recording_condition stage (spec 6.16, FR-29/30).
+	Mode               AnalysisMode
+	EffectiveMode      *AnalysisMode
+	AllowTransposition bool
+
+	// Confidence/AspectConfidenceJSON/WarningsJSON/UnavailableAspectsJSON
+	// are the worker's honesty model (spec 6.14, 6.15, FR-41, FR-47), all
+	// nil until stage 11 (aggregate) completes. KeyShiftSemitones,
+	// AccompanimentLevel, VoicedRatio and AlignmentCost are the diagnostic
+	// signals behind Confidence (spec 6.15's table); WeightsProfile records
+	// which named profile OverallScore was computed under (spec 6.14) so a
+	// stored score stays interpretable after the formula changes.
+	Confidence             *ConfidenceLevel
+	AspectConfidenceJSON   []byte
+	WarningsJSON           []byte
+	UnavailableAspectsJSON []byte
+	KeyShiftSemitones      *float64
+	AccompanimentLevel     *float64
+	VoicedRatio            *float64
+	AlignmentCost          *float64
+	WeightsProfile         *string
 
 	// QueuePosition is this job's 1-based place among currently queued jobs,
 	// recomputed by AnalysisRepository.RecalculatePositions on every queue

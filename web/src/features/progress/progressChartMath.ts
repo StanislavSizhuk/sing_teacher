@@ -79,3 +79,11 @@ export function summarize(points: readonly ProgressPoint[]): ProgressSummary | n
     change: latest.overallScore - first.overallScore,
   }
 }
+
+/** FR-49: true once a series contains more than one `mode` -- the signal
+ * both `ProgressChart` (point styling) and `ProgressPage` (the
+ * comparability warning) use to decide whether the clean/mixed distinction
+ * needs surfacing at all. A single-mode account has nothing to compare. */
+export function hasMultipleModes(points: readonly ProgressPoint[]): boolean {
+  return new Set(points.map((p) => p.mode)).size > 1
+}

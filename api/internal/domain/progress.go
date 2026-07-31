@@ -13,5 +13,12 @@ import (
 type ProgressPoint struct {
 	AnalysisID   uuid.UUID
 	OverallScore float64
-	CreatedAt    time.Time
+	// Mode and Confidence are denormalized off the analysis at write time
+	// (spec 7): a client cannot tell two overall_score points computed
+	// under different weights_profile apart without them, and FR-49
+	// requires the progress chart to visually distinguish clean from mixed
+	// points and warn that they are not directly comparable.
+	Mode       AnalysisMode
+	Confidence *ConfidenceLevel
+	CreatedAt  time.Time
 }

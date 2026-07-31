@@ -1,29 +1,54 @@
 import { useState } from 'react'
 
+import type { AnalysisMode } from '../../api/client'
 import { Button } from '../../components/Button'
 import { SegmentedControl } from '../../components/SegmentedControl'
 import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { useMediaRecorder } from './useMediaRecorder'
 
 interface RecordingCaptureProps {
-  onReady: (recording: File | Blob) => void
+  onReady: (recording: File | Blob, mode: AnalysisMode) => void
 }
 
 const ACCEPTED_AUDIO = '.mp3,.wav,.m4a,.flac,.ogg,audio/*'
 
-/** FR-20/FR-21: record a cappella in the browser with preview and
- * re-record, or upload a finished recording file instead. */
+/** FR-28: plain-language consequences of each analysis mode, shown before
+ * the user records anything (spec 2.3) -- what gets measured, what
+ * doesn't, and why, so the choice needs no explanation beyond this. */
+const MODE_EXPLANATIONS: Record<AnalysisMode, { title: string; body: string }> = {
+  clean: {
+    title: 'Recommended: sing a cappella',
+    body:
+      'No instruments, no backing track, no music in the room -- just your voice, in headphones. ' +
+      'This measures all 6 aspects (pitch, rhythm, breath, dynamics, vibrato and tone) at the ' +
+      'highest accuracy.',
+  },
+  mixed: {
+    title: 'Singing with music',
+    body:
+      'Recording yourself with a guitar, piano, a band, or a backing track? Choose this. It only ' +
+      'measures pitch and rhythm accurately; dynamics and vibrato are scored too but less ' +
+      "precisely, and breath and tone can't be measured at all when other sound is present -- " +
+      'the report will show those two as not measured, not as a bad score.',
+  },
+}
+
+/** FR-20/FR-21/FR-27/FR-28: choose the analysis mode and see what it means
+ * before recording, then record a cappella (or with music) in the browser
+ * with preview and re-record, or upload a finished recording file instead. */
 export function RecordingCapture({ onReady }: RecordingCaptureProps) {
-  const [mode, setMode] = useState<'record' | 'upload'>('record')
+  const [source, setSource] = useState<'record' | 'upload'>('record')
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('clean')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const recorder = useMediaRecorder()
   const uploadedUrl = useObjectUrl(uploadedFile)
 
-  const previewUrl = mode === 'record' ? recorder.audioUrl : uploadedUrl
-  const ready = mode === 'record' ? recorder.blob : uploadedFile
+  const previewUrl = source === 'record' ? recorder.audioUrl : uploadedUrl
+  const ready = source === 'record' ? recorder.blob : uploadedFile
+  const explanation = MODE_EXPLANATIONS[analysisMode]
 
-  function handleModeChange(next: 'record' | 'upload') {
-    setMode(next)
+  function handleSourceChange(next: 'record' | 'upload') {
+    setSource(next)
     recorder.reset()
     setUploadedFile(null)
   }
@@ -31,22 +56,34 @@ export function RecordingCapture({ onReady }: RecordingCaptureProps) {
   return (
     <div className="flex w-full max-w-md flex-col gap-4">
       <h1 className="text-ink-950 text-lg font-semibold">Record your take</h1>
-      <p className="border-ink-300 bg-ink-100 text-ink-700 rounded border px-3 py-2 text-sm">
-        Sing a cappella, in headphones, without background music playing. Analysis compares your
-        voice directly against the reference track and assumes no other sound is present.
-      </p>
+
+      <div className="flex flex-col gap-2">
+        <SegmentedControl
+          label="Analysis mode"
+          value={analysisMode}
+          onChange={setAnalysisMode}
+          options={[
+            { value: 'clean', label: 'A cappella' },
+            { value: 'mixed', label: 'With music' },
+          ]}
+        />
+        <div className="border-ink-300 bg-ink-100 text-ink-700 rounded border px-3 py-2 text-sm">
+          <p className="text-ink-950 font-medium">{explanation.title}</p>
+          <p>{explanation.body}</p>
+        </div>
+      </div>
 
       <SegmentedControl
         label="Recording source"
-        value={mode}
-        onChange={handleModeChange}
+        value={source}
+        onChange={handleSourceChange}
         options={[
           { value: 'record', label: 'Record in browser' },
           { value: 'upload', label: 'Upload a file' },
         ]}
       />
 
-      {mode === 'record' ? (
+      {source === 'record' ? (
         <div className="flex flex-col gap-2">
           <p aria-live="polite" className="text-ink-700 text-sm">
             {
@@ -97,7 +134,7 @@ export function RecordingCapture({ onReady }: RecordingCaptureProps) {
         </audio>
       )}
 
-      <Button type="button" disabled={!ready} onClick={() => ready && onReady(ready)}>
+      <Button type="button" disabled={!ready} onClick={() => ready && onReady(ready, analysisMode)}>
         Use this recording
       </Button>
     </div>

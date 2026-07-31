@@ -1,7 +1,13 @@
+import type { AnalysisMode } from '../../api/client'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { ProgressChart } from './ProgressChart'
-import { summarize } from './progressChartMath'
+import { hasMultipleModes, summarize } from './progressChartMath'
 import { useProgress } from './useProgress'
+
+const MODE_LABELS: Record<AnalysisMode, string> = {
+  clean: 'A cappella',
+  mixed: 'With music',
+}
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -67,6 +73,14 @@ export function ProgressPage() {
             <StatTile label="Vs. first session" value={formatChange(summary.change)} />
           </div>
 
+          {hasMultipleModes(points) && (
+            <p className="border-ink-300 bg-ink-100 text-ink-700 rounded border px-3 py-2 text-sm">
+              This history mixes a cappella and with-music sessions (marked below). They're scored
+              on different aspects, so scores aren't directly comparable across modes -- only
+              compare sessions of the same mode to each other.
+            </p>
+          )}
+
           <ProgressChart points={points} />
 
           <div className="border-ink-300 max-h-64 overflow-y-auto rounded border">
@@ -78,6 +92,9 @@ export function ProgressPage() {
                     Date
                   </th>
                   <th scope="col" className="px-3 py-2 font-medium">
+                    Mode
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
                     Overall score
                   </th>
                 </tr>
@@ -86,6 +103,7 @@ export function ProgressPage() {
                 {[...points].reverse().map((p) => (
                   <tr key={p.analysisId} className="border-ink-200 border-t">
                     <td className="text-ink-700 px-3 py-2">{formatDateTime(p.createdAt)}</td>
+                    <td className="text-ink-700 px-3 py-2">{MODE_LABELS[p.mode]}</td>
                     <td className="text-ink-950 px-3 py-2 font-medium">
                       {Math.round(p.overallScore)}
                     </td>

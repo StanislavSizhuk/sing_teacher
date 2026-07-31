@@ -246,6 +246,15 @@ export async function addSong(input: AddSongByUpload | AddSongByYouTube): Promis
 export type AnalysisStatus =
   'queued' | 'waiting_for_reference' | 'processing' | 'done' | 'failed' | 'canceled'
 
+/** spec 2.3, FR-27: `clean` (a cappella) scores all six aspects at the
+ * highest accuracy; `mixed` (any accompaniment) scores four, at reduced
+ * accuracy. `clean` is the recommended default. */
+export type AnalysisMode = 'clean' | 'mixed'
+
+/** spec 6.15, FR-47: never cosmetic -- a mode or measurement that is
+ * inherently less reliable says so instead of a precise-looking number. */
+export type ConfidenceLevel = 'high' | 'medium' | 'low'
+
 /** FR-31 piano-roll overlay data: the user's and reference's pitch curves,
  * already resampled onto the same (the user's) time grid frame for frame,
  * plus a precomputed cents deviation and off-pitch flag per frame -- the
@@ -276,6 +285,13 @@ export interface Analysis {
   id: string
   songId: string
   status: AnalysisStatus
+  /** The mode the caller chose at enqueue time (FR-27). */
+  mode: AnalysisMode
+  /** What the worker's stage A3 actually reconciled `mode` to once it saw
+   * the recording (spec 6.16) -- e.g. auto-downgraded from `mixed` to
+   * `clean` when no accompaniment was detected (FR-29). Undefined until
+   * that stage completes. */
+  effectiveMode?: AnalysisMode
   queuePosition?: number
   currentStage?: string
   /** 1-based position of currentStage among totalStages (spec 6.2). */
@@ -290,6 +306,26 @@ export interface Analysis {
   overallScore?: number
   feedbackText?: string
   scoringVersion?: string
+  /** Which named weight profile (spec 6.14) overallScore was computed
+   * under -- two analyses with a different weightsProfile must never have
+   * their overallScore compared directly (FR-49). */
+  weightsProfile?: string
+  /** Overall reliability of this analysis's scores (spec 6.15, FR-47).
+   * Undefined until stage 11 (aggregate) completes. */
+  confidence?: ConfidenceLevel
+  /** Per-aspect confidence level, keyed by aspect name (spec 6.15). */
+  aspectConfidence?: Partial<Record<keyof AspectScores, ConfidenceLevel>>
+  /** Machine-readable warning codes (spec 6.18); the UI translates these
+   * to a human-readable message rather than showing the code (FR-47). */
+  warnings?: string[]
+  /** Every aspect this mode does not score, keyed by aspect name and
+   * mapped to a machine-readable reason (FR-41) -- an aspect listed here
+   * is never also present as a 0 in aspectScores, it is simply absent
+   * there. */
+  unavailableAspects?: Partial<Record<keyof AspectScores, string>>
+  /** Applied tonality-normalization shift in semitones, if any (spec 6.8,
+   * FR-46). Undefined when no shift was applied. */
+  keyShiftSemitones?: number
   pianoRoll?: PianoRoll
 }
 
@@ -300,6 +336,8 @@ function toAnalysis(
     id: data.id,
     songId: data.song_id,
     status: data.status,
+    mode: data.mode,
+    effectiveMode: data.effective_mode,
     queuePosition: data.queue_position,
     currentStage: data.current_stage,
     currentStageIndex: data.current_stage_index,
@@ -325,6 +363,12 @@ function toAnalysis(
     overallScore: data.overall_score,
     feedbackText: data.feedback_text,
     scoringVersion: data.scoring_version,
+    weightsProfile: data.weights_profile,
+    confidence: data.confidence,
+    aspectConfidence: data.aspect_confidence,
+    warnings: data.warnings,
+    unavailableAspects: data.unavailable_aspects,
+    keyShiftSemitones: data.key_shift_semitones,
     pianoRoll: data.piano_roll && {
       hopSeconds: data.piano_roll.hop_seconds,
       userHz: data.piano_roll.user_hz,
@@ -335,9 +379,18 @@ function toAnalysis(
   }
 }
 
-export async function enqueueAnalysis(songId: string, recording: File | Blob): Promise<Analysis> {
+/** FR-27: mode defaults to 'clean' (spec 2.3's recommendation) when the
+ * caller doesn't pick one explicitly. allow_transposition is left for the
+ * server to default per mode (spec 8.3, FR-31) -- this client has no UI
+ * control for it yet. */
+export async function enqueueAnalysis(
+  songId: string,
+  recording: File | Blob,
+  mode: AnalysisMode = 'clean',
+): Promise<Analysis> {
   const formData = new FormData()
   formData.set('song_id', songId)
+  formData.set('mode', mode)
   formData.set(
     'recording',
     recording,
@@ -369,11 +422,16 @@ export function currentAccessToken(): string | null {
   return getSession()?.accessToken ?? null
 }
 
-/** FR-35 progress-chart point: one completed analysis's overall_score,
- * dated. Returned oldest first. */
+/** FR-35/FR-49 progress-chart point: one completed analysis's
+ * overall_score, dated, tagged with the mode it was scored under. Points
+ * with a different mode were computed under a different weights_profile
+ * (spec 6.14) and must never be presented as directly comparable.
+ * Returned oldest first. */
 export interface ProgressPoint {
   analysisId: string
   overallScore: number
+  mode: AnalysisMode
+  confidence?: ConfidenceLevel
   createdAt: string
 }
 
@@ -382,6 +440,8 @@ export async function getProgress(): Promise<ProgressPoint[]> {
   return data.map((point) => ({
     analysisId: point.analysis_id,
     overallScore: point.overall_score,
+    mode: point.mode,
+    confidence: point.confidence,
     createdAt: point.created_at,
   }))
 }

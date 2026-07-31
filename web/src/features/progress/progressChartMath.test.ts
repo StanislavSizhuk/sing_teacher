@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProgressPoint } from '../../api/client'
-import { buildLinePath, layoutPoints, scoreToY, summarize, timeToX } from './progressChartMath'
+import type { AnalysisMode, ProgressPoint } from '../../api/client'
+import {
+  buildLinePath,
+  hasMultipleModes,
+  layoutPoints,
+  scoreToY,
+  summarize,
+  timeToX,
+} from './progressChartMath'
 
-function point(overallScore: number, createdAt: string, analysisId = createdAt): ProgressPoint {
-  return { analysisId, overallScore, createdAt }
+function point(
+  overallScore: number,
+  createdAt: string,
+  analysisId = createdAt,
+  mode: AnalysisMode = 'clean',
+): ProgressPoint {
+  return { analysisId, overallScore, createdAt, mode }
 }
 
 describe('scoreToY', () => {
@@ -91,5 +103,24 @@ describe('summarize', () => {
   it('reports zero change for a single point', () => {
     const summary = summarize([point(80, '2026-01-01T00:00:00Z')])
     expect(summary?.change).toBe(0)
+  })
+})
+
+describe('hasMultipleModes', () => {
+  it('is false for an all-clean series', () => {
+    const points = [point(60, '2026-01-01T00:00:00Z'), point(70, '2026-01-02T00:00:00Z')]
+    expect(hasMultipleModes(points)).toBe(false)
+  })
+
+  it('is false for an empty series', () => {
+    expect(hasMultipleModes([])).toBe(false)
+  })
+
+  it('is true once clean and mixed both appear (FR-49)', () => {
+    const points = [
+      point(60, '2026-01-01T00:00:00Z', 'a', 'clean'),
+      point(70, '2026-01-02T00:00:00Z', 'b', 'mixed'),
+    ]
+    expect(hasMultipleModes(points)).toBe(true)
   })
 })

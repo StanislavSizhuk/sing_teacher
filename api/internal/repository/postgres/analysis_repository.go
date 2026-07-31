@@ -22,19 +22,25 @@ func NewAnalysisRepository(pool *pgxpool.Pool) *AnalysisRepository {
 	return &AnalysisRepository{pool: pool}
 }
 
-const analysisColumns = `id, user_id, song_id, status, queue_position, current_stage,
+const analysisColumns = `id, user_id, song_id, status, mode, effective_mode, allow_transposition,
+	queue_position, current_stage,
 	current_stage_index, total_stages, current_stage_started_at, error_code,
 	pitch_score, rhythm_score, vibrato_score, breath_score, dynamics_score, timbre_score, overall_score,
 	pitch_curve_json, stages_json, feedback_text, scoring_version, model_versions,
+	confidence, aspect_confidence_json, warnings_json, unavailable_aspects_json,
+	key_shift_semitones, accompaniment_level, voiced_ratio, alignment_cost, weights_profile,
 	created_at, completed_at, queue_seq, queue_stream_id`
 
 func scanAnalysis(row pgx.Row) (*domain.Analysis, error) {
 	var a domain.Analysis
 	err := row.Scan(
-		&a.ID, &a.UserID, &a.SongID, &a.Status, &a.QueuePosition, &a.CurrentStage,
+		&a.ID, &a.UserID, &a.SongID, &a.Status, &a.Mode, &a.EffectiveMode, &a.AllowTransposition,
+		&a.QueuePosition, &a.CurrentStage,
 		&a.CurrentStageIndex, &a.TotalStages, &a.CurrentStageStartedAt, &a.ErrorCode,
 		&a.PitchScore, &a.RhythmScore, &a.VibratoScore, &a.BreathScore, &a.DynamicsScore, &a.TimbreScore, &a.OverallScore,
 		&a.PitchCurveJSON, &a.StagesJSON, &a.FeedbackText, &a.ScoringVersion, &a.ModelVersions,
+		&a.Confidence, &a.AspectConfidenceJSON, &a.WarningsJSON, &a.UnavailableAspectsJSON,
+		&a.KeyShiftSemitones, &a.AccompanimentLevel, &a.VoicedRatio, &a.AlignmentCost, &a.WeightsProfile,
 		&a.CreatedAt, &a.CompletedAt, &a.QueueSeq, &a.QueueStreamID,
 	)
 	if err != nil {
@@ -47,13 +53,17 @@ func scanAnalysis(row pgx.Row) (*domain.Analysis, error) {
 }
 
 // Create inserts a new analysis job. a.Status must be AnalysisStatusQueued;
-// a.CreatedAt and a.QueueSeq are filled in from the row on return.
+// a.CreatedAt and a.QueueSeq are filled in from the row on return. a.Mode
+// and a.AllowTransposition carry the user's own FR-27/FR-31 choice from the
+// request; every other honesty field (confidence, warnings, ...) stays NULL
+// until the worker's stage 11 completes.
 func (r *AnalysisRepository) Create(ctx context.Context, a *domain.Analysis) error {
 	const q = `
-		INSERT INTO analyses (id, user_id, song_id, status, created_at)
-		VALUES ($1, $2, $3, $4, now())
+		INSERT INTO analyses (id, user_id, song_id, status, mode, allow_transposition, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now())
 		RETURNING created_at, queue_seq`
-	if err := r.pool.QueryRow(ctx, q, a.ID, a.UserID, a.SongID, a.Status).Scan(&a.CreatedAt, &a.QueueSeq); err != nil {
+	if err := r.pool.QueryRow(ctx, q, a.ID, a.UserID, a.SongID, a.Status, a.Mode, a.AllowTransposition).
+		Scan(&a.CreatedAt, &a.QueueSeq); err != nil {
 		return fmt.Errorf("create analysis: %w", err)
 	}
 	return nil

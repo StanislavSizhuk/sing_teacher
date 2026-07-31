@@ -16,7 +16,7 @@ func TestCancel_QueuedAnalysis_Succeeds_RemovesFromQueue(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 
 	canceled, _, err := d.svc.Cancel(ctx, created.ID, userID)
@@ -31,7 +31,7 @@ func TestCancel_NotQueued_ReturnsErrAnalysisNotQueued(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	_, _, err = d.svc.Cancel(ctx, created.ID, userID)
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestCancel_WaitingForReference_Succeeds(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, domain.AnalysisStatusWaitingForReference, created.Status)
 	require.Nil(t, created.QueueStreamID, "never published to analyses:run, so nothing to remove")
@@ -62,7 +62,7 @@ func TestCancel_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	ctx := context.Background()
 
-	created, _, err := d.svc.Enqueue(ctx, uuid.New(), song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 
 	_, _, err = d.svc.Cancel(ctx, created.ID, uuid.New())
@@ -75,11 +75,11 @@ func TestCancel_ShiftsRemainingPositions(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
-	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
-	third, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	third, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 
 	_, positions, err := d.svc.Cancel(ctx, first.ID, userID)
@@ -97,7 +97,7 @@ func TestCancel_QueueRemoveFails_CancelStillSucceeds(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	d.queue.removeErr = errBoom
 

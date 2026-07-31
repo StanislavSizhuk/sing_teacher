@@ -181,6 +181,11 @@ def test_analysis_repository_progress_and_terminal_states(
         (score,) = _fetchone(cur)
     assert float(score) == 87.5
 
+    # analyses_clean_has_breath_score (migration 00011, spec 7.1) requires a
+    # `clean`-mode row to carry a breath_score before it can reach `done`
+    # below -- this row defaults to mode='clean' (migration 00011).
+    repo.save_aspect_score(analysis_id, "breath", 90.0)
+
     with pytest.raises(ValueError, match="unknown aspect"):
         repo.save_aspect_score(analysis_id, "not_a_real_aspect", 1.0)
 
@@ -197,16 +202,61 @@ def test_analysis_repository_progress_and_terminal_states(
         (stored,) = _fetchone(cur)
     assert PianoRollData.model_validate(stored) == piano_roll
 
-    repo.save_scoring_result(analysis_id, 88.4, "Overall score: 88/100.", "1.0")
+    repo.save_scoring_result(
+        analysis_id,
+        88.4,
+        "Overall score: 88/100.",
+        "1.0",
+        weights_profile="clean_v1",
+        effective_mode="clean",
+        confidence="high",
+        aspect_confidence={"pitch": "high"},
+        warnings=["KEY_SHIFT_APPLIED"],
+        unavailable_aspects={},
+        key_shift_semitones=-2.0,
+        accompaniment_level=0.05,
+        voiced_ratio=0.9,
+        alignment_cost=10.0,
+    )
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT overall_score, feedback_text, scoring_version FROM analyses WHERE id = %s",
+            """
+            SELECT overall_score, feedback_text, scoring_version, weights_profile,
+                   effective_mode, confidence, aspect_confidence_json, warnings_json,
+                   unavailable_aspects_json, key_shift_semitones, accompaniment_level,
+                   voiced_ratio, alignment_cost
+            FROM analyses WHERE id = %s
+            """,
             (analysis_id,),
         )
-        overall_score, feedback_text, scoring_version = _fetchone(cur)
+        (
+            overall_score,
+            feedback_text,
+            scoring_version,
+            weights_profile,
+            effective_mode,
+            confidence,
+            aspect_confidence_json,
+            warnings_json,
+            unavailable_aspects_json,
+            key_shift_semitones,
+            accompaniment_level,
+            voiced_ratio,
+            alignment_cost,
+        ) = _fetchone(cur)
     assert float(overall_score) == 88.4
     assert feedback_text == "Overall score: 88/100."
     assert scoring_version == "1.0"
+    assert weights_profile == "clean_v1"
+    assert effective_mode == "clean"
+    assert confidence == "high"
+    assert aspect_confidence_json == {"pitch": "high"}
+    assert warnings_json == ["KEY_SHIFT_APPLIED"]
+    assert unavailable_aspects_json == {}
+    assert float(key_shift_semitones) == -2.0
+    assert float(accompaniment_level) == 0.05
+    assert float(voiced_ratio) == 0.9
+    assert float(alignment_cost) == 10.0
 
     # A job's queue_position is only meaningful while queued (spec 8.2:
     # "Absent once no longer queued") -- set it as if this row were still
@@ -229,26 +279,33 @@ def test_record_progress_snapshot_upserts_on_retry(
     user_id, _song_id, analysis_id = seeded_ids
     repo = PostgresAnalysisRepository(conn)
 
-    repo.record_progress_snapshot(analysis_id, user_id, 60.0)
+    repo.record_progress_snapshot(analysis_id, user_id, 60.0, mode="clean", confidence="high")
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT user_id, overall_score FROM progress_snapshots WHERE analysis_id = %s",
+            "SELECT user_id, overall_score, mode, confidence FROM progress_snapshots "
+            "WHERE analysis_id = %s",
             (analysis_id,),
         )
-        stored_user_id, overall_score = _fetchone(cur)
+        stored_user_id, overall_score, mode, confidence = _fetchone(cur)
     assert str(stored_user_id) == user_id
     assert float(overall_score) == 60.0
+    assert mode == "clean"
+    assert confidence == "high"
 
     # A retried job re-scores under the same analysis_id (spec 6.8) -- the
-    # chart point must update in place, not duplicate (FR-35).
-    repo.record_progress_snapshot(analysis_id, user_id, 75.0)
+    # chart point must update in place, not duplicate (FR-35), and can
+    # switch mode (FR-30: retry in `mixed` after an accompaniment warning).
+    repo.record_progress_snapshot(analysis_id, user_id, 75.0, mode="mixed", confidence="medium")
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT overall_score FROM progress_snapshots WHERE analysis_id = %s", (analysis_id,)
+            "SELECT overall_score, mode, confidence FROM progress_snapshots WHERE analysis_id = %s",
+            (analysis_id,),
         )
         rows = cur.fetchall()
     assert len(rows) == 1
     assert float(rows[0][0]) == 75.0
+    assert rows[0][1] == "mixed"
+    assert rows[0][2] == "medium"
 
 
 def test_mark_failed(conn: psycopg.Connection, seeded_ids: tuple[str, str, str]) -> None:

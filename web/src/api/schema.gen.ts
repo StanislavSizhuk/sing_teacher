@@ -442,6 +442,14 @@ export interface components {
       /** Format: uuid */
       song_id: string
       /**
+       * @description Which analysis mode to run (spec 2.3, FR-27). `clean` (a cappella) is recommended and scores all six aspects at the highest accuracy; `mixed` (any accompaniment) scores four, at reduced accuracy. Defaults to `clean` when omitted.
+       * @default clean
+       * @enum {string}
+       */
+      mode: 'clean' | 'mixed'
+      /** @description Whether the user may have sung in a different key (FR-31, spec 6.8). Defaults to `false` for `clean` and `true` for `mixed` when omitted. */
+      allow_transposition?: boolean
+      /**
        * Format: binary
        * @description The user's recording. mp3/wav/m4a/flac/ogg, checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
        */
@@ -457,6 +465,16 @@ export interface components {
        * @enum {string}
        */
       status: 'queued' | 'waiting_for_reference' | 'processing' | 'done' | 'failed' | 'canceled'
+      /**
+       * @description The mode the user chose at POST /analyses (spec 2.3, FR-27).
+       * @enum {string}
+       */
+      mode: 'clean' | 'mixed'
+      /**
+       * @description What the worker's stage A3 actually reconciled `mode` to once it saw the recording (spec 6.16) -- e.g. auto-downgraded from `mixed` to `clean` when no accompaniment was detected (FR-29). Absent until that stage completes.
+       * @enum {string}
+       */
+      effective_mode?: 'clean' | 'mixed'
       /** @description 1-based position among currently queued jobs. Absent once no longer queued. */
       queue_position?: number
       /** @description Set by the worker once processing starts. */
@@ -487,6 +505,25 @@ export interface components {
       feedback_text?: string
       /** @description Which SCORING_WEIGHTS this analysis was scored under (spec 6.4). */
       scoring_version?: string
+      /** @description Which named weight profile (`clean_v1`/`mixed_v1`, spec 6.14) overall_score was computed under. Two analyses with different weights_profile must never have their overall_score compared directly without flagging that to the user (FR-49). */
+      weights_profile?: string
+      /**
+       * @description Overall reliability of this analysis's scores (spec 6.15, FR-47). Absent until stage 11 (aggregate) completes.
+       * @enum {string}
+       */
+      confidence?: 'high' | 'medium' | 'low'
+      /** @description Per-aspect confidence level, keyed by aspect name (spec 6.15). */
+      aspect_confidence?: {
+        [key: string]: 'high' | 'medium' | 'low'
+      }
+      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`. The client localizes these to a human-readable message rather than showing the code (FR-47). */
+      warnings?: string[]
+      /** @description Every aspect this mode does not score, mapped to a machine-readable reason (FR-41) -- e.g. `breath`/`timbre` under `NOT_MEASURABLE_WITH_ACCOMPANIMENT` in `mixed`. An aspect listed here is never also present as a `0` in its `*_score` field: it is simply absent there. */
+      unavailable_aspects?: {
+        [key: string]: string
+      }
+      /** @description Applied tonality-normalization shift in semitones, if any (spec 6.8, FR-46). Absent when no shift was applied. */
+      key_shift_semitones?: number
       piano_roll?: components['schemas']['PianoRoll']
       /** Format: date-time */
       created_at: string
@@ -511,11 +548,15 @@ export interface components {
       /** @description deviation_cents already thresholded against PIANO_ROLL_OFF_PITCH_CENTS. */
       off_pitch: boolean[]
     }
-    /** @description One dated overall_score sample for the FR-35 progress chart. */
+    /** @description One dated overall_score sample for the FR-35/FR-49 progress chart. mode/confidence are denormalized alongside overall_score: two points with different mode were scored under different weights_profile (spec 6.14) and must be visually distinguished, never presented as directly comparable (FR-49). */
     ProgressPoint: {
       /** Format: uuid */
       analysis_id: string
       overall_score: number
+      /** @enum {string} */
+      mode: 'clean' | 'mixed'
+      /** @enum {string} */
+      confidence?: 'high' | 'medium' | 'low'
       /** Format: date-time */
       created_at: string
     }

@@ -345,9 +345,21 @@ checks both orderings score identically.
     `progress_snapshots` (`record_progress_snapshot`, E5, FR-35) -- keyed
     on `analysis_id` so a job that fails and later succeeds on retry
     updates its one chart point instead of duplicating it. `weights_profile`/
-    `confidence`/`aspect_confidence`/`unavailable_aspects`/`key_shift_semitones`
-    live in `stages_json["aggregate"]` today; dedicated `analyses` columns
-    for them are M4's job (docs/adr/0026).
+    `effective_mode`/`confidence`/`aspect_confidence`/`warnings`/
+    `unavailable_aspects`/`key_shift_semitones`/`accompaniment_level`/
+    `voiced_ratio`/`alignment_cost` are denormalized into their own
+    `analyses` columns in the same write (migration 00011, M4), not just
+    left inside `stages_json["aggregate"]` -- the Go API reads them
+    straight off the row for `GET /analyses/{id}` (spec 8.4) rather than
+    parsing the worker's internal stage JSON. `mode`/`allow_transposition`
+    flow the other way: the Go API writes them at `POST /analyses` (FR-27,
+    FR-31), and `AnalysisRecord.mode`/`allow_transposition` (read back by
+    `PostgresAnalysisRepository.get_by_id`) is what the job handler builds
+    each analysis's `AnalysisContext` from -- no more hardcoded `clean`
+    default in the handler. `progress_snapshots.mode`/`confidence` are
+    written by the same `record_progress_snapshot` call, so the FR-49
+    progress chart can tell a `clean` point from a `mixed` one without a
+    second query.
 
 ## Mixed mode (M3, spec 6.6, 6.8, 6.14-6.16)
 
