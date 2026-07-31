@@ -35,6 +35,8 @@ func TestSongRepository_GetOrCreate_NewContentHash_Creates(t *testing.T) {
 	require.True(t, created)
 	require.Equal(t, song.ID, got.ID)
 	require.False(t, got.CreatedAt.IsZero())
+	require.Equal(t, domain.SongPrepPending, got.PrepStatus, "a new song starts pending, its cold path not yet run")
+	require.False(t, got.ReadyForAnalysis())
 }
 
 func TestSongRepository_GetOrCreate_ExistingContentHash_ReusesRow(t *testing.T) {
@@ -65,4 +67,50 @@ func TestSongRepository_GetByID_NotFound(t *testing.T) {
 
 	_, err := repo.GetByID(context.Background(), uuid.New())
 	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestSongRepository_Delete_RemovesRow(t *testing.T) {
+	pool := setupPostgres(t)
+	repo := postgres.NewSongRepository(pool)
+	ctx := context.Background()
+
+	song, _, err := repo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	require.NoError(t, repo.Delete(ctx, song.ID))
+
+	_, err = repo.GetByID(ctx, song.ID)
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestSongRepository_RetryPrep_FailedSong_ResetsToPending(t *testing.T) {
+	pool := setupPostgres(t)
+	repo := postgres.NewSongRepository(pool)
+	ctx := context.Background()
+
+	song, _, err := repo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	_, execErr := pool.Exec(ctx,
+		`UPDATE songs SET prep_status = 'failed', prep_error_code = 'INTERNAL', prep_stage = 'separate_reference' WHERE id = $1`,
+		song.ID)
+	require.NoError(t, execErr)
+
+	retried, err := repo.RetryPrep(ctx, song.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.SongPrepPending, retried.PrepStatus)
+	require.Nil(t, retried.PrepErrorCode)
+	require.Nil(t, retried.PrepStage)
+}
+
+func TestSongRepository_RetryPrep_NotFailed_ReturnsErrSongPrepNotFailed(t *testing.T) {
+	pool := setupPostgres(t)
+	repo := postgres.NewSongRepository(pool)
+	ctx := context.Background()
+
+	song, _, err := repo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	_, err = repo.RetryPrep(ctx, song.ID)
+	require.ErrorIs(t, err, domain.ErrSongPrepNotFailed)
 }

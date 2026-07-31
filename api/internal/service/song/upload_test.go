@@ -16,9 +16,14 @@ const testMaxUploadBytes = 15 * 1024 * 1024
 
 func newTestService(t *testing.T, repo *fakeRepository, processor *fakeAudioProcessor, yt *fakeYouTubeClient, maxAudioSeconds int, youtubeEnabled bool) *song.Service {
 	t.Helper()
+	return newTestServiceWithQueue(t, repo, processor, yt, &fakePrepQueueProducer{}, maxAudioSeconds, testMaxUploadBytes, youtubeEnabled)
+}
+
+func newTestServiceWithQueue(t *testing.T, repo *fakeRepository, processor *fakeAudioProcessor, yt *fakeYouTubeClient, prepQueue *fakePrepQueueProducer, maxAudioSeconds int, maxUploadBytes int64, youtubeEnabled bool) *song.Service {
+	t.Helper()
 	files, err := storage.NewFileStore(t.TempDir())
 	require.NoError(t, err)
-	return song.NewService(repo, processor, files, yt, testMaxUploadBytes, maxAudioSeconds, youtubeEnabled)
+	return song.NewService(repo, processor, files, yt, prepQueue, maxUploadBytes, maxAudioSeconds, 20, youtubeEnabled)
 }
 
 func validWAVReader() *strings.Reader {
@@ -93,7 +98,7 @@ func TestAddFromUpload_DuplicateContent_Reused(t *testing.T) {
 func TestAddFromUpload_TooLarge_Rejected(t *testing.T) {
 	files, err := storage.NewFileStore(t.TempDir())
 	require.NoError(t, err)
-	svc := song.NewService(newFakeRepository(), &fakeAudioProcessor{}, files, nil, 4, 360, false)
+	svc := song.NewService(newFakeRepository(), &fakeAudioProcessor{}, files, nil, &fakePrepQueueProducer{}, 4, 360, 20, false)
 
 	_, _, err = svc.AddFromUpload(context.Background(), "Song", "", strings.NewReader("this is way more than four bytes"))
 	require.ErrorIs(t, err, domain.ErrAudioTooLarge)
@@ -104,7 +109,7 @@ func TestAddFromUpload_TranscodeError_CleansUpTempFile(t *testing.T) {
 	files, err := storage.NewFileStore(dir)
 	require.NoError(t, err)
 	processor := &fakeAudioProcessor{seconds: 10, transcodeErr: errBoom}
-	svc := song.NewService(newFakeRepository(), processor, files, nil, testMaxUploadBytes, 360, false)
+	svc := song.NewService(newFakeRepository(), processor, files, nil, &fakePrepQueueProducer{}, testMaxUploadBytes, 360, 20, false)
 
 	_, _, err = svc.AddFromUpload(context.Background(), "Song", "", validWAVReader())
 	require.Error(t, err)
@@ -112,4 +117,51 @@ func TestAddFromUpload_TranscodeError_CleansUpTempFile(t *testing.T) {
 	entries, err := readDirNames(dir)
 	require.NoError(t, err)
 	require.Empty(t, entries, "the raw scratch file must be cleaned up even when transcode fails")
+}
+
+func TestAddFromUpload_NewSong_EnqueuesPrep(t *testing.T) {
+	repo := newFakeRepository()
+	processor := &fakeAudioProcessor{seconds: 120}
+	prepQueue := &fakePrepQueueProducer{}
+	svc := newTestServiceWithQueue(t, repo, processor, nil, prepQueue, 360, testMaxUploadBytes, false)
+
+	got, reused, err := svc.AddFromUpload(context.Background(), "Song", "", validWAVReader())
+	require.NoError(t, err)
+	require.False(t, reused)
+	require.Len(t, prepQueue.published, 1, "FR-15: a genuinely new song must be queued onto songs:prep immediately")
+	require.Equal(t, got.ID, prepQueue.published[0])
+}
+
+func TestAddFromUpload_DuplicateContent_DoesNotReenqueuePrep(t *testing.T) {
+	repo := newFakeRepository()
+	fixedContent := []byte("identical canonical bytes")
+	processor := &fakeAudioProcessor{seconds: 120, transcodeBytes: fixedContent}
+	prepQueue := &fakePrepQueueProducer{}
+	svc := newTestServiceWithQueue(t, repo, processor, nil, prepQueue, 360, testMaxUploadBytes, false)
+	ctx := context.Background()
+
+	_, _, err := svc.AddFromUpload(ctx, "First", "", validWAVReader())
+	require.NoError(t, err)
+	_, reused, err := svc.AddFromUpload(ctx, "Second", "", validWAVReader())
+	require.NoError(t, err)
+	require.True(t, reused)
+	require.Len(t, prepQueue.published, 1, "a reused song must not trigger a second cold-path run")
+}
+
+func TestAddFromUpload_PrepQueueFull_RollsBackSongAndFile(t *testing.T) {
+	dir := t.TempDir()
+	files, err := storage.NewFileStore(dir)
+	require.NoError(t, err)
+	repo := newFakeRepository()
+	processor := &fakeAudioProcessor{seconds: 120}
+	prepQueue := &fakePrepQueueProducer{full: true}
+	svc := song.NewService(repo, processor, files, nil, prepQueue, testMaxUploadBytes, 360, 20, false)
+
+	_, _, err = svc.AddFromUpload(context.Background(), "Song", "", validWAVReader())
+	require.ErrorIs(t, err, domain.ErrQueueFull)
+	require.Empty(t, repo.byID, "a song whose prep could not be admitted must not be left behind")
+
+	entries, err := readDirNames(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries, "the canonical file must be cleaned up when songs:prep is full")
 }

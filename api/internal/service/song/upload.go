@@ -71,9 +71,15 @@ func (s *Service) AddFromUpload(ctx context.Context, title, artist string, file 
 		// Another song already holds this content hash: the file we just
 		// canonicalized is a throwaway duplicate of audio that (if its TTL
 		// has not yet swept it) already lives under the existing song's id.
+		// Its cold path is already queued, running, or done -- never re-enqueue it.
 		_ = s.files.Remove(canonicalPath)
+		return saved, true, nil
 	}
-	return saved, !created, nil
+
+	if err := s.enqueuePrep(ctx, saved.ID, canonicalPath); err != nil {
+		return nil, false, err
+	}
+	return saved, false, nil
 }
 
 // hashFile returns the hex sha256 of path's contents -- the dedup key for

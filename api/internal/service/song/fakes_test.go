@@ -47,6 +47,68 @@ func (f *fakeRepository) GetByID(_ context.Context, id uuid.UUID) (*domain.Song,
 	return cloneSong(s), nil
 }
 
+func (f *fakeRepository) Delete(_ context.Context, id uuid.UUID) error {
+	s, ok := f.byID[id]
+	if !ok {
+		return nil
+	}
+	delete(f.byContentHash, s.ContentHash)
+	delete(f.byID, id)
+	return nil
+}
+
+func (f *fakeRepository) RetryPrep(_ context.Context, id uuid.UUID) (*domain.Song, error) {
+	s, ok := f.byID[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if s.PrepStatus != domain.SongPrepFailed {
+		return nil, domain.ErrSongPrepNotFailed
+	}
+	s.PrepStatus = domain.SongPrepPending
+	s.PrepErrorCode = nil
+	s.PrepStage = nil
+	return cloneSong(s), nil
+}
+
+// --- fakePrepQueueProducer -----------------------------------------------
+
+// fakePrepQueueProducer stands in for internal/queue.Producer on songs:prep:
+// tracks published job ids and can be made to reject admission (maxLen=0)
+// to exercise the queue-full rollback path.
+type fakePrepQueueProducer struct {
+	published  []uuid.UUID
+	full       bool
+	lengthErr  error
+	enqueueErr error
+}
+
+func (f *fakePrepQueueProducer) Length(_ context.Context) (int64, error) {
+	if f.lengthErr != nil {
+		return 0, f.lengthErr
+	}
+	return int64(len(f.published)), nil
+}
+
+func (f *fakePrepQueueProducer) EnqueueIfUnderLimit(_ context.Context, songID uuid.UUID, _ int64) (string, bool, error) {
+	if f.enqueueErr != nil {
+		return "", false, f.enqueueErr
+	}
+	if f.full {
+		return "", false, nil
+	}
+	f.published = append(f.published, songID)
+	return "0-1", true, nil
+}
+
+func (f *fakePrepQueueProducer) Enqueue(_ context.Context, songID uuid.UUID) (string, error) {
+	if f.enqueueErr != nil {
+		return "", f.enqueueErr
+	}
+	f.published = append(f.published, songID)
+	return "0-1", nil
+}
+
 // --- fakeAudioProcessor --------------------------------------------------
 
 // fakeAudioProcessor stands in for ffmpeg/ffprobe: Transcode writes real

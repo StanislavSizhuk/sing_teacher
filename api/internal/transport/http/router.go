@@ -57,6 +57,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Route("/songs", func(r chi.Router) {
 				r.Post("/", deps.Song.Create)
 				r.Get("/{id}", deps.Song.Get)
+				r.Post("/{id}/prepare", deps.Song.Prepare)
 			})
 			r.Route("/analyses", func(r chi.Router) {
 				r.Post("/", deps.Analysis.Create)

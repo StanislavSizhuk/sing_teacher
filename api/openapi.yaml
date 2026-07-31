@@ -239,9 +239,12 @@ paths:
       responses:
         "201":
           description: >
-            Song ready to reference. `reused: true` means an identical song
-            (by content hash / YouTube video id) already existed and this
-            upload was deduplicated (spec 6.6, FR-13).
+            Song catalogued and its cold path (reference separation,
+            transcription, pitch curve) queued immediately (spec 6.2, FR-15)
+            -- poll GET /songs/{id} or watch prep_status for readiness.
+            `reused: true` means an identical song (by content hash /
+            YouTube video id) already existed, this upload was deduplicated
+            (spec 6.6, FR-13), and no new cold path run was queued.
           content:
             application/json:
               schema:
@@ -262,6 +265,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /songs/{id}:
     get:
@@ -293,6 +298,44 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /songs/{id}/prepare:
+    post:
+      operationId: retrySongPrep
+      summary: Restart a song's cold path after it failed, without re-uploading (FR-17)
+      tags: [songs]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: Re-queued onto songs:prep. Progress follows via GET /songs/{id} (FR-14).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Song"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No song with this id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The song's prep_status is not 'failed' (`SONG_PREP_NOT_FAILED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
   /analyses:
     post:
       operationId: enqueueAnalysis
@@ -308,7 +351,11 @@ paths:
               $ref: "#/components/schemas/EnqueueAnalysisRequest"
       responses:
         "202":
-          description: Queued. Position updates follow over the WebSocket channel.
+          description: >
+            Queued, or waiting_for_reference if the song's cold path
+            hasn't reached ready yet (spec 6.2, 10.3, FR-16) -- it
+            transitions to queued automatically, no re-submission needed.
+            Position updates follow over the WebSocket channel.
           content:
             application/json:
               schema:
@@ -317,6 +364,18 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No song with this id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The song's cold path already failed (`REFERENCE_PREP_FAILED`, FR-17).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "413":
           description: Recording exceeds MAX_UPLOAD_MB.
           content:
@@ -667,7 +726,7 @@ components:
 
     Song:
       type: object
-      required: [id, source_type, title, duration_sec, vocal_stem_processed, reused, created_at]
+      required: [id, source_type, title, duration_sec, prep_status, lyrics_available, reused, created_at]
       properties:
         id:
           type: string
@@ -681,9 +740,28 @@ components:
           type: string
         duration_sec:
           type: integer
-        vocal_stem_processed:
+        prep_status:
+          type: string
+          enum: [pending, processing, ready, failed]
+          description: >-
+            Cold path lifecycle (spec 6.2, 10, FR-14). `ready` means the
+            reference vocal stem and pitch curve are cached and any queued
+            analysis of this song can run immediately.
+        prep_stage:
+          type: string
+          description: The P-stage currently running (P1-P4, spec 6.4). Absent when not processing.
+        prep_error_code:
+          type: string
+          description: Set once prep_status is 'failed' (FR-17); restart via POST /songs/{id}/prepare.
+        lyrics_available:
           type: boolean
-          description: Reference separation+transcription status (FR-14). False until stage E3.
+          description: >-
+            False when P3 (Whisper transcription) failed or timed out for
+            this song -- optional stage, never blocks the cold path (FR-18).
+        prepared_at:
+          type: string
+          format: date-time
+          description: When prep_status last reached 'ready'. Absent until then.
         reused:
           type: boolean
           description: True if this submission deduplicated onto an existing song (spec 6.6, FR-13).
@@ -716,7 +794,11 @@ components:
           format: uuid
         status:
           type: string
-          enum: [queued, processing, done, failed, canceled]
+          enum: [queued, waiting_for_reference, processing, done, failed, canceled]
+          description: >-
+            waiting_for_reference means the job was created before its
+            song's cold path reached ready; it transitions to queued
+            automatically once the song is ready (spec 6.2, 10.3, FR-16).
         queue_position:
           type: integer
           description: 1-based position among currently queued jobs. Absent once no longer queued.

@@ -54,13 +54,20 @@ func (s *Service) AddFromYouTube(ctx context.Context, rawURL, titleOverride stri
 		return nil, false, fmt.Errorf("save youtube song: %w", err)
 	}
 	if !created {
+		// Its cold path is already queued, running, or done -- never re-enqueue it.
 		return saved, true, nil
 	}
 
+	canonicalPath := s.files.PathFor(filePrefix, saved.ID)
 	if err := s.downloadAndStore(ctx, videoURL, saved.ID); err != nil {
-		// The song row now exists without its canonical audio file. That
-		// audio is only needed once the E3 worker exists to consume it;
-		// until then this is a harmless, documented gap (see ARCHITECTURE.md).
+		// The song row now exists without its canonical audio file, so it
+		// can never leave prep_status='pending' -- known, documented gap
+		// (see ARCHITECTURE.md) rather than compensating-transaction
+		// machinery for a network call that already failed.
+		return nil, false, err
+	}
+
+	if err := s.enqueuePrep(ctx, saved.ID, canonicalPath); err != nil {
 		return nil, false, err
 	}
 	return saved, false, nil

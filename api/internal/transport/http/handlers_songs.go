@@ -28,6 +28,8 @@ type SongUploader interface {
 	AddFromUpload(ctx context.Context, title, artist string, file io.Reader) (result *domain.Song, reused bool, err error)
 	AddFromYouTube(ctx context.Context, rawURL, titleOverride string) (result *domain.Song, reused bool, err error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Song, error)
+	// RetryPrep restarts a song's cold path after it failed (FR-17).
+	RetryPrep(ctx context.Context, id uuid.UUID) (*domain.Song, error)
 }
 
 // SongHandler serves /api/v1/songs.
@@ -143,4 +145,20 @@ func (h *SongHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, newSongResponse(result, false))
+}
+
+// Prepare handles POST /songs/{id}/prepare: restarts a song's cold path
+// after it failed, without asking for the file again (FR-17).
+func (h *SongHandler) Prepare(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		badRequest(w, r, "invalid song id")
+		return
+	}
+	result, err := h.svc.RetryPrep(r.Context(), id)
+	if err != nil {
+		writeServiceError(h.logger, w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, newSongResponse(result, false))
 }
