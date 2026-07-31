@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Generic, Protocol, Self, TypeVar
 
+from vocalcoach.models.mode import ALL_MODES, Mode
 from vocalcoach.models.results import StageResult
 
 
@@ -55,6 +56,19 @@ class PipelineStage(ABC, Generic[ContextT]):  # noqa: UP046
     #: records a `StageStatus.SKIPPED` result instead and moves on. Default
     #: True preserves every stage's existing behavior unless it opts out.
     required: bool = True
+    #: Which analysis modes this stage runs under at all (spec 12.3: "a
+    #: stage declares required and modes -- the runner itself decides
+    #: whether to run it"). Default is both -- most stages (preprocess,
+    #: align, rhythm, ...) are mode-agnostic; A5/A4 and timbre/breath are
+    #: the ones that actually narrow this (spec 6.5 table). A stage must
+    #: never branch on `if mode == ...` internally to decide whether its
+    #: own *work* applies (spec 12.3) -- that decision belongs here, where
+    #: `PipelineRunner` can act on it before ever starting the stage's
+    #: subprocess. Reading `context.mode` for a stage's own business logic
+    #: (spec 6.8's transposition conditions, for one) is unrelated to this
+    #: and stays allowed -- this attribute is only about whether to run at
+    #: all, not what a stage that does run chooses to do.
+    modes: frozenset[Mode] = ALL_MODES
 
     @abstractmethod
     def run(self, context: ContextT) -> StageResult:

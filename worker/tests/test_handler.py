@@ -20,7 +20,7 @@ class FakeRunner:
         self._error = error
         self.calls: list[tuple[Any, Any, Any]] = []
 
-    def run(self, job_id, context, already_done, progress, should_stop):
+    def run(self, job_id, context, already_done, progress, should_stop, mode=None):
         self.calls.append((job_id, context, already_done))
         if self._error is not None:
             raise self._error

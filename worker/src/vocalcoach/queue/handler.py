@@ -18,6 +18,7 @@ from vocalcoach.config import ASPECTS, Settings
 from vocalcoach.errors import InternalPipelineError, PipelineError
 from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
+from vocalcoach.models.mode import Mode
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
 from vocalcoach.pipeline.events import EventPublisher
@@ -37,6 +38,7 @@ class Runner(Protocol):
         already_done: dict[str, StageResult],
         progress: ProgressReporter,
         should_stop: Callable[[], bool],
+        mode: Mode | None = None,
     ) -> RunOutcome: ...
 
 
@@ -150,7 +152,9 @@ class AnalysisJobHandler:
         progress = AnalysisProgressReporter(self._analyses, analysis_id)
 
         try:
-            outcome = self._runner.run(analysis_id, context, analysis.stages, progress, should_stop)
+            outcome = self._runner.run(
+                analysis_id, context, analysis.stages, progress, should_stop, mode=context.mode
+            )
         except PipelineError as exc:
             logger.warning(
                 "analysis failed",
@@ -260,6 +264,11 @@ class AnalysisJobHandler:
             reference_vocal_stem_path=song.vocal_stem_path,
             reference_pitch=song.reference_pitch,
             reference_lyrics=song.lyrics,
+            # `AnalysisRecord` carries no `mode`/`allow_transposition` yet --
+            # FR-27's mode selector is `POST /analyses` and `analyses.mode`
+            # (spec 8.3), which M4 (spec 18) wires end to end. Until then
+            # every analysis runs the `clean` path (this context's own
+            # field default), matching FR-27's documented default anyway.
         )
 
     def _cleanup(
