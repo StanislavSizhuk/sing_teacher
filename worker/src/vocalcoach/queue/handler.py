@@ -69,10 +69,25 @@ class HandlerAnalysisRepository(Protocol):
     def save_user_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None: ...
     def prune_dense_stage_fields(self, analysis_id: str) -> None: ...
     def save_scoring_result(
-        self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
+        self,
+        analysis_id: str,
+        overall_score: float,
+        feedback_text: str,
+        scoring_version: str,
+        *,
+        weights_profile: str,
+        effective_mode: str,
+        confidence: str,
+        aspect_confidence: dict[str, str],
+        warnings: list[str],
+        unavailable_aspects: dict[str, str],
+        key_shift_semitones: float | None,
+        accompaniment_level: float,
+        voiced_ratio: float,
+        alignment_cost: float,
     ) -> None: ...
     def record_progress_snapshot(
-        self, analysis_id: str, user_id: str, overall_score: float
+        self, analysis_id: str, user_id: str, overall_score: float, *, mode: str, confidence: str
     ) -> None: ...
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None: ...
     def mark_failed(self, analysis_id: str, error_code: str) -> None: ...
@@ -149,7 +164,13 @@ class AnalysisJobHandler:
         # elsewhere rather than a property of this analysis's own input --
         # let it propagate uncaught so the job stays pending for reclaim
         # (spec 10.1) instead of being recorded as a normal analysis failure.
-        context = self._build_context(analysis.id, analysis.user_id, analysis.song_id)
+        context = self._build_context(
+            analysis.id,
+            analysis.user_id,
+            analysis.song_id,
+            mode=analysis.mode,
+            allow_transposition=analysis.allow_transposition,
+        )
         progress = AnalysisProgressReporter(self._analyses, analysis_id)
 
         try:
@@ -232,19 +253,38 @@ class AnalysisJobHandler:
         if aggregate_result is not None:
             data = aggregate_result.data
             overall_score = float(data["overall_score"])
+            confidence = str(data["confidence"])
+            key_shift = data["key_shift_semitones"]
             self._analyses.save_scoring_result(
                 analysis_id,
                 overall_score=overall_score,
                 feedback_text=str(data["feedback_text"]),
                 scoring_version=str(data["scoring_version"]),
+                weights_profile=str(data["weights_profile"]),
+                effective_mode=str(data["effective_mode"]),
+                confidence=confidence,
+                aspect_confidence=dict(data["aspect_confidence"]),
+                warnings=list(data["warnings"]),
+                unavailable_aspects=dict(data["unavailable_aspects"]),
+                key_shift_semitones=float(key_shift) if key_shift is not None else None,
+                accompaniment_level=float(data["accompaniment_level"]),
+                voiced_ratio=float(data["voiced_ratio"]),
+                alignment_cost=float(data["alignment_cost"]),
             )
             # FR-35/G4: one progress-chart point per analysis, recorded here
             # rather than in AggregateStage itself -- stage 11 has no
             # database access (spec 12.3), and record.user_id is only known
-            # to the handler, not the pipeline context.
-            self._analyses.record_progress_snapshot(analysis_id, record.user_id, overall_score)
+            # to the handler, not the pipeline context. Carries mode/
+            # confidence too (spec 7, FR-49): the progress chart must be
+            # able to tell a clean-mode point from a mixed-mode one without
+            # a second round trip to analyses.
+            self._analyses.record_progress_snapshot(
+                analysis_id, record.user_id, overall_score, mode=record.mode, confidence=confidence
+            )
 
-    def _build_context(self, analysis_id: str, user_id: str, song_id: str) -> AnalysisContext:
+    def _build_context(
+        self, analysis_id: str, user_id: str, song_id: str, *, mode: Mode, allow_transposition: bool
+    ) -> AnalysisContext:
         song = self._songs.get_by_id(song_id)
         if song.vocal_stem_path is None or song.reference_pitch is None:
             # The scheduler only ever hands this handler an analysis whose
@@ -265,11 +305,8 @@ class AnalysisJobHandler:
             reference_vocal_stem_path=song.vocal_stem_path,
             reference_pitch=song.reference_pitch,
             reference_lyrics=song.lyrics,
-            # `AnalysisRecord` carries no `mode`/`allow_transposition` yet --
-            # FR-27's mode selector is `POST /analyses` and `analyses.mode`
-            # (spec 8.3), which M4 (spec 18) wires end to end. Until then
-            # every analysis runs the `clean` path (this context's own
-            # field default), matching FR-27's documented default anyway.
+            mode=mode,
+            allow_transposition=allow_transposition,
         )
 
     def _cleanup(

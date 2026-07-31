@@ -37,7 +37,8 @@ class FakeAnalysisRepo:
         self.saved_user_pitch_curves: list[tuple[str, PitchCurve]] = []
         self.pruned_dense_fields: list[str] = []
         self.saved_scoring_results: list[tuple[str, float, str, str]] = []
-        self.progress_snapshots: list[tuple[str, str, float]] = []
+        self.saved_scoring_extras: list[dict[str, Any]] = []
+        self.progress_snapshots: list[tuple[str, str, float, str, str]] = []
 
     def mark_processing(self, analysis_id, first_stage, stage_index, total_stages):
         pass
@@ -60,13 +61,44 @@ class FakeAnalysisRepo:
     def prune_dense_stage_fields(self, analysis_id):
         self.pruned_dense_fields.append(analysis_id)
 
-    def save_scoring_result(self, analysis_id, overall_score, feedback_text, scoring_version):
+    def save_scoring_result(
+        self,
+        analysis_id,
+        overall_score,
+        feedback_text,
+        scoring_version,
+        *,
+        weights_profile,
+        effective_mode,
+        confidence,
+        aspect_confidence,
+        warnings,
+        unavailable_aspects,
+        key_shift_semitones,
+        accompaniment_level,
+        voiced_ratio,
+        alignment_cost,
+    ):
         self.saved_scoring_results.append(
             (analysis_id, overall_score, feedback_text, scoring_version)
         )
+        self.saved_scoring_extras.append(
+            {
+                "weights_profile": weights_profile,
+                "effective_mode": effective_mode,
+                "confidence": confidence,
+                "aspect_confidence": aspect_confidence,
+                "warnings": warnings,
+                "unavailable_aspects": unavailable_aspects,
+                "key_shift_semitones": key_shift_semitones,
+                "accompaniment_level": accompaniment_level,
+                "voiced_ratio": voiced_ratio,
+                "alignment_cost": alignment_cost,
+            }
+        )
 
-    def record_progress_snapshot(self, analysis_id, user_id, overall_score):
-        self.progress_snapshots.append((analysis_id, user_id, overall_score))
+    def record_progress_snapshot(self, analysis_id, user_id, overall_score, *, mode, confidence):
+        self.progress_snapshots.append((analysis_id, user_id, overall_score, mode, confidence))
 
     def mark_done(self, analysis_id, model_versions):
         self.marked_done.append((analysis_id, model_versions))
@@ -160,6 +192,37 @@ def test_handle_success_deletes_recording(settings, tmp_path: Path) -> None:
     assert not recording_path.exists()  # FR-43: done -> recording deleted now
 
 
+def test_build_context_carries_mode_and_allow_transposition_from_the_record(
+    settings, tmp_path: Path
+) -> None:
+    """M4 (spec 18): `AnalysisRecord.mode`/`allow_transposition`, populated
+    from the Go API's `analyses.mode`/`allow_transposition` columns
+    (FR-27, FR-31), must reach the pipeline's `AnalysisContext` unchanged --
+    this is what selects A4 (melody extraction) over A5 and the mixed
+    weight profile downstream (spec 6.1, 6.14)."""
+    analysis = AnalysisRecord(
+        id="a10",
+        user_id="u1",
+        song_id="s1",
+        status="processing",
+        stages={},
+        mode="mixed",
+        allow_transposition=True,
+    )
+    runner = FakeRunner(outcome=RunOutcome.COMPLETED)
+    handler = AnalysisJobHandler(
+        runner, FakeAnalysisRepo(analysis), FakeSongRepo(_ready_song()), FakeEvents(), settings, {}
+    )
+    _touch(settings.audio_storage_dir / "analysis-a10.wav")
+
+    handler.handle("a10", should_stop=lambda: False)
+
+    assert len(runner.calls) == 1
+    context = runner.calls[0][1]
+    assert context.mode == "mixed"
+    assert context.allow_transposition is True
+
+
 def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
     settings, tmp_path: Path
 ) -> None:
@@ -193,7 +256,17 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
                 "overall_score": 88.4,
                 "feedback_text": "Overall score: 88/100.",
                 "scoring_version": "1.0",
+                "weights_profile": "clean_v1",
                 "aspect_scores": {"pitch": 87.5, "rhythm": 91.0},
+                "unavailable_aspects": {},
+                "effective_mode": "clean",
+                "confidence": "high",
+                "aspect_confidence": {"pitch": "high", "rhythm": "high"},
+                "warnings": [],
+                "key_shift_semitones": None,
+                "accompaniment_level": 0.05,
+                "voiced_ratio": 0.9,
+                "alignment_cost": 10.0,
             },
         ),
         # Not every stage necessarily carries a "score" key -- must not crash on one that doesn't.
@@ -217,7 +290,21 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
     assert analyses.saved_piano_rolls == [("a5", piano_roll)]
     assert analyses.saved_user_pitch_curves == [("a5", user_pitch_curve)]
     assert analyses.saved_scoring_results == [("a5", 88.4, "Overall score: 88/100.", "1.0")]
-    assert analyses.progress_snapshots == [("a5", "u1", 88.4)]
+    assert analyses.saved_scoring_extras == [
+        {
+            "weights_profile": "clean_v1",
+            "effective_mode": "clean",
+            "confidence": "high",
+            "aspect_confidence": {"pitch": "high", "rhythm": "high"},
+            "warnings": [],
+            "unavailable_aspects": {},
+            "key_shift_semitones": None,
+            "accompaniment_level": 0.05,
+            "voiced_ratio": 0.9,
+            "alignment_cost": 10.0,
+        }
+    ]
+    assert analyses.progress_snapshots == [("a5", "u1", 88.4, "clean", "high")]
     # The dense curves above are pruned back out of stages_json only after
     # they're durably saved elsewhere, and before mark_done (spec 7.3, 6.8).
     assert analyses.pruned_dense_fields == ["a5"]

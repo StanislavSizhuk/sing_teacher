@@ -176,20 +176,29 @@ class PostgresAnalysisRepository:
     def get_by_id(self, analysis_id: str) -> AnalysisRecord:
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT id, user_id, song_id, status, stages_json FROM analyses WHERE id = %s",
+                """
+                SELECT id, user_id, song_id, status, stages_json, mode, allow_transposition
+                FROM analyses WHERE id = %s
+                """,
                 (analysis_id,),
             )
             row = cur.fetchone()
         if row is None:
             raise LookupError(f"analysis {analysis_id} not found")
-        id_, user_id, song_id, status, stages_json = row
+        id_, user_id, song_id, status, stages_json, mode, allow_transposition = row
         stages = (
             {name: StageResult.model_validate(value) for name, value in stages_json.items()}
             if stages_json
             else {}
         )
         return AnalysisRecord(
-            id=str(id_), user_id=str(user_id), song_id=str(song_id), status=status, stages=stages
+            id=str(id_),
+            user_id=str(user_id),
+            song_id=str(song_id),
+            status=status,
+            stages=stages,
+            mode=mode,
+            allow_transposition=allow_transposition,
         )
 
     def mark_processing(
@@ -281,31 +290,74 @@ class PostgresAnalysisRepository:
         self._conn.commit()
 
     def save_scoring_result(
-        self, analysis_id: str, overall_score: float, feedback_text: str, scoring_version: str
+        self,
+        analysis_id: str,
+        overall_score: float,
+        feedback_text: str,
+        scoring_version: str,
+        *,
+        weights_profile: str,
+        effective_mode: str,
+        confidence: str,
+        aspect_confidence: dict[str, str],
+        warnings: list[str],
+        unavailable_aspects: dict[str, str],
+        key_shift_semitones: float | None,
+        accompaniment_level: float,
+        voiced_ratio: float,
+        alignment_cost: float,
     ) -> None:
+        """Persists stage 11's full output (spec 6.14, 6.15, 6.19, FR-41),
+        not just the score/text/version M2 already wrote -- `weights_profile`
+        and `effective_mode` are what makes a stored `overall_score`
+        interpretable at all (spec 6.14: scores under different profiles are
+        not directly comparable), the rest is the confidence model and its
+        diagnostic inputs (spec 6.15, FR-47).
+        """
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
-                SET overall_score = %s, feedback_text = %s, scoring_version = %s
+                SET overall_score = %s, feedback_text = %s, scoring_version = %s,
+                    weights_profile = %s, effective_mode = %s, confidence = %s,
+                    aspect_confidence_json = %s, warnings_json = %s,
+                    unavailable_aspects_json = %s, key_shift_semitones = %s,
+                    accompaniment_level = %s, voiced_ratio = %s, alignment_cost = %s
                 WHERE id = %s
                 """,
-                (overall_score, feedback_text, scoring_version, analysis_id),
+                (
+                    overall_score,
+                    feedback_text,
+                    scoring_version,
+                    weights_profile,
+                    effective_mode,
+                    confidence,
+                    Jsonb(aspect_confidence),
+                    Jsonb(warnings),
+                    Jsonb(unavailable_aspects),
+                    key_shift_semitones,
+                    accompaniment_level,
+                    voiced_ratio,
+                    alignment_cost,
+                    analysis_id,
+                ),
             )
         self._conn.commit()
 
     def record_progress_snapshot(
-        self, analysis_id: str, user_id: str, overall_score: float
+        self, analysis_id: str, user_id: str, overall_score: float, *, mode: str, confidence: str
     ) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO progress_snapshots (user_id, analysis_id, overall_score)
-                VALUES (%s, %s, %s)
+                INSERT INTO progress_snapshots
+                    (user_id, analysis_id, overall_score, mode, confidence)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (analysis_id)
-                DO UPDATE SET overall_score = EXCLUDED.overall_score, created_at = now()
+                DO UPDATE SET overall_score = EXCLUDED.overall_score, mode = EXCLUDED.mode,
+                    confidence = EXCLUDED.confidence, created_at = now()
                 """,
-                (user_id, analysis_id, overall_score),
+                (user_id, analysis_id, overall_score, mode, confidence),
             )
         self._conn.commit()
 
