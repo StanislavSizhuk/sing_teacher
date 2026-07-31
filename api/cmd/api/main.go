@@ -175,12 +175,16 @@ func run(cfg *config.Config, logger *slog.Logger) error {
 	}
 	go runAudioSweepTicker(ctx, logger, files, orphanedAudioMaxAge)
 
-	queueProducer := queue.NewProducer(redisClient)
-	if err := queueProducer.EnsureGroup(ctx); err != nil {
-		return fmt.Errorf("prepare analysis queue: %w", err)
+	analysesQueue := queue.NewProducer(redisClient, queue.AnalysesStreamName, queue.AnalysesGroupName)
+	if err := analysesQueue.EnsureGroup(ctx); err != nil {
+		return fmt.Errorf("prepare analyses:run queue: %w", err)
+	}
+	songsPrepQueue := queue.NewProducer(redisClient, queue.SongsPrepStreamName, queue.SongsPrepGroupName)
+	if err := songsPrepQueue.EnsureGroup(ctx); err != nil {
+		return fmt.Errorf("prepare songs:prep queue: %w", err)
 	}
 
-	songSvc, analysisSvc := buildSongAndAnalysisServices(cfg, pool, redisClient, files, queueProducer)
+	songSvc, analysisSvc := buildSongAndAnalysisServices(cfg, pool, redisClient, files, analysesQueue, songsPrepQueue)
 	progressSvc := progress.NewService(postgres.NewProgressRepository(pool))
 	hub := ws.NewHub()
 	accessParser := security.NewJWTIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL)
@@ -280,19 +284,20 @@ func buildSongAndAnalysisServices(
 	pool *pgxpool.Pool,
 	redisClient *redis.Client,
 	files *storage.FileStore,
-	queueProducer *queue.Producer,
+	analysesQueue *queue.Producer,
+	songsPrepQueue *queue.Producer,
 ) (*song.Service, *analysis.Service) {
 	runner := sysproc.NewExecRunner()
 	processor := media.NewProcessor(runner, ffmpegPath, ffprobePath)
 	ytClient := youtube.NewClient(runner, ytDlpPath)
 
 	songRepo := postgres.NewSongRepository(pool)
-	songSvc := song.NewService(songRepo, processor, files, ytClient,
-		cfg.Limits.MaxUploadBytes, cfg.Limits.MaxAudioSeconds, cfg.Features.YouTubeImport)
+	songSvc := song.NewService(songRepo, processor, files, ytClient, songsPrepQueue,
+		cfg.Limits.MaxUploadBytes, cfg.Limits.MaxAudioSeconds, cfg.Limits.QueueMaxLength, cfg.Features.YouTubeImport)
 
 	analysisRepo := postgres.NewAnalysisRepository(pool)
 	rateLimiter := redisrepo.NewAnalysisRateLimiter(redisClient, cfg.Limits.UserAnalysesPerHour, time.Hour)
-	analysisSvc := analysis.NewService(analysisRepo, songRepo, processor, files, rateLimiter, queueProducer,
+	analysisSvc := analysis.NewService(analysisRepo, songRepo, processor, files, rateLimiter, analysesQueue,
 		cfg.Limits.MaxUploadBytes, cfg.Limits.MaxAudioSeconds, cfg.Limits.QueueMaxLength)
 
 	return songSvc, analysisSvc

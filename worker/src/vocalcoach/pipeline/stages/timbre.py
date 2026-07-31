@@ -30,7 +30,7 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
-class TimbreStage(PipelineStage):
+class TimbreStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `score` (0-100), `mean_cosine_similarity`."""
 
     name = STAGE_NAME

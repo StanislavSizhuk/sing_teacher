@@ -16,12 +16,24 @@ import (
 // analysis whose position changed (including this one) -- the caller pushes
 // that map over WebSocket (spec 10, FR-22).
 //
-// Cheap checks run before any expensive work: song existence, rate limit,
-// then queue capacity, all before the recording is even read off the wire.
+// Cheap checks run before any expensive work: song existence and prep
+// status, rate limit, then queue capacity, all before the recording is even
+// read off the wire. If the song's cold path hasn't reached ready yet, the
+// job is still created and the recording still stored -- it starts in
+// waiting_for_reference instead of queued, and is never published onto
+// analyses:run until the song wakes it (spec 6.2, 10.3, FR-16). If the
+// song's cold path already failed, the request is rejected outright: no
+// point creating a job that can only ever sit waiting for a prep that will
+// never retry itself (FR-17).
 func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recording io.Reader) (a *domain.Analysis, positions map[uuid.UUID]int, err error) {
-	if _, err := s.songs.GetByID(ctx, songID); err != nil {
+	song, err := s.songs.GetByID(ctx, songID)
+	if err != nil {
 		return nil, nil, err
 	}
+	if song.PrepStatus == domain.SongPrepFailed {
+		return nil, nil, domain.ErrReferencePrepFailed
+	}
+	songReady := song.PrepStatus == domain.SongPrepReady
 
 	allowed, retryAfter, err := s.rateLimiter.Allow(ctx, userID)
 	if err != nil {
@@ -31,12 +43,17 @@ func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recordi
 		return nil, nil, &domain.ThrottledError{Err: domain.ErrAnalysisRateLimited, RetryAfter: retryAfter}
 	}
 
-	queueLen, err := s.queue.Length(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("check queue length: %w", err)
-	}
-	if queueLen >= s.queueMaxLength {
-		return nil, nil, domain.ErrQueueFull
+	if songReady {
+		// Only meaningful as a pre-check against analyses:run -- a waiting
+		// job never touches that stream yet, so it cannot contribute to or
+		// be blocked by this cap (spec 10.1 caps each stream independently).
+		queueLen, err := s.queue.Length(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("check queue length: %w", err)
+		}
+		if queueLen >= s.queueMaxLength {
+			return nil, nil, domain.ErrQueueFull
+		}
 	}
 
 	rawPath, err := s.files.WriteTemp(recording, s.maxUploadBytes)
@@ -65,10 +82,21 @@ func (s *Service) Enqueue(ctx context.Context, userID, songID uuid.UUID, recordi
 		return nil, nil, fmt.Errorf("transcode recording: %w", err)
 	}
 
-	created := &domain.Analysis{ID: analysisID, UserID: userID, SongID: songID, Status: domain.AnalysisStatusQueued}
+	initialStatus := domain.AnalysisStatusWaitingForReference
+	if songReady {
+		initialStatus = domain.AnalysisStatusQueued
+	}
+	created := &domain.Analysis{ID: analysisID, UserID: userID, SongID: songID, Status: initialStatus}
 	if err := s.analyses.Create(ctx, created); err != nil {
 		_ = s.files.Remove(canonicalPath)
 		return nil, nil, fmt.Errorf("create analysis: %w", err)
+	}
+
+	if !songReady {
+		// No ML job exists yet to admit onto analyses:run -- the song's cold
+		// path wakes this row into queued and publishes it itself once
+		// prep_status reaches ready (spec 10.3).
+		return created, nil, nil
 	}
 
 	// The queueLen check above is only a cheap pre-check to skip expensive

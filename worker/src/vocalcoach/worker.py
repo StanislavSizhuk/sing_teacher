@@ -1,20 +1,25 @@
 """Worker process entrypoint: loads config, wires every dependency, and
-runs the Redis Streams consumer loop until told to stop (spec 10, 18/E3).
+runs the two-stream priority scheduler until told to stop (spec 10, 18/E3, M2).
 """
 
 from __future__ import annotations
 
-import functools
 import logging
+import socket
 import threading
 from pathlib import Path
 
 import psycopg
 import redis
 
-from vocalcoach.audio.paths import song_stem_path
 from vocalcoach.config import Settings, load_settings
+from vocalcoach.constants import (
+    MAX_CLAIM_ATTEMPTS,
+    PENDING_CLAIM_MIN_IDLE,
+    SONGS_PREP_PENDING_CLAIM_MIN_IDLE,
+)
 from vocalcoach.logging_setup import configure_logging
+from vocalcoach.models.context import AnalysisContext, SongPrepContext
 from vocalcoach.pipeline.base import ParallelGroup, PipelineStage
 from vocalcoach.pipeline.registry import ModelRegistry
 from vocalcoach.pipeline.runner import PipelineRunner
@@ -24,6 +29,8 @@ from vocalcoach.pipeline.stages.breath import BreathStage
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
+from vocalcoach.pipeline.stages.prep_reference import PrepReferenceStage
+from vocalcoach.pipeline.stages.prep_reference_pitch import PrepReferencePitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.recording_condition import RecordingConditionStage
 from vocalcoach.pipeline.stages.rhythm import RhythmStage
@@ -34,6 +41,14 @@ from vocalcoach.pipeline.stages.vibrato import VibratoStage
 from vocalcoach.queue.consumer import Consumer
 from vocalcoach.queue.events import RedisEventPublisher
 from vocalcoach.queue.handler import AnalysisJobHandler
+from vocalcoach.queue.prep_handler import SongPrepJobHandler
+from vocalcoach.queue.scheduler import Scheduler
+from vocalcoach.queue.streams import (
+    ANALYSES_GROUP_NAME,
+    ANALYSES_STREAM_NAME,
+    SONGS_PREP_GROUP_NAME,
+    SONGS_PREP_STREAM_NAME,
+)
 from vocalcoach.repositories.postgres import PostgresAnalysisRepository, PostgresSongRepository
 
 logger = logging.getLogger(__name__)
@@ -50,10 +65,12 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 def build_stages(
     settings: Settings, registry: ModelRegistry
-) -> list[PipelineStage | ParallelGroup]:
-    """Stages 1-9 in spec 6.2 order (stage 3 is the spec 6.9 shared feature
-    cache), plus the spec 6.9 recording-condition check (12) and
-    aggregation (13).
+) -> list[PipelineStage[AnalysisContext] | ParallelGroup[AnalysisContext]]:
+    """Warm path A1-A10 in spec 6.5 order (A6 is the spec 6.9 shared
+    feature cache), plus the spec 6.9 recording-condition check and
+    aggregation. Only ever run once a song's cold path has reached `ready`
+    (spec 6.2, M2) -- Demucs/Whisper/reference-pitch detection are not
+    here, they ran once in the cold path (`build_prep_stages`).
 
     The five aspect stages depend only on `align`/`pitch`'s already-finished
     output, never on each other, so they run as one `ParallelGroup` (spec
@@ -64,17 +81,16 @@ def build_stages(
     No stage here takes a `SongRepository`: every stage instance is
     pickled across `PipelineRunner`'s spawn-based subprocess boundary
     (runner.py), and a repository holding a live DB connection isn't
-    picklable. `AnalysisJobHandler` persists transcribe's/pitch's song-cache
-    writes itself, from the parent process, once the pipeline finishes.
+    picklable.
     """
-    aspect_stages: tuple[PipelineStage, ...] = (
+    aspect_stages: tuple[PipelineStage[AnalysisContext], ...] = (
         RhythmStage(),
         VibratoStage(),
         DynamicsStage(),
         TimbreStage(),
         BreathStage(),
     )
-    aspects: list[PipelineStage | ParallelGroup] = (
+    aspects: list[PipelineStage[AnalysisContext] | ParallelGroup[AnalysisContext]] = (
         [ParallelGroup(aspect_stages)]
         if settings.pipeline_parallel_aspects
         else list(aspect_stages)
@@ -82,20 +98,32 @@ def build_stages(
 
     return [
         PreprocessStage(ffmpeg_path=FFMPEG_PATH),
-        SeparateReferenceStage(
-            registry.vocal_separator(),
-            # functools.partial, not a lambda: same pickling constraint --
-            # pickle cannot serialize a closure over a local variable, only
-            # a plain function plus its already-bound arguments.
-            stem_path_for_song=functools.partial(song_stem_path, settings.song_stems_dir),
-        ),
         FeaturesStage(),
-        TranscribeStage(registry.transcriber()),
         AlignStage(),
         PitchStage(registry.pitch_detector()),
         *aspects,
         RecordingConditionStage(),
         AggregateStage(settings.scoring_weights, settings.scoring_version),
+    ]
+
+
+def build_prep_stages(
+    settings: Settings, registry: ModelRegistry
+) -> list[PipelineStage[SongPrepContext]]:
+    """Cold path P1-P4 in spec 6.4 order: reference decode/normalize,
+    Demucs separation, optional Whisper transcription (FR-18), reference
+    pitch curve. Runs once per song, asynchronously, well before any
+    analysis waits on it (spec 6.2, 10, M2). Shares `registry` with
+    `build_stages` -- the same pitch engine instance detects both sides of
+    every comparison (spec 6.6 determinism), and `ModelRegistry` already
+    guarantees Demucs/Whisper are never resident together (spec 6.5)
+    regardless of which stage set loads them.
+    """
+    return [
+        PrepReferenceStage(ffmpeg_path=FFMPEG_PATH),
+        SeparateReferenceStage(registry.vocal_separator()),
+        TranscribeStage(registry.transcriber()),
+        PrepReferencePitchStage(registry.pitch_detector()),
     ]
 
 
@@ -148,16 +176,40 @@ def run() -> None:
         pitch_engine=settings.pitch_engine,
         weights_dir=settings.model_weights_dir,
     )
-    stages = build_stages(settings, registry)
-    runner = PipelineRunner(stages, analyses, events)
+
+    warm_runner = PipelineRunner(build_stages(settings, registry), events)
+    cold_runner = PipelineRunner(build_prep_stages(settings, registry), events)
     model_versions = {
         "demucs": settings.demucs_model,
         "whisper": settings.whisper_model,
         "pitch_engine": settings.pitch_engine,
     }
-    handler = AnalysisJobHandler(runner, analyses, songs, events, settings, model_versions)
-    consumer = Consumer(redis_client, handler)
-    consumer.install_signal_handlers()
+    analysis_handler = AnalysisJobHandler(
+        warm_runner, analyses, songs, events, settings, model_versions
+    )
+    prep_handler = SongPrepJobHandler(cold_runner, songs, analyses, events, redis_client, settings)
+
+    consumer_name = f"worker-{socket.gethostname()}"
+    analyses_consumer = Consumer(
+        redis_client,
+        analysis_handler,
+        ANALYSES_STREAM_NAME,
+        ANALYSES_GROUP_NAME,
+        PENDING_CLAIM_MIN_IDLE,
+        MAX_CLAIM_ATTEMPTS,
+        consumer_name,
+    )
+    songs_prep_consumer = Consumer(
+        redis_client,
+        prep_handler,
+        SONGS_PREP_STREAM_NAME,
+        SONGS_PREP_GROUP_NAME,
+        SONGS_PREP_PENDING_CLAIM_MIN_IDLE,
+        MAX_CLAIM_ATTEMPTS,
+        consumer_name,
+    )
+    scheduler = Scheduler(analyses_consumer, songs_prep_consumer, analyses)
+    scheduler.install_signal_handlers()
 
     heartbeat_stop = threading.Event()
     heartbeat_thread = threading.Thread(target=_heartbeat_loop, args=(heartbeat_stop,), daemon=True)
@@ -165,7 +217,7 @@ def run() -> None:
 
     try:
         logger.info("ready, waiting for jobs")
-        consumer.run_forever()
+        scheduler.run_forever()
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=5)

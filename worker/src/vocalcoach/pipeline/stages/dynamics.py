@@ -26,7 +26,7 @@ def _correlation(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(a, b)[0, 1])
 
 
-class DynamicsStage(PipelineStage):
+class DynamicsStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `score` (0-100), `correlation` (-1..1, Pearson
     correlation between the two loudness contours; negative correlation
     scores 0 rather than going negative).

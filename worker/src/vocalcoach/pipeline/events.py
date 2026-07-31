@@ -14,3 +14,12 @@ class EventPublisher(Protocol):
     def publish_done(self, analysis_id: str) -> None: ...
 
     def publish_failed(self, analysis_id: str, error_code: str, message: str) -> None: ...
+
+    def publish_queued(self, analysis_id: str, position: int) -> None:
+        """An analysis just transitioned into `queued` outside the usual
+        `POST /analyses` request/response cycle -- specifically, woken from
+        `waiting_for_reference` once its song's cold path reached `ready`
+        (spec 10.3, FR-16). The HTTP-driven path still pushes this over the
+        WS hub directly (`ws.Hub.BroadcastPositions`); this is the
+        worker-initiated equivalent for `SongPrepJobHandler`."""
+        ...

@@ -17,6 +17,7 @@ interface QueueStatusProps {
 }
 
 const STATUS_LABEL: Record<Analysis['status'], string> = {
+  waiting_for_reference: 'Waiting for song to be ready',
   queued: 'Queued',
   processing: 'Processing',
   done: 'Done',
@@ -60,6 +61,12 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
           {analysis.status === 'queued' && analysis.queuePosition !== undefined && (
             <p className="text-ink-700">You are number {analysis.queuePosition} in the queue.</p>
           )}
+          {analysis.status === 'waiting_for_reference' && (
+            <p className="text-ink-700">
+              This song is still being prepared. Your analysis will start automatically once it's
+              ready.
+            </p>
+          )}
           {analysis.currentStage && (
             <p className="text-ink-700">
               Stage
@@ -91,7 +98,7 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
 
       <ErrorAlert error={cancel.error ?? retry.error} />
       <div className="flex gap-2">
-        {analysis?.status === 'queued' && (
+        {(analysis?.status === 'queued' || analysis?.status === 'waiting_for_reference') && (
           <Button variant="danger" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
             {cancel.isPending ? 'Canceling…' : 'Cancel'}
           </Button>

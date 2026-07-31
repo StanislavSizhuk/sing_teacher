@@ -14,7 +14,8 @@ import pytest
 import redis
 
 from vocalcoach.constants import MAX_CLAIM_ATTEMPTS, PENDING_CLAIM_MIN_IDLE
-from vocalcoach.queue.consumer import GROUP_NAME, STREAM_NAME, Consumer
+from vocalcoach.queue.consumer import Consumer
+from vocalcoach.queue.streams import ANALYSES_GROUP_NAME, ANALYSES_STREAM_NAME
 
 pytestmark = pytest.mark.integration
 
@@ -34,7 +35,7 @@ def redis_client() -> Generator[redis.Redis, None, None]:
     client.ping()
     client.flushall()
     with contextlib.suppress(redis.ResponseError):
-        client.xgroup_create(STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+        client.xgroup_create(ANALYSES_STREAM_NAME, ANALYSES_GROUP_NAME, id="0", mkstream=True)
     yield client
     client.flushall()
     client.close()
@@ -57,10 +58,24 @@ class RecordingHandler:
         self.permanently_failed.append(analysis_id)
 
 
+def _make_consumer(client: redis.Redis, handler: RecordingHandler, consumer_name: str) -> Consumer:
+    return Consumer(
+        client,
+        handler,
+        ANALYSES_STREAM_NAME,
+        ANALYSES_GROUP_NAME,
+        PENDING_CLAIM_MIN_IDLE,
+        MAX_CLAIM_ATTEMPTS,
+        consumer_name,
+    )
+
+
 def _deliver_one(client: redis.Redis, consumer_name: str) -> tuple[str, dict[str, str]]:
     raw = cast(
         _ReadGroupReply,
-        client.xreadgroup(GROUP_NAME, consumer_name, {STREAM_NAME: ">"}, count=1, block=2000),
+        client.xreadgroup(
+            ANALYSES_GROUP_NAME, consumer_name, {ANALYSES_STREAM_NAME: ">"}, count=1, block=2000
+        ),
     )
     assert raw, "expected a delivered entry"
     _stream, messages = raw[0]
@@ -69,84 +84,107 @@ def _deliver_one(client: redis.Redis, consumer_name: str) -> tuple[str, dict[str
 
 def test_happy_path_acks(redis_client: redis.Redis) -> None:
     handler = RecordingHandler(terminal=True)
-    consumer = Consumer(redis_client, handler, consumer_name="test-consumer")
-    redis_client.xadd(STREAM_NAME, {"job_id": "job-1"})
+    consumer = _make_consumer(redis_client, handler, "test-consumer")
+    redis_client.xadd(ANALYSES_STREAM_NAME, {"job_id": "job-1"})
 
     entry_id, fields = _deliver_one(redis_client, "test-consumer")
-    consumer._process_entry(entry_id, fields)
+    consumer.process_entry(entry_id, fields, lambda: False)
 
     assert handler.handled == ["job-1"]
-    assert redis_client.xpending_range(STREAM_NAME, GROUP_NAME, min="-", max="+", count=10) == []
+    assert (
+        redis_client.xpending_range(
+            ANALYSES_STREAM_NAME, ANALYSES_GROUP_NAME, min="-", max="+", count=10
+        )
+        == []
+    )
 
 
 def test_crashed_handler_leaves_job_pending(redis_client: redis.Redis) -> None:
     handler = RecordingHandler(raise_error=True)
-    consumer = Consumer(redis_client, handler, consumer_name="test-consumer")
-    redis_client.xadd(STREAM_NAME, {"job_id": "job-2"})
+    consumer = _make_consumer(redis_client, handler, "test-consumer")
+    redis_client.xadd(ANALYSES_STREAM_NAME, {"job_id": "job-2"})
 
     entry_id, fields = _deliver_one(redis_client, "test-consumer")
-    consumer._process_entry(entry_id, fields)
+    consumer.process_entry(entry_id, fields, lambda: False)
 
     assert handler.handled == ["job-2"]
     pending = cast(
         list[dict[str, Any]],
-        redis_client.xpending_range(STREAM_NAME, GROUP_NAME, min="-", max="+", count=10),
+        redis_client.xpending_range(
+            ANALYSES_STREAM_NAME, ANALYSES_GROUP_NAME, min="-", max="+", count=10
+        ),
     )
     assert len(pending) == 1 and pending[0]["message_id"] == entry_id
 
 
 def test_reclaim_stuck_job_reprocesses_it(redis_client: redis.Redis) -> None:
     handler = RecordingHandler(terminal=True)
-    consumer = Consumer(redis_client, handler, consumer_name="reclaimer")
-    entry_id = cast(str, redis_client.xadd(STREAM_NAME, {"job_id": "job-3"}))
-    redis_client.xreadgroup(GROUP_NAME, "dead-consumer", {STREAM_NAME: ">"}, count=1)
+    consumer = _make_consumer(redis_client, handler, "reclaimer")
+    entry_id = cast(str, redis_client.xadd(ANALYSES_STREAM_NAME, {"job_id": "job-3"}))
+    redis_client.xreadgroup(
+        ANALYSES_GROUP_NAME, "dead-consumer", {ANALYSES_STREAM_NAME: ">"}, count=1
+    )
     redis_client.xclaim(
-        STREAM_NAME,
-        GROUP_NAME,
+        ANALYSES_STREAM_NAME,
+        ANALYSES_GROUP_NAME,
         "dead-consumer",
         0,
         [entry_id],
         idle=PENDING_CLAIM_MIN_IDLE * 1000 + 1000,
     )
 
-    consumer._reclaim_stuck_jobs()
+    consumer.reclaim_stuck_jobs()
 
     assert handler.handled == ["job-3"]
-    assert redis_client.xpending_range(STREAM_NAME, GROUP_NAME, min="-", max="+", count=10) == []
+    assert (
+        redis_client.xpending_range(
+            ANALYSES_STREAM_NAME, ANALYSES_GROUP_NAME, min="-", max="+", count=10
+        )
+        == []
+    )
 
 
 def test_read_next_recreates_a_missing_consumer_group(redis_client: redis.Redis) -> None:
     """A previous version let NOGROUP (the stream/group disappearing out
     from under a running worker) escape run_forever's loop uncaught,
     crashing the whole process instead of just this one read attempt."""
-    consumer = Consumer(redis_client, RecordingHandler(), consumer_name="test-consumer")
-    redis_client.delete(STREAM_NAME)
+    consumer = _make_consumer(redis_client, RecordingHandler(), "test-consumer")
+    redis_client.delete(ANALYSES_STREAM_NAME)
 
-    entries = consumer._read_next()
+    entries = consumer.read_next(block_ms=1)
 
     assert entries == []
-    groups = cast(list[dict[str, Any]], redis_client.xinfo_groups(STREAM_NAME))
-    assert any(group["name"] == GROUP_NAME for group in groups)
+    groups = cast(list[dict[str, Any]], redis_client.xinfo_groups(ANALYSES_STREAM_NAME))
+    assert any(group["name"] == ANALYSES_GROUP_NAME for group in groups)
 
 
 def test_reclaim_gives_up_after_max_claim_attempts(redis_client: redis.Redis) -> None:
     handler = RecordingHandler(terminal=True)
-    consumer = Consumer(redis_client, handler, consumer_name="reclaimer2")
-    entry_id = cast(str, redis_client.xadd(STREAM_NAME, {"job_id": "job-4"}))
-    redis_client.xreadgroup(GROUP_NAME, "dead-consumer-2", {STREAM_NAME: ">"}, count=1)
+    consumer = _make_consumer(redis_client, handler, "reclaimer2")
+    entry_id = cast(str, redis_client.xadd(ANALYSES_STREAM_NAME, {"job_id": "job-4"}))
+    redis_client.xreadgroup(
+        ANALYSES_GROUP_NAME, "dead-consumer-2", {ANALYSES_STREAM_NAME: ">"}, count=1
+    )
     for _ in range(MAX_CLAIM_ATTEMPTS + 2):
-        redis_client.xclaim(STREAM_NAME, GROUP_NAME, "dead-consumer-2", 0, [entry_id])
+        redis_client.xclaim(
+            ANALYSES_STREAM_NAME, ANALYSES_GROUP_NAME, "dead-consumer-2", 0, [entry_id]
+        )
     redis_client.xclaim(
-        STREAM_NAME,
-        GROUP_NAME,
+        ANALYSES_STREAM_NAME,
+        ANALYSES_GROUP_NAME,
         "dead-consumer-2",
         0,
         [entry_id],
         idle=PENDING_CLAIM_MIN_IDLE * 1000 + 1000,
     )
 
-    consumer._reclaim_stuck_jobs()
+    consumer.reclaim_stuck_jobs()
 
     assert handler.handled == []
     assert handler.permanently_failed == ["job-4"]
-    assert redis_client.xpending_range(STREAM_NAME, GROUP_NAME, min="-", max="+", count=10) == []
+    assert (
+        redis_client.xpending_range(
+            ANALYSES_STREAM_NAME, ANALYSES_GROUP_NAME, min="-", max="+", count=10
+        )
+        == []
+    )

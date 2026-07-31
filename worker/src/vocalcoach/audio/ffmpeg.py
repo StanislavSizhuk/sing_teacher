@@ -9,6 +9,8 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from vocalcoach.audio.io import read_mono, write_mono
+from vocalcoach.audio.loudness import measure_and_normalize
 from vocalcoach.errors import InternalPipelineError, StageTimeout
 
 # Bounds a single ffmpeg invocation's virtual memory so a hostile or corrupt
@@ -85,3 +87,38 @@ def canonicalize_for_pipeline(
         timeout_seconds=timeout_seconds,
         stage_name=stage_name,
     )
+
+
+def decode_and_normalize(
+    ffmpeg_path: str,
+    src_path: Path,
+    dst_path: Path,
+    *,
+    sample_rate_hz: int,
+    target_loudness_lufs: float,
+    timeout_seconds: float,
+    stage_name: str,
+) -> float:
+    """Stage 1 (spec 6.3.1, split into A1/P1 by M2's cold/warm path):
+    canonicalize `src_path` via ffmpeg, then loudness-normalize it in place
+    at `dst_path`. Shared by both the warm path's recording-only
+    `PreprocessStage` and the cold path's reference-only `PrepReferenceStage`
+    -- identical decode/normalize mechanics either way (spec 12.1 DRY).
+
+    Returns the pre-normalization loudness in LUFS (for downstream
+    too-quiet checks and observability).
+    """
+    resampled = dst_path.with_suffix(".resampled.wav")
+    canonicalize_for_pipeline(
+        ffmpeg_path,
+        src_path,
+        resampled,
+        sample_rate_hz=sample_rate_hz,
+        timeout_seconds=timeout_seconds,
+        stage_name=stage_name,
+    )
+    samples, sample_rate = read_mono(resampled)
+    normalized, raw_loudness = measure_and_normalize(samples, sample_rate, target_loudness_lufs)
+    write_mono(dst_path, normalized, sample_rate)
+    resampled.unlink(missing_ok=True)
+    return raw_loudness

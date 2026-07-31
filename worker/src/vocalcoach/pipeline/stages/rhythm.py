@@ -23,7 +23,7 @@ def _score_from_mean_abs_offset_ms(mean_abs_offset_ms: float) -> float:
     return round(100.0 * (1.0 - fraction), 1)
 
 
-class RhythmStage(PipelineStage):
+class RhythmStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `score` (0-100), `mean_abs_offset_ms` (over every
     reference onset paired with its nearest user onset -- an unpaired-in-
     tolerance onset still contributes its full offset, it is not dropped

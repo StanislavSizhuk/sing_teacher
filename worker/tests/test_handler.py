@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 
 from vocalcoach.config import load_settings
-from vocalcoach.errors import NoVoiceDetected
-from vocalcoach.models.audio import Lyrics, LyricsWord, PianoRollData, PitchCurve
+from vocalcoach.errors import InternalPipelineError, NoVoiceDetected
+from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.runner import RunOutcome
@@ -20,8 +20,8 @@ class FakeRunner:
         self._error = error
         self.calls: list[tuple[Any, Any, Any]] = []
 
-    def run(self, analysis_id, context, already_done, should_stop):
-        self.calls.append((analysis_id, context, already_done))
+    def run(self, job_id, context, already_done, progress, should_stop):
+        self.calls.append((job_id, context, already_done))
         if self._error is not None:
             raise self._error
         return self._outcome
@@ -38,6 +38,12 @@ class FakeAnalysisRepo:
         self.pruned_dense_fields: list[str] = []
         self.saved_scoring_results: list[tuple[str, float, str, str]] = []
         self.progress_snapshots: list[tuple[str, str, float]] = []
+
+    def mark_processing(self, analysis_id, first_stage, stage_index, total_stages):
+        pass
+
+    def save_stage_progress(self, analysis_id, result, next_stage, next_stage_index, total_stages):
+        pass
 
     def get_by_id(self, analysis_id):
         return self._record
@@ -72,23 +78,16 @@ class FakeAnalysisRepo:
 class FakeSongRepo:
     def __init__(self, record: SongRecord) -> None:
         self._record = record
-        self.saved_lyrics: list[tuple[str, Any]] = []
-        self.saved_pitch_curves: list[tuple[str, Any]] = []
 
     def get_by_id(self, song_id):
         return self._record
-
-    def save_lyrics(self, song_id, lyrics) -> None:
-        self.saved_lyrics.append((song_id, lyrics))
-
-    def mark_vocal_stem_processed(self, song_id, reference_pitch) -> None:
-        self.saved_pitch_curves.append((song_id, reference_pitch))
 
 
 class FakeEvents:
     def __init__(self) -> None:
         self.done: list[str] = []
         self.failed: list[tuple[str, str, str]] = []
+        self.queued: list[tuple[str, int]] = []
 
     def publish_stage(self, analysis_id, name, index, total):
         pass
@@ -98,6 +97,23 @@ class FakeEvents:
 
     def publish_failed(self, analysis_id, error_code, message):
         self.failed.append((analysis_id, error_code, message))
+
+    def publish_queued(self, analysis_id, position):
+        self.queued.append((analysis_id, position))
+
+
+def _ready_song(song_id: str = "s1") -> SongRecord:
+    """A song whose cold path already reached `ready` -- the only state
+    the scheduler ever hands an analysis to `AnalysisJobHandler` for (spec
+    10.2, M2)."""
+    return SongRecord(
+        id=song_id,
+        content_hash="h",
+        duration_sec=180,
+        prep_status="ready",
+        vocal_stem_path=Path(f"/data/song-stems/song-stem-{song_id}.wav"),
+        reference_pitch=PitchCurve(hop_seconds=0.01, hz=[440.0, None]),
+    )
 
 
 @pytest.fixture
@@ -123,17 +139,16 @@ def _touch(path: Path) -> Path:
     return path
 
 
-def test_handle_success_deletes_recording_and_cached_song_source(settings, tmp_path: Path) -> None:
+def test_handle_success_deletes_recording(settings, tmp_path: Path) -> None:
     analysis = AnalysisRecord(id="a1", user_id="u1", song_id="s1", status="processing", stages={})
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=True)
     runner = FakeRunner(outcome=RunOutcome.COMPLETED)
     analyses = FakeAnalysisRepo(analysis)
-    songs = FakeSongRepo(song)
     events = FakeEvents()
-    handler = AnalysisJobHandler(runner, analyses, songs, events, settings, {"demucs": "htdemucs"})
+    handler = AnalysisJobHandler(
+        runner, analyses, FakeSongRepo(_ready_song()), events, settings, {"demucs": "htdemucs"}
+    )
 
     recording_path = _touch(settings.audio_storage_dir / "analysis-a1.wav")
-    song_path = _touch(settings.audio_storage_dir / "song-s1.wav")
 
     terminal = handler.handle("a1", should_stop=lambda: False)
 
@@ -142,7 +157,6 @@ def test_handle_success_deletes_recording_and_cached_song_source(settings, tmp_p
     assert analyses.progress_snapshots == []  # no "aggregate" stage in this fixture's stages={}
     assert events.done == ["a1"]
     assert not recording_path.exists()  # FR-43: done -> recording deleted now
-    assert not song_path.exists()  # already cached -> original upload no longer needed
 
 
 def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
@@ -187,12 +201,12 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
     analysis = AnalysisRecord(
         id="a5", user_id="u1", song_id="s1", status="processing", stages=stages
     )
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=True)
     runner = FakeRunner(outcome=RunOutcome.COMPLETED)
     analyses = FakeAnalysisRepo(analysis)
-    handler = AnalysisJobHandler(runner, analyses, FakeSongRepo(song), FakeEvents(), settings, {})
+    handler = AnalysisJobHandler(
+        runner, analyses, FakeSongRepo(_ready_song()), FakeEvents(), settings, {}
+    )
     _touch(settings.audio_storage_dir / "analysis-a5.wav")
-    _touch(settings.audio_storage_dir / "song-s1.wav")
 
     handler.handle("a5", should_stop=lambda: False)
 
@@ -211,105 +225,16 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
     assert analyses.marked_done == [("a5", {})]
 
 
-def test_handle_success_persists_song_cache_on_cache_miss(settings, tmp_path: Path) -> None:
-    """transcribe/pitch cannot write songs.lyrics_json/reference_pitch_json
-    themselves (their StageResult crosses PipelineRunner's spawn boundary,
-    which a live DB connection can't survive) -- the handler must do it
-    from their StageResults once the pipeline finishes (spec 6.6)."""
-    lyrics = Lyrics(language="en", words=[LyricsWord(word="la", start=0.0, end=0.2)])
-    reference_pitch = PitchCurve(hop_seconds=0.01, hz=[440.0, None])
-    stages = {
-        "transcribe": StageResult(
-            stage="transcribe",
-            status=StageStatus.DONE,
-            duration_ms=1,
-            data={"lyrics": lyrics.model_dump(mode="json"), "cached": False},
-        ),
-        "pitch": StageResult(
-            stage="pitch",
-            status=StageStatus.DONE,
-            duration_ms=1,
-            data={
-                "reference_pitch_curve": reference_pitch.model_dump(mode="json"),
-                "reference_cached": False,
-            },
-        ),
-    }
-    analysis = AnalysisRecord(
-        id="a6", user_id="u1", song_id="s1", status="processing", stages=stages
-    )
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=False)
-    runner = FakeRunner(outcome=RunOutcome.COMPLETED)
-    songs = FakeSongRepo(song)
-    handler = AnalysisJobHandler(
-        runner, FakeAnalysisRepo(analysis), songs, FakeEvents(), settings, {}
-    )
-    _touch(settings.audio_storage_dir / "analysis-a6.wav")
-    _touch(settings.audio_storage_dir / "song-s1.wav")
-
-    handler.handle("a6", should_stop=lambda: False)
-
-    assert songs.saved_lyrics == [("s1", lyrics)]
-    assert songs.saved_pitch_curves == [("s1", reference_pitch)]
-
-
-def test_handle_success_skips_song_cache_write_already_served_from_cache(
-    settings, tmp_path: Path
-) -> None:
-    """A song already warm for this analysis (both stages answered from
-    cache) must not be re-written with the same values on every analysis
-    of it."""
-    stages = {
-        "transcribe": StageResult(
-            stage="transcribe",
-            status=StageStatus.DONE,
-            duration_ms=1,
-            data={
-                "lyrics": Lyrics(language="en", words=[]).model_dump(mode="json"),
-                "cached": True,
-            },
-        ),
-        "pitch": StageResult(
-            stage="pitch",
-            status=StageStatus.DONE,
-            duration_ms=1,
-            data={
-                "reference_pitch_curve": PitchCurve(hop_seconds=0.01, hz=[]).model_dump(
-                    mode="json"
-                ),
-                "reference_cached": True,
-            },
-        ),
-    }
-    analysis = AnalysisRecord(
-        id="a9", user_id="u1", song_id="s1", status="processing", stages=stages
-    )
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=True)
-    runner = FakeRunner(outcome=RunOutcome.COMPLETED)
-    songs = FakeSongRepo(song)
-    handler = AnalysisJobHandler(
-        runner, FakeAnalysisRepo(analysis), songs, FakeEvents(), settings, {}
-    )
-    _touch(settings.audio_storage_dir / "analysis-a9.wav")
-    _touch(settings.audio_storage_dir / "song-s1.wav")
-
-    handler.handle("a9", should_stop=lambda: False)
-
-    assert songs.saved_lyrics == []
-    assert songs.saved_pitch_curves == []
-
-
 def test_handle_failure_keeps_recording_for_retry(settings, tmp_path: Path) -> None:
     analysis = AnalysisRecord(id="a2", user_id="u1", song_id="s1", status="processing", stages={})
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=False)
     runner = FakeRunner(error=NoVoiceDetected("no voice"))
     analyses = FakeAnalysisRepo(analysis)
-    songs = FakeSongRepo(song)
     events = FakeEvents()
-    handler = AnalysisJobHandler(runner, analyses, songs, events, settings, {})
+    handler = AnalysisJobHandler(
+        runner, analyses, FakeSongRepo(_ready_song()), events, settings, {}
+    )
 
     recording_path = _touch(settings.audio_storage_dir / "analysis-a2.wav")
-    song_path = _touch(settings.audio_storage_dir / "song-s1.wav")
 
     terminal = handler.handle("a2", should_stop=lambda: False)
 
@@ -319,8 +244,6 @@ def test_handle_failure_keeps_recording_for_retry(settings, tmp_path: Path) -> N
     # A failed (possibly retryable) analysis must not lose its recording
     # (service/analysis/retry.go assumes it stays on disk untouched).
     assert recording_path.exists()
-    # Cache never warmed for this song -- original upload still needed.
-    assert song_path.exists()
 
 
 def test_handle_failure_keeps_work_dir_for_resumable_retry(settings, tmp_path: Path) -> None:
@@ -334,38 +257,34 @@ def test_handle_failure_keeps_work_dir_for_resumable_retry(settings, tmp_path: P
             stage="preprocess",
             status=StageStatus.DONE,
             duration_ms=1,
-            data={"reference_path": "reference.wav", "recording_path": "recording.wav"},
+            data={"recording_path": "recording.wav"},
         )
     }
     analysis = AnalysisRecord(
         id="a7", user_id="u1", song_id="s1", status="processing", stages=stages
     )
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=False)
     runner = FakeRunner(error=NoVoiceDetected("no voice"))
     handler = AnalysisJobHandler(
-        runner, FakeAnalysisRepo(analysis), FakeSongRepo(song), FakeEvents(), settings, {}
+        runner, FakeAnalysisRepo(analysis), FakeSongRepo(_ready_song()), FakeEvents(), settings, {}
     )
     _touch(settings.audio_storage_dir / "analysis-a7.wav")
-    _touch(settings.audio_storage_dir / "song-s1.wav")
     work_dir = settings.audio_storage_dir / "work-a7"
-    cached_reference = _touch(work_dir / "reference.wav")
+    cached_recording = _touch(work_dir / "recording.wav")
 
     handler.handle("a7", should_stop=lambda: False)
 
-    assert cached_reference.exists()
+    assert cached_recording.exists()
 
 
 def test_handle_success_removes_work_dir(settings, tmp_path: Path) -> None:
     analysis = AnalysisRecord(id="a8", user_id="u1", song_id="s1", status="processing", stages={})
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=True)
     runner = FakeRunner(outcome=RunOutcome.COMPLETED)
     handler = AnalysisJobHandler(
-        runner, FakeAnalysisRepo(analysis), FakeSongRepo(song), FakeEvents(), settings, {}
+        runner, FakeAnalysisRepo(analysis), FakeSongRepo(_ready_song()), FakeEvents(), settings, {}
     )
     _touch(settings.audio_storage_dir / "analysis-a8.wav")
-    _touch(settings.audio_storage_dir / "song-s1.wav")
     work_dir = settings.audio_storage_dir / "work-a8"
-    _touch(work_dir / "reference.wav")
+    _touch(work_dir / "recording.wav")
 
     handler.handle("a8", should_stop=lambda: False)
 
@@ -374,11 +293,12 @@ def test_handle_success_removes_work_dir(settings, tmp_path: Path) -> None:
 
 def test_handle_interrupted_leaves_job_non_terminal(settings) -> None:
     analysis = AnalysisRecord(id="a3", user_id="u1", song_id="s1", status="processing", stages={})
-    song = SongRecord(id="s1", content_hash="h", duration_sec=180, vocal_stem_processed=False)
     runner = FakeRunner(outcome=RunOutcome.INTERRUPTED)
     analyses = FakeAnalysisRepo(analysis)
     events = FakeEvents()
-    handler = AnalysisJobHandler(runner, analyses, FakeSongRepo(song), events, settings, {})
+    handler = AnalysisJobHandler(
+        runner, analyses, FakeSongRepo(_ready_song()), events, settings, {}
+    )
 
     terminal = handler.handle("a3", should_stop=lambda: True)
 
@@ -387,3 +307,20 @@ def test_handle_interrupted_leaves_job_non_terminal(settings) -> None:
     assert analyses.marked_failed == []
     assert events.done == []
     assert events.failed == []
+
+
+def test_build_context_raises_if_song_not_actually_ready(settings) -> None:
+    """The scheduler is only supposed to ever hand this handler an analysis
+    whose song reached ready (spec 10.2) -- if that invariant is somehow
+    violated, this must fail loudly (and retryably) rather than crash on a
+    None deep inside a stage."""
+    analysis = AnalysisRecord(id="a9", user_id="u1", song_id="s1", status="processing", stages={})
+    not_ready_song = SongRecord(id="s1", content_hash="h", duration_sec=180, prep_status="pending")
+    runner = FakeRunner(outcome=RunOutcome.COMPLETED)
+    handler = AnalysisJobHandler(
+        runner, FakeAnalysisRepo(analysis), FakeSongRepo(not_ready_song), FakeEvents(), settings, {}
+    )
+    _touch(settings.audio_storage_dir / "analysis-a9.wav")
+
+    with pytest.raises(InternalPipelineError):
+        handler.handle("a9", should_stop=lambda: False)

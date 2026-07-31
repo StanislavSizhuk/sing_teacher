@@ -1,6 +1,6 @@
 import createClient, { type Middleware } from 'openapi-fetch'
 
-import type { paths } from './schema.gen'
+import type { components, paths } from './schema.gen'
 import { apiBaseUrl } from './env'
 import { ApiError, NetworkError, type Problem } from './problem'
 import { getSession, setSession } from './sessionStore'
@@ -163,26 +163,42 @@ export async function getMe(): Promise<Me> {
 
 export type SongSourceType = 'upload' | 'youtube'
 
+/** Cold path lifecycle (spec 6.2, 10, FR-14): `ready` means the reference
+ * vocal stem and pitch curve are cached and any queued analysis of this
+ * song can run immediately. */
+export type SongPrepStatus = 'pending' | 'processing' | 'ready' | 'failed'
+
 export interface Song {
   id: string
   sourceType: SongSourceType
   title: string
   artist?: string
   durationSec: number
-  vocalStemProcessed: boolean
+  prepStatus: SongPrepStatus
+  /** The P-stage currently running (P1-P4, spec 6.4); undefined when not processing. */
+  prepStage?: string
+  /** Set once prepStatus is 'failed' (FR-17); restart via prepareSong. */
+  prepErrorCode?: string
+  /** False when P3 (Whisper transcription) failed or timed out for this
+   * song -- optional stage, never blocks the cold path (FR-18). */
+  lyricsAvailable: boolean
+  /** When prepStatus last reached 'ready'; undefined until then. */
+  preparedAt?: string
   reused: boolean
 }
 
-function toSong(
-  data: paths['/songs']['post']['responses']['201']['content']['application/json'],
-): Song {
+function toSong(data: components['schemas']['Song']): Song {
   return {
     id: data.id,
     sourceType: data.source_type,
     title: data.title,
     artist: data.artist,
     durationSec: data.duration_sec,
-    vocalStemProcessed: data.vocal_stem_processed,
+    prepStatus: data.prep_status,
+    prepStage: data.prep_stage,
+    prepErrorCode: data.prep_error_code,
+    lyricsAvailable: data.lyrics_available,
+    preparedAt: data.prepared_at,
     reused: data.reused,
   }
 }
@@ -198,6 +214,13 @@ export interface AddSongByYouTube {
   sourceType: 'youtube'
   title?: string
   youtubeUrl: string
+}
+
+/** Restarts a song's cold path after it reached prep_status='failed'
+ * (FR-17); rejected with SONG_PREP_NOT_FAILED otherwise. */
+export async function prepareSong(id: string): Promise<Song> {
+  const data = await withAuth(() => raw.POST('/songs/{id}/prepare', { params: { path: { id } } }))
+  return toSong(data)
 }
 
 export async function addSong(input: AddSongByUpload | AddSongByYouTube): Promise<Song> {
@@ -217,7 +240,11 @@ export async function addSong(input: AddSongByUpload | AddSongByYouTube): Promis
   return toSong(data)
 }
 
-export type AnalysisStatus = 'queued' | 'processing' | 'done' | 'failed' | 'canceled'
+/** waiting_for_reference means the job was created before its song's cold
+ * path reached ready; it transitions to queued automatically once the song
+ * is ready (spec 6.2, 10.3, FR-16) -- no client action needed. */
+export type AnalysisStatus =
+  'queued' | 'waiting_for_reference' | 'processing' | 'done' | 'failed' | 'canceled'
 
 /** FR-31 piano-roll overlay data: the user's and reference's pitch curves,
  * already resampled onto the same (the user's) time grid frame for frame,

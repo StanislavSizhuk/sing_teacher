@@ -89,10 +89,22 @@ var (
 	ErrAnalysisRateLimited = errors.New("too many analyses requested, try again later")
 
 	// ErrAnalysisNotQueued means a cancel was requested for an analysis that
-	// is no longer (or never was) in the queued state (FR-25).
-	ErrAnalysisNotQueued = errors.New("analysis is not in the queued state")
+	// is not in a cancelable state -- queued or waiting_for_reference (FR-25,
+	// spec 6.2/10.3: a job still waiting on its song's cold path is
+	// cancelable exactly like a queued one, it just has no queue position yet).
+	ErrAnalysisNotQueued = errors.New("analysis is not in a cancelable state")
 
 	// ErrAnalysisNotFailed means a retry was requested for an analysis that
 	// is not in the failed state (FR-26).
 	ErrAnalysisNotFailed = errors.New("analysis is not in the failed state")
+
+	// ErrReferencePrepFailed means the song's cold path (Demucs/Whisper/
+	// reference pitch) failed, so an analysis against it cannot be queued
+	// until the song is re-prepared (FR-17, spec 10).
+	ErrReferencePrepFailed = errors.New("reference preparation failed for this song")
+
+	// ErrSongPrepNotFailed means POST /songs/{id}/prepare was called for a
+	// song whose prep_status is not 'failed' -- only a failed prep can be
+	// restarted (FR-17).
+	ErrSongPrepNotFailed = errors.New("song preparation is not in the failed state")
 )

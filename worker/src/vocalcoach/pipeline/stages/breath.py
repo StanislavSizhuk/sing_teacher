@@ -72,7 +72,7 @@ def _score(
     return round(100.0 * matched / len(reference_regions), 1), matched
 
 
-class BreathStage(PipelineStage):
+class BreathStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `score` (0-100), `matched_pauses`,
     `reference_pause_count`, `user_pause_count`.
     """

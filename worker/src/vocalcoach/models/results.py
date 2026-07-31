@@ -11,6 +11,10 @@ from pydantic import BaseModel, Field
 class StageStatus(StrEnum):
     DONE = "done"
     FAILED = "failed"
+    #: An optional stage (`PipelineStage.required = False`, spec 6.3) that
+    #: exhausted its retries or failed logically. The pipeline continues;
+    #: `error_code`/`error_message` on this result carry why (FR-18).
+    SKIPPED = "skipped"
 
 
 class StageResult(BaseModel):

@@ -1,11 +1,11 @@
-"""Regression test: every stage `build_stages` wires up must survive being
-pickled, since `PipelineRunner` runs each stage in a spawn-based child
-process (runner.py's `_run_in_subprocess`) and multiprocessing pickles the
-stage instance to hand it over. A stage holding a closure over a local
-variable (a lambda, a nested `def`) fails that pickling at run time, not at
-import time -- this previously crashed every analysis that reached
-`separate_reference` with `AttributeError: Can't get local object
-'build_stages.<locals>.<lambda>'`.
+"""Regression test: every stage `build_stages`/`build_prep_stages` wires up
+must survive being pickled, since `PipelineRunner` runs each stage in a
+spawn-based child process (runner.py's `_run_in_subprocess`) and
+multiprocessing pickles the stage instance to hand it over. A stage holding
+a closure over a local variable (a lambda, a nested `def`) fails that
+pickling at run time, not at import time -- this previously crashed every
+analysis that reached `separate_reference` with `AttributeError: Can't get
+local object 'build_stages.<locals>.<lambda>'`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import pytest
 from vocalcoach.config import load_settings
 from vocalcoach.pipeline.base import ParallelGroup
 from vocalcoach.pipeline.registry import ModelRegistry
-from vocalcoach.worker import build_stages
+from vocalcoach.worker import build_prep_stages, build_stages
 
 VALID_WEIGHTS = "pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0.10,timbre:0.10"
 
@@ -43,7 +43,9 @@ def _flatten_stage_names(entries) -> list[str]:
     return names
 
 
-def test_every_stage_is_picklable_and_covers_the_full_pipeline(settings, tmp_path: Path) -> None:
+def test_every_warm_stage_is_picklable_and_covers_the_full_pipeline(
+    settings, tmp_path: Path
+) -> None:
     registry = ModelRegistry(
         demucs_model=settings.demucs_model,
         whisper_model=settings.whisper_model,
@@ -54,14 +56,13 @@ def test_every_stage_is_picklable_and_covers_the_full_pipeline(settings, tmp_pat
     stages = build_stages(settings, registry)
 
     # The 5 independent aspect stages count as one ParallelGroup entry by
-    # default (spec 6.10), so top-level entries (9) are fewer than the 13
-    # actual stages they flatten to.
-    assert len(stages) == 9
+    # default (spec 6.10), so top-level entries (7) are fewer than the 11
+    # actual stages they flatten to. separate_reference/transcribe are not
+    # here -- they moved to the cold path (build_prep_stages, M2).
+    assert len(stages) == 7
     assert _flatten_stage_names(stages) == [
         "preprocess",
-        "separate_reference",
         "features",
-        "transcribe",
         "align",
         "pitch",
         "rhythm",
@@ -91,4 +92,26 @@ def test_pipeline_parallel_aspects_false_keeps_stages_flat(
     stages = build_stages(settings, registry)
 
     assert not any(isinstance(entry, ParallelGroup) for entry in stages)
-    assert len(stages) == 13
+    assert len(stages) == 11
+
+
+def test_every_prep_stage_is_picklable_and_covers_the_full_cold_path(
+    settings, tmp_path: Path
+) -> None:
+    registry = ModelRegistry(
+        demucs_model=settings.demucs_model,
+        whisper_model=settings.whisper_model,
+        pitch_engine=settings.pitch_engine,
+        weights_dir=tmp_path,
+    )
+
+    stages = build_prep_stages(settings, registry)
+
+    assert [stage.name for stage in stages] == [
+        "prep_reference",
+        "separate_reference",
+        "transcribe",
+        "prep_reference_pitch",
+    ]
+    for stage in stages:
+        pickle.dumps(stage)

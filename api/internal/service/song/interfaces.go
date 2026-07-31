@@ -21,6 +21,26 @@ type Repository interface {
 	// which case the existing row is returned instead (spec 6.6, FR-13).
 	GetOrCreate(ctx context.Context, song *domain.Song) (result *domain.Song, created bool, err error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Song, error)
+	// Delete removes a row this request just created, used only to undo
+	// GetOrCreate when songs:prep turns out to be full by the time
+	// EnqueueIfUnderLimit runs (see AddFromUpload/AddFromYouTube) -- never
+	// exposed to a caller outside this package.
+	Delete(ctx context.Context, id uuid.UUID) error
+	// RetryPrep resets a song stuck in a failed cold path back to pending
+	// (FR-17); returns domain.ErrSongPrepNotFailed if it isn't currently failed.
+	RetryPrep(ctx context.Context, id uuid.UUID) (*domain.Song, error)
+}
+
+// PrepQueueProducer publishes cold-path jobs onto the songs:prep Redis
+// Streams queue (internal/queue.Producer), mirroring service/analysis's
+// QueueProducer for the warm path.
+type PrepQueueProducer interface {
+	Length(ctx context.Context) (int64, error)
+	// EnqueueIfUnderLimit is the authoritative, race-free admission check
+	// (spec 10, FR-24 applied per-stream): ok is false when songs:prep was
+	// already at maxLen.
+	EnqueueIfUnderLimit(ctx context.Context, songID uuid.UUID, maxLen int64) (streamEntryID string, ok bool, err error)
+	Enqueue(ctx context.Context, songID uuid.UUID) (streamEntryID string, err error)
 }
 
 // AudioProcessor validates and canonicalizes audio (internal/media.Processor).

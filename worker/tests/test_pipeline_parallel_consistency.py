@@ -6,16 +6,14 @@ that it is a *behavioral* no-op, only a performance one.
 
 from __future__ import annotations
 
-import functools
 import shutil
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests.conftest import sine_wave
-from tests.helpers import FakeVocalSeparator
+from tests.helpers import canonical_stem_path, reference_pitch_curve_for
 from vocalcoach.config import ScoringWeights
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.pipeline.base import ParallelGroup
@@ -30,7 +28,6 @@ from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.recording_condition import RecordingConditionStage
 from vocalcoach.pipeline.stages.rhythm import RhythmStage
-from vocalcoach.pipeline.stages.separate_reference import SeparateReferenceStage
 from vocalcoach.pipeline.stages.timbre import TimbreStage
 from vocalcoach.pipeline.stages.vibrato import VibratoStage
 
@@ -42,7 +39,7 @@ _WEIGHTS = ScoringWeights.parse(
 _SCORED_ASPECTS = ("pitch", "rhythm", "vibrato", "dynamics", "timbre", "breath")
 
 
-class _NoOpAnalysisRepo:
+class _NoOpProgress:
     def mark_processing(self, *args: Any, **kwargs: Any) -> None:
         pass
 
@@ -50,13 +47,11 @@ class _NoOpAnalysisRepo:
         pass
 
 
-class _CapturingAnalysisRepo(_NoOpAnalysisRepo):
+class _CapturingProgress(_NoOpProgress):
     def __init__(self) -> None:
         self.results: dict[str, Any] = {}
 
-    def save_stage_progress(
-        self, analysis_id, result, next_stage, next_stage_index, total_stages
-    ) -> None:
+    def save_stage_progress(self, result, next_stage, next_stage_index, total_stages) -> None:
         self.results[result.stage] = result
 
 
@@ -70,17 +65,15 @@ class _NoOpEvents:
     def publish_failed(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    def publish_queued(self, *args: Any, **kwargs: Any) -> None:
+        pass
 
-def _stem_path(tmp_path: Path, suffix: str, song_id: str) -> Path:
-    return tmp_path / f"stem-{song_id}-{suffix}.wav"
 
-
-def _build_stages(*, parallel: bool, stem_path_for_song: Callable[[str], Path]):
+def _build_stages(*, parallel: bool):
     aspect_stages = (RhythmStage(), VibratoStage(), DynamicsStage(), TimbreStage(), BreathStage())
     aspects = [ParallelGroup(aspect_stages)] if parallel else list(aspect_stages)
     return [
         PreprocessStage(ffmpeg_path="ffmpeg"),
-        SeparateReferenceStage(FakeVocalSeparator(), stem_path_for_song=stem_path_for_song),
         FeaturesStage(),
         AlignStage(),
         PitchStage(PyinPitchDetector()),
@@ -91,34 +84,32 @@ def _build_stages(*, parallel: bool, stem_path_for_song: Callable[[str], Path]):
 
 
 def _run_and_get_scores(
-    tmp_path: Path, recording: Path, reference: Path, *, parallel: bool, suffix: str
+    tmp_path: Path,
+    recording: Path,
+    reference: Path,
+    reference_pitch,
+    *,
+    parallel: bool,
+    suffix: str,
 ) -> dict[str, float]:
     context = AnalysisContext(
         analysis_id=f"a-{suffix}",
         user_id="u",
         song_id=f"s-{suffix}",
         recording_path=recording,
-        reference_path=reference,
         work_dir=tmp_path / f"work-{suffix}",
-        song_content_hash="hash",
-        vocal_stem_processed=False,
-        pitch_engine="pyin",
-        whisper_model="tiny",
-        demucs_model="htdemucs",
-        model_weights_dir=tmp_path / "weights",
+        reference_vocal_stem_path=canonical_stem_path(tmp_path, reference),
+        reference_pitch=reference_pitch,
     )
-    stages = _build_stages(
-        parallel=parallel,
-        stem_path_for_song=functools.partial(_stem_path, tmp_path, suffix),
-    )
-    repo = _CapturingAnalysisRepo()
-    runner = PipelineRunner(stages, repo, _NoOpEvents())
+    stages = _build_stages(parallel=parallel)
+    progress = _CapturingProgress()
+    runner = PipelineRunner(stages, _NoOpEvents())
 
-    outcome = runner.run(f"a-{suffix}", context, already_done={})
+    outcome = runner.run(f"a-{suffix}", context, {}, progress)
     assert outcome == RunOutcome.COMPLETED
 
-    scores = {aspect: float(repo.results[aspect].data["score"]) for aspect in _SCORED_ASPECTS}
-    scores["overall"] = float(repo.results["aggregate"].data["overall_score"])
+    scores = {aspect: float(progress.results[aspect].data["score"]) for aspect in _SCORED_ASPECTS}
+    scores["overall"] = float(progress.results["aggregate"].data["overall_score"])
     return scores
 
 
@@ -128,12 +119,13 @@ def test_parallel_and_sequential_execution_produce_matching_scores(
     signal = sine_wave(4.0, 44100, 300.0, vibrato_hz=5.0, vibrato_cents=40.0)
     recording = wav_writer("recording.wav", signal, 44100)
     reference = wav_writer("reference.wav", signal, 44100)
+    reference_pitch = reference_pitch_curve_for(tmp_path, reference)
 
     parallel_scores = _run_and_get_scores(
-        tmp_path, recording, reference, parallel=True, suffix="parallel"
+        tmp_path, recording, reference, reference_pitch, parallel=True, suffix="parallel"
     )
     sequential_scores = _run_and_get_scores(
-        tmp_path, recording, reference, parallel=False, suffix="sequential"
+        tmp_path, recording, reference, reference_pitch, parallel=False, suffix="sequential"
     )
 
     for aspect, parallel_score in parallel_scores.items():

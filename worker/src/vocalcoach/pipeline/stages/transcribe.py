@@ -1,6 +1,8 @@
-"""Stage 3: transcribe the reference vocal stem to words with timecodes via
-Whisper (spec 6.3.3). Short-circuits to the cached transcript when
-`context.vocal_stem_processed` is already true (spec 6.6).
+"""Stage P3: transcribe the reference vocal stem to words with timecodes via
+Whisper (spec 6.4, 6.3.3). Optional (FR-18, spec 6.3): a failure or timeout
+here never blocks the song's cold path -- `PipelineRunner` records it as
+`StageStatus.SKIPPED` (see `required = False` below) and `SongPrepJobHandler`
+writes `lyrics_available = false` instead of failing the whole run.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from pathlib import Path
 
 from vocalcoach.audio.io import read_mono
 from vocalcoach.constants import TRANSCRIBE_TIMEOUT_SECONDS
-from vocalcoach.models.context import AnalysisContext
+from vocalcoach.models.context import SongPrepContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 from vocalcoach.pipeline.registry import Transcriber
@@ -18,34 +20,18 @@ from vocalcoach.pipeline.registry import Transcriber
 STAGE_NAME = "transcribe"
 
 
-class TranscribeStage(PipelineStage):
-    """`StageResult.data`: `lyrics` (a JSON-encoded `Lyrics`), `cached`
-    (whether Whisper actually ran).
-
-    Does not write `songs.lyrics_json` itself: every stage instance is
-    pickled across `PipelineRunner`'s spawn-based subprocess boundary
-    (runner.py), and a `SongRepository` holding a live DB connection isn't
-    picklable. The job handler persists `lyrics` out of this stage's
-    `StageResult` once the pipeline finishes, in the parent process where
-    the real repository connection lives (spec 6.6 cache write).
-    """
+class TranscribeStage(PipelineStage[SongPrepContext]):
+    """`StageResult.data`: `lyrics` (a JSON-encoded `Lyrics`)."""
 
     name = STAGE_NAME
     timeout_seconds = TRANSCRIBE_TIMEOUT_SECONDS
+    required = False
 
     def __init__(self, transcriber: Transcriber) -> None:
         self._transcriber = transcriber
 
-    def run(self, context: AnalysisContext) -> StageResult:
+    def run(self, context: SongPrepContext) -> StageResult:
         start = time.monotonic()
-
-        if context.vocal_stem_processed and context.reference_lyrics is not None:
-            return StageResult(
-                stage=self.name,
-                status=StageStatus.DONE,
-                duration_ms=int((time.monotonic() - start) * 1000),
-                data={"lyrics": context.reference_lyrics.model_dump(mode="json"), "cached": True},
-            )
 
         stem_path = Path(context.result("separate_reference").data["stem_path"])
         samples, sample_rate = read_mono(stem_path)
@@ -61,5 +47,5 @@ class TranscribeStage(PipelineStage):
             stage=self.name,
             status=StageStatus.DONE,
             duration_ms=int((time.monotonic() - start) * 1000),
-            data={"lyrics": lyrics.model_dump(mode="json"), "cached": False},
+            data={"lyrics": lyrics.model_dump(mode="json")},
         )

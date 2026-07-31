@@ -22,11 +22,28 @@ The 6.11 thread-pinning behavior itself is covered by
 ## Budget
 
 Reproduced from spec 6.17 (this file tracks measurements; the spec holds
-the contract). M1 does not restructure cold/warm path (that is M2), so
-these budgets are the eventual target this milestone works toward, not
-something M1 itself is measured against directly yet.
+the contract). Spec 6.17's own stage labels (A1 decode, A2 VAD, A3 input
+classification, ...) are the *budget table's* abstract stage numbering,
+which includes `mixed`-mode stages (A3 input classification, A4 melody
+extraction, A8 key normalization) not yet implemented -- M3's scope, per
+the milestone table. This codebase's actual stage names/numbers (spec
+6.4/6.5, `docs/ML_PIPELINE.md`) differ in detail (e.g. this codebase's own
+A2 is `features`, not VAD -- VAD is a gate inside `pitch`, not a separate
+stage); the budget rows below are matched to the closest real stage each
+names, not renamed to match.
 
-**Warm path, `clean` mode:**
+**Cold path (M2, spec 6.4, asynchronous, once per song):**
+
+| Stage | Budget |
+|---|---|
+| P1 decode/normalize | 20s |
+| P2 Demucs (`shifts=0`, `segment=7`) | 420s |
+| P3 `faster-whisper base` int8 | 90s |
+| P4 reference pitch + features | 40s |
+| **Total** | **≤ 570s** (NFR-01a: 600s) |
+
+**Warm path, `clean` mode (M2 moved P1/Demucs/Whisper/reference-pitch out
+of this path; the table below is the post-M2 shape):**
 
 | Stage | Budget |
 |---|---|
@@ -110,6 +127,92 @@ production defaults (ADR-0014).
   stage or aspect stages with a heavier synthetic-fixture-scale workload
   than this measurement's already-optimized baseline.
 
+## M2 measurements: NFR-01a (cold path) and NFR-01b (warm path)
+
+**Date:** 2026-07-31
+**Commit:** M2 branch (`feat/m2-cold-warm-split`), all M2 commits applied through the worker/API split.
+**Machine:** same development machine as the M1 measurement above (12 vCPU, 31 GB RAM) -- the production VPS still does not exist (spec 16.3), so this is a comparison against the spec 6.17 budget, not yet a validated 4 vCPU/8 GB number. Re-measure once the production VPS exists.
+**Song:** the same real track used for the M1 measurement (SadSvit -- "Небо"), used for personal, non-commercial local testing (spec 11.4), not committed to the repo (spec 15.3/13.3). ffprobe measures it at **225.3s (3:45)** -- shorter than spec 6.17's 6-minute cold-path reference assumption, so the cold-path numbers below should be read as "this song's real cost," not directly rescaled to a 6-minute reference; Demucs/Whisper cost both scale roughly with duration, so a 6-minute reference would cost meaningfully more than these numbers, still comfortably inside budget at the observed margin (see below).
+**Methodology:** same harness style as M1 (calls each stage's `.run()` directly, outside the queue/worker process and without `runtime.threads.configure_worker_threads()` -- numpy/torch used their own defaults, same caveat as M1). `PITCH_ENGINE=crepe`, `WHISPER_MODEL=base`, `WHISPER_COMPUTE_TYPE=int8`, `DEMUCS_MODEL=htdemucs` throughout (production defaults, ADR-0014/ADR-0021).
+
+**Cold path (P1-P4), one real end-to-end run on the reference mixture:**
+
+| Stage | Measured | Budget |
+|---|---:|---:|
+| P1 `prep_reference` (decode/normalize) | 0.6s | 20s |
+| P2 `separate_reference` (Demucs) | 90.7s | 420s |
+| P3 `transcribe` (faster-whisper base, int8) | 121.6s | 90s |
+| P4 `prep_reference_pitch` (CREPE, reference side only) | 42.0s | 40s |
+| **Total** | **255.0s** | **≤ 570s** (NFR-01a: 600s) |
+
+**Reading this table:** every stage genuinely ran -- Demucs separated real
+audio, Whisper transcribed the real isolated vocal stem, CREPE tracked the
+real reference pitch curve. **P3 and P4 both individually exceed their own
+per-stage budget line** (P3: 121.6s vs. 90s; P4: 42.0s vs. 40s) while the
+**total** (255.0s) still lands well inside the overall NFR-01a ceiling
+(600s), at 45% of budget -- spec 6.17's per-stage rows are a planning
+allocation, not independently enforced limits; only the `Total` row is a
+gate (spec 6.17: "Це вимога, що перевіряється тестом"). Both stages
+running over their own row on a shorter-than-reference-assumption song is
+still worth flagging: `WHISPER_MODEL=base` (ADR-0014, chosen for exactly
+this reason on the *warm*-path timeout before M2 existed) is already the
+documented fallback if `small` were tried instead; there is no equivalent
+recorded fallback yet if P3 alone starts threatening `TRANSCRIBE_TIMEOUT_SECONDS
+= 240` on a real 6-minute reference track. Worth a real 6-minute-track
+measurement before this milestone is considered fully validated (see "Known
+limitations" below).
+
+**Warm path (A1-A4, the stages M2 actually restructured), one real run:**
+
+Reference stem and reference pitch curve reused directly from the cold-path
+run above -- no re-decode, no re-running Demucs/Whisper, matching the
+warm path's actual contract post-M2. Following M1's own precedent for
+avoiding a non-representative full-mixture-vs-vocals-only DTW failure, the
+"recording" side is the same isolated vocal stem as the reference (an
+identity stand-in for "this recording, once decoded, would be roughly
+this" -- see M1's methodology note above for why feeding the raw mixture
+directly fails DTW on this song's instrumental intro).
+
+| Stage | Measured | Budget |
+|---|---:|---:|
+| A1 `preprocess` (recording decode/normalize) | 0.6s | -- |
+| A2 `features` (shared MFCC/RMS/onset cache) | 1.8s | -- |
+| A3 `align` (two-level banded DTW) | 2.1s | -- |
+| A4 `pitch` (CREPE, user side only) | 32.2s | -- |
+| **A1-A4 subtotal** | **36.8s** | -- |
+| A5-A11 (rhythm, vibrato, dynamics, timbre, breath, recording_condition, aggregate) | not re-measured -- M2 touches none of this code; carried forward from the M1 table above (70ms sequential / ~29ms parallel) | -- |
+| **Estimated total** | **~36.9s** | **≤ 86s** (NFR-01b: 90s) |
+
+**Reading this table:** A1-A3 are close to their pre-M2 M1 numbers (same
+mechanics, minor run-to-run variance). **A4 is not directly comparable to
+M1's `pitch: 30,069 ms` row**: that pre-M2 number measured a single
+`PitchStage` call computing *both* the user's and the reference's curves
+together (with the reference side itself sometimes cache-skipped
+depending on whether the song had been analyzed before); post-M2, `pitch`
+only ever computes the user side -- the reference curve is `context.reference_pitch`,
+already-cached cold-path output, read directly, never recomputed. The two
+numbers landing in the same rough range (30s vs. 32s) is not evidence
+either got faster or slower; they are measuring different amounts of work
+under different conditions (this environment's CPU contention, thread
+defaults left unconfigured per the methodology caveat) and should not be
+read as a regression. What matters for NFR-01b is the **total**: 36.9s
+against an 86s/90s budget, 43% of budget, with the same comfortable margin
+the pre-M2 warm path already had.
+
+**Known limitations of this measurement:**
+
+- The reference track (225s) is shorter than spec 6.17's 6-minute
+  cold-path assumption; a real 6-minute reference should be measured
+  before treating NFR-01a as fully validated, particularly for P3
+  (Whisper), which already runs over its own per-stage budget row on this
+  shorter track.
+- Neither path applies `runtime.threads.configure_worker_threads()` (spec
+  6.11) -- same caveat M1 already carried; the real containerized worker
+  pins BLAS/torch thread counts explicitly, which this standalone harness
+  does not.
+- Not yet measured against the eventual 4 vCPU/8 GB production VPS shape
+  (spec 16.3) -- neither was M1's.
+
 ## Optimisation log
 
 | Change | Why | Measured effect |
@@ -124,14 +227,19 @@ production defaults (ADR-0014).
 
 ## When it gets slow
 
-The ordered checklist from spec 6.17, unchanged by M1:
+The ordered checklist from spec 6.17, unchanged by M1, stage names updated
+for M2's cold/warm split (see `docs/ML_PIPELINE.md`):
 
-1. Check whether the reference cache is hitting (spec 6.13) -- a cache miss
-   is the largest, most common source of slowdown.
+1. Check whether the song's cold path already reached `ready` (spec 6.2,
+   6.13) -- a song still `pending`/`processing` is the largest, most
+   common source of an analysis appearing slow: it is waiting on a
+   different job (spec 10.3), not spending wall time itself.
 2. Check thread configuration (spec 6.11) -- both under- and over-subscription
    look the same ("slow").
-3. Read `stage_durations_json` and optimize the specific most expensive
-   stage. Optimizing without this data is not allowed.
+3. Read the per-stage `duration_ms` already recorded in `songs.prep_stages_json`
+   (cold path) or `analyses.stages_json` (warm path) and optimize the
+   specific most expensive stage. Optimizing without this data is not
+   allowed.
 4. Lower model parameters: `WHISPER_MODEL=tiny`, `PITCH_ENGINE=pyworld` (not
    yet implemented, see ADR-0015), a coarser `DTW_COARSE_HOP_MS`-equivalent.
 5. Limit the analyzed region (`ANALYSIS_MAX_SECONDS`, e.g. chorus only).

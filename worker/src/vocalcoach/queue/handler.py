@@ -1,6 +1,9 @@
 """Wires one analysis job's full lifecycle: build its `AnalysisContext`,
 run the pipeline, persist the terminal outcome, and report whether it is
-safe to `XACK`.
+safe to `XACK`. By the time a job reaches here its song's cold path has
+already finished (spec 6.2, M2) -- the scheduler never hands this handler
+an analysis whose song isn't `ready`, so the reference vocal stem and
+pitch curve are always already cached (spec 6.6).
 """
 
 from __future__ import annotations
@@ -10,15 +13,15 @@ import shutil
 from collections.abc import Callable
 from typing import Protocol
 
-from vocalcoach.audio.paths import analysis_work_dir, recording_source_path, song_source_path
+from vocalcoach.audio.paths import analysis_work_dir, recording_source_path
 from vocalcoach.config import ASPECTS, Settings
-from vocalcoach.errors import PipelineError
-from vocalcoach.models.audio import Lyrics, PianoRollData, PitchCurve
+from vocalcoach.errors import InternalPipelineError, PipelineError
+from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
 from vocalcoach.pipeline.events import EventPublisher
-from vocalcoach.pipeline.runner import RunOutcome
+from vocalcoach.pipeline.runner import ProgressReporter, RunOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -29,21 +32,34 @@ class Runner(Protocol):
 
     def run(
         self,
-        analysis_id: str,
+        job_id: str,
         initial_context: AnalysisContext,
         already_done: dict[str, StageResult],
+        progress: ProgressReporter,
         should_stop: Callable[[], bool],
     ) -> RunOutcome: ...
 
 
 class HandlerAnalysisRepository(Protocol):
-    """The narrow slice of `AnalysisRepository` the handler needs: reading
-    a job's current state, denormalizing each aspect stage's score out of
-    `stages_json` into its own column once the run completes, and recording
-    the terminal outcome. Per-stage progress is `PipelineRunner`'s own
-    concern (`RunnerAnalysisRepository`).
+    """The narrow slice of `AnalysisRepository` the handler needs: tracking
+    per-stage progress (spec 12.2's "interfaces declared by the consumer"
+    applied to Python -- this module is `PipelineRunner`'s `ProgressReporter`
+    consumer for analysis jobs), reading a job's current state, denormalizing
+    each aspect stage's score out of `stages_json` into its own column once
+    the run completes, and recording the terminal outcome.
     """
 
+    def mark_processing(
+        self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
+    ) -> None: ...
+    def save_stage_progress(
+        self,
+        analysis_id: str,
+        result: StageResult,
+        next_stage: str | None,
+        next_stage_index: int | None,
+        total_stages: int,
+    ) -> None: ...
     def get_by_id(self, analysis_id: str) -> AnalysisRecord: ...
     def save_aspect_score(self, analysis_id: str, aspect: str, score: float) -> None: ...
     def save_piano_roll(self, analysis_id: str, data: PianoRollData) -> None: ...
@@ -60,21 +76,39 @@ class HandlerAnalysisRepository(Protocol):
 
 
 class HandlerSongRepository(Protocol):
-    """The slice of `SongRepository` the handler needs: building the
-    `AnalysisContext`/checking the cache flag during cleanup, and writing
-    the spec 6.6 cache once the pipeline finishes. Transcribe/pitch cannot
-    write it themselves -- their `StageResult` is produced inside
-    `PipelineRunner`'s spawn-based subprocess (runner.py), and a
-    `SongRepository` holding a live DB connection can't survive being
-    pickled across that boundary -- so the handler does it here instead,
-    in the parent process where the real connection lives.
+    """The slice of `SongRepository` the handler needs to build the
+    `AnalysisContext` from a song's already-cached cold-path output (spec
+    6.6). The handler never writes to it -- the cold path's own
+    `SongPrepJobHandler` owns every write to `songs`.
     """
 
     def get_by_id(self, song_id: str) -> SongRecord: ...
 
-    def save_lyrics(self, song_id: str, lyrics: Lyrics) -> None: ...
 
-    def mark_vocal_stem_processed(self, song_id: str, reference_pitch: PitchCurve) -> None: ...
+class AnalysisProgressReporter:
+    """Adapts `HandlerAnalysisRepository`'s analysis_id-taking methods to
+    `PipelineRunner`'s job-kind-agnostic `ProgressReporter` (spec 12.1 DRY --
+    keeps the id-binding here instead of changing the repository's own,
+    already id-scoped signatures).
+    """
+
+    def __init__(self, repo: HandlerAnalysisRepository, analysis_id: str) -> None:
+        self._repo = repo
+        self._analysis_id = analysis_id
+
+    def mark_processing(self, first_stage: str, stage_index: int, total_stages: int) -> None:
+        self._repo.mark_processing(self._analysis_id, first_stage, stage_index, total_stages)
+
+    def save_stage_progress(
+        self,
+        result: StageResult,
+        next_stage: str | None,
+        next_stage_index: int | None,
+        total_stages: int,
+    ) -> None:
+        self._repo.save_stage_progress(
+            self._analysis_id, result, next_stage, next_stage_index, total_stages
+        )
 
 
 class AnalysisJobHandler:
@@ -106,11 +140,17 @@ class AnalysisJobHandler:
         startup reclaim picks it back up, spec 10.1).
         """
         analysis = self._analyses.get_by_id(analysis_id)
-        song = self._songs.get_by_id(analysis.song_id)
-        context = self._build_context(analysis.id, analysis.user_id, song)
+        # Deliberately outside the try/except below: a missing cached
+        # reference here means the scheduler handed this handler an
+        # analysis whose song was not actually ready (spec 10.2), a bug
+        # elsewhere rather than a property of this analysis's own input --
+        # let it propagate uncaught so the job stays pending for reclaim
+        # (spec 10.1) instead of being recorded as a normal analysis failure.
+        context = self._build_context(analysis.id, analysis.user_id, analysis.song_id)
+        progress = AnalysisProgressReporter(self._analyses, analysis_id)
 
         try:
-            outcome = self._runner.run(analysis_id, context, analysis.stages, should_stop)
+            outcome = self._runner.run(analysis_id, context, analysis.stages, progress, should_stop)
         except PipelineError as exc:
             logger.warning(
                 "analysis failed",
@@ -121,9 +161,9 @@ class AnalysisJobHandler:
             # A failed analysis stays retryable (FR-26) without re-uploading
             # anything, which depends on already-completed stages' cached
             # results in stages_json still resolving to real files --
-            # preprocess writes its canonical recording.wav/reference.wav
-            # into work_dir, so removing work_dir here would make the very
-            # next retry crash trying to open files this run just deleted.
+            # preprocess writes its canonical recording.wav into work_dir,
+            # so removing work_dir here would make the very next retry
+            # crash trying to open a file this run just deleted.
             self._cleanup(context, recording_done=False, remove_work_dir=False)
             return True
 
@@ -131,7 +171,6 @@ class AnalysisJobHandler:
             return False
 
         self._persist_scores(analysis_id)
-        self._persist_song_cache(analysis_id, context.song_id)
         # Once the dense curves above are durably saved into their own
         # bytea/JSONB columns, stages_json no longer needs to carry them too
         # (spec 7.3) -- stages_json's per-stage write exists for mid-run
@@ -200,54 +239,27 @@ class AnalysisJobHandler:
             # to the handler, not the pipeline context.
             self._analyses.record_progress_snapshot(analysis_id, record.user_id, overall_score)
 
-    def _persist_song_cache(self, analysis_id: str, song_id: str) -> None:
-        """Writes transcribe's/pitch's spec 6.6 song-level cache
-        (`lyrics_json`, `reference_pitch` + `vocal_stem_processed`)
-        out of their `StageResult`s, now that the pipeline has fully
-        finished. Neither stage can write it itself (see transcribe.py/
-        pitch.py) -- both would need a `SongRepository` to survive being
-        pickled across `PipelineRunner`'s spawn-based subprocess boundary,
-        which a live DB connection cannot. Skips whichever stage already
-        served its answer from cache (`cached`/`reference_cached`), so a
-        song already warm for this analysis is never re-written with the
-        same values.
-        """
-        record = self._analyses.get_by_id(analysis_id)
-
-        transcribe_result = record.stages.get("transcribe")
-        if (
-            transcribe_result is not None
-            and not transcribe_result.data.get("cached", False)
-            and "lyrics" in transcribe_result.data
-        ):
-            lyrics = Lyrics.model_validate(transcribe_result.data["lyrics"])
-            self._songs.save_lyrics(song_id, lyrics)
-
-        pitch_result = record.stages.get("pitch")
-        if (
-            pitch_result is not None
-            and not pitch_result.data.get("reference_cached", False)
-            and "reference_pitch_curve" in pitch_result.data
-        ):
-            reference_pitch = PitchCurve.model_validate(pitch_result.data["reference_pitch_curve"])
-            self._songs.mark_vocal_stem_processed(song_id, reference_pitch)
-
-    def _build_context(self, analysis_id: str, user_id: str, song: SongRecord) -> AnalysisContext:
+    def _build_context(self, analysis_id: str, user_id: str, song_id: str) -> AnalysisContext:
+        song = self._songs.get_by_id(song_id)
+        if song.vocal_stem_path is None or song.reference_pitch is None:
+            # The scheduler only ever hands this handler an analysis whose
+            # song reached prep_status='ready' (spec 10.2) -- reaching here
+            # means that invariant broke somewhere upstream, not a property
+            # of this analysis's own input, so it is worth a retry rather
+            # than an immediate logical failure.
+            raise InternalPipelineError(
+                f"song {song_id} has no cached reference (vocal_stem_path/reference_pitch); "
+                "expected prep_status='ready' before an analysis reaches analyses:run"
+            )
         return AnalysisContext(
             analysis_id=analysis_id,
             user_id=user_id,
             song_id=song.id,
             recording_path=recording_source_path(self._settings.audio_storage_dir, analysis_id),
-            reference_path=song_source_path(self._settings.audio_storage_dir, song.id),
             work_dir=analysis_work_dir(self._settings.audio_storage_dir, analysis_id),
-            song_content_hash=song.content_hash,
-            vocal_stem_processed=song.vocal_stem_processed,
-            reference_lyrics=song.lyrics,
+            reference_vocal_stem_path=song.vocal_stem_path,
             reference_pitch=song.reference_pitch,
-            pitch_engine=self._settings.pitch_engine,
-            whisper_model=self._settings.whisper_model,
-            demucs_model=self._settings.demucs_model,
-            model_weights_dir=self._settings.model_weights_dir,
+            reference_lyrics=song.lyrics,
         )
 
     def _cleanup(
@@ -261,11 +273,3 @@ class AnalysisJobHandler:
             # while the analysis can still fail; once it's done, delete it now
             # rather than waiting for the interim age-based sweep.
             context.recording_path.unlink(missing_ok=True)
-
-        # Re-read rather than trust context's copy: this job may be the one
-        # _persist_song_cache just flipped the flag for (pitch's reference
-        # curve), and once it's true no future analysis of this song ever
-        # reads the original upload again.
-        song = self._songs.get_by_id(context.song_id)
-        if song.vocal_stem_processed:
-            context.reference_path.unlink(missing_ok=True)

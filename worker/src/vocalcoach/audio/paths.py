@@ -38,3 +38,12 @@ def analysis_work_dir(audio_storage_dir: Path, analysis_id: str) -> Path:
     fail on the first cached stage it tries to reuse.
     """
     return audio_storage_dir / f"work-{analysis_id}"
+
+
+def song_prep_work_dir(audio_storage_dir: Path, song_id: str) -> Path:
+    """Scratch directory for one song's cold-path intermediate files (spec
+    6.4, M2) -- the P-stage analog of `analysis_work_dir`, same
+    resumability rationale: deleted on success, left in place on failure
+    so a re-queued prep job (spec 6.1/6.8) reopens exactly these files.
+    """
+    return audio_storage_dir / f"prep-{song_id}"
