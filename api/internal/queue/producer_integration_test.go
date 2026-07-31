@@ -40,7 +40,7 @@ func setupRedis(t *testing.T) *redis.Client {
 
 func TestProducer_Enqueue_IncreasesLength(t *testing.T) {
 	client := setupRedis(t)
-	p := queue.NewProducer(client)
+	p := queue.NewProducer(client, "test:queue", "test:workers")
 	ctx := context.Background()
 	require.NoError(t, p.EnsureGroup(ctx))
 
@@ -58,7 +58,7 @@ func TestProducer_Enqueue_IncreasesLength(t *testing.T) {
 
 func TestProducer_Remove_DecreasesLength(t *testing.T) {
 	client := setupRedis(t)
-	p := queue.NewProducer(client)
+	p := queue.NewProducer(client, "test:queue", "test:workers")
 	ctx := context.Background()
 	require.NoError(t, p.EnsureGroup(ctx))
 
@@ -74,7 +74,7 @@ func TestProducer_Remove_DecreasesLength(t *testing.T) {
 
 func TestProducer_EnqueueIfUnderLimit_RejectsOnceAtCap(t *testing.T) {
 	client := setupRedis(t)
-	p := queue.NewProducer(client)
+	p := queue.NewProducer(client, "test:queue", "test:workers")
 	ctx := context.Background()
 	require.NoError(t, p.EnsureGroup(ctx))
 
@@ -101,7 +101,7 @@ func TestProducer_EnqueueIfUnderLimit_RejectsOnceAtCap(t *testing.T) {
 // just in-process goroutines sharing memory (spec 10, FR-24).
 func TestProducer_EnqueueIfUnderLimit_ConcurrentBurst_NeverExceedsCap(t *testing.T) {
 	client := setupRedis(t)
-	p := queue.NewProducer(client)
+	p := queue.NewProducer(client, "test:queue", "test:workers")
 	ctx := context.Background()
 	require.NoError(t, p.EnsureGroup(ctx))
 
@@ -141,7 +141,7 @@ func TestProducer_EnqueueIfUnderLimit_ConcurrentBurst_NeverExceedsCap(t *testing
 
 func TestProducer_EnsureGroup_IdempotentOnRepeatCalls(t *testing.T) {
 	client := setupRedis(t)
-	p := queue.NewProducer(client)
+	p := queue.NewProducer(client, "test:queue", "test:workers")
 	ctx := context.Background()
 
 	require.NoError(t, p.EnsureGroup(ctx))
