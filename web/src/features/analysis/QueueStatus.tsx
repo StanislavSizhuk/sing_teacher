@@ -98,7 +98,7 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
 
       <ErrorAlert error={cancel.error ?? retry.error} />
       <div className="flex gap-2">
-        {analysis?.status === 'queued' && (
+        {(analysis?.status === 'queued' || analysis?.status === 'waiting_for_reference') && (
           <Button variant="danger" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
             {cancel.isPending ? 'Canceling…' : 'Cancel'}
           </Button>
