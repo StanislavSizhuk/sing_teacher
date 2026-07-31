@@ -164,3 +164,50 @@ FEEDBACK_FAIR_THRESHOLD = 50.0
 # an off-pitch note. Half a semitone is comfortably past normal intonation
 # wobble but well inside a genuinely wrong note.
 PIANO_ROLL_OFF_PITCH_CENTS = 50.0
+
+# Stage A4 melody extraction (spec 6.5/6.6, `mixed` mode only, M3 spike):
+# harmonic-summation salience over the mixture's own STFT, in place of the
+# ONNX model spec 6.6 names -- see docs/adr/0025 for why. MELODY_HOP_SECONDS
+# matches PITCH_HOP_SECONDS so mixed and clean pitch curves stay comparable
+# downstream (pitch/vibrato aspect stages, piano-roll).
+MELODY_HOP_SECONDS = PITCH_HOP_SECONDS
+# ~93ms analysis window: long enough that the salience peak from summing
+# several harmonics is sharp relative to MELODY_CANDIDATE_CENTS_STEP, short
+# enough to still track a singer's vibrato (spec 6.3.7's 3.5-9 Hz range).
+MELODY_WINDOW_SECONDS = 0.093
+# Zero-padded past the analysis window: does not narrow the window's own
+# frequency resolution, but gives the linear interpolation between bins
+# (`dsp/melody.py`) a smoother salience curve to search over.
+MELODY_N_FFT = 4096
+MELODY_HARMONICS = 6
+# Each successive harmonic counts for less (a real voice's own harmonics
+# decay in amplitude too) -- keeps one loud accompaniment harmonic from
+# outweighing several correctly-aligned but quieter vocal ones.
+MELODY_HARMONIC_WEIGHT_DECAY = 0.85
+# Candidate F0 grid step. Far finer than raw FFT bin spacing at the low end
+# of the vocal range on purpose: harmonic summation's composite salience
+# peak is much sharper than any single bin's width, so a fine grid resolves
+# it well past what one harmonic's own frequency resolution would allow.
+MELODY_CANDIDATE_CENTS_STEP = 5.0
+# Rolling window a candidate's own recent salience is subtracted over
+# (spec 6.6 spike): long enough to span a fixed accompaniment note's typical
+# ring time, short enough that a moving melody line's own vibrato/portamento
+# keeps it from looking "static" over the same window (see dsp/melody.py's
+# module docstring for the measured effect).
+MELODY_BACKGROUND_WINDOW_SECONDS = 0.6
+# A frame's winning candidate is "voiced" only if its background-suppressed
+# salience explains at least this fraction of the frame's total spectral
+# energy -- silence or inharmonic noise never concentrates energy this
+# narrowly once the static accompaniment has already been subtracted out.
+# Background subtraction (above) already zeroes out most of a frame's raw
+# salience, so this ratio sits far lower than a threshold on raw salience
+# would (calibrated against tests/test_melody_extraction.py's fixtures).
+MELODY_VOICING_SALIENCE_RATIO = 0.006
+# Post-processing (spec 6.5's mandatory median filter + octave-jump fix,
+# applied here the same way A5's pitch curve is meant to be, spec 6.5).
+MELODY_MEDIAN_FILTER_FRAMES = 5
+MELODY_OCTAVE_JUMP_TOLERANCE_CENTS = 50.0
+# Bounds the (frame x candidate x harmonic) tensor's memory regardless of
+# recording length -- the same bounded-resource principle as the banded
+# DTW's corridor (NFR-16), applied to this stage's own working set.
+MELODY_CHUNK_FRAMES = 2000
