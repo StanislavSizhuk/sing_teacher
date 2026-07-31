@@ -9,13 +9,18 @@ import (
 // AnalysisStatus is the lifecycle state of one analysis job (spec 7).
 type AnalysisStatus string
 
-// Valid values of AnalysisStatus (migration 00004).
+// Valid values of AnalysisStatus (migration 00004, extended by migration 00010).
 const (
 	AnalysisStatusQueued     AnalysisStatus = "queued"
 	AnalysisStatusProcessing AnalysisStatus = "processing"
 	AnalysisStatusDone       AnalysisStatus = "done"
 	AnalysisStatusFailed     AnalysisStatus = "failed"
 	AnalysisStatusCanceled   AnalysisStatus = "canceled"
+	// AnalysisStatusWaitingForReference means the job was created before its
+	// song's cold path reached ready; it holds here, not on analyses:run,
+	// until the song's prep wakes it into AnalysisStatusQueued (spec 6.2,
+	// 10.3, FR-16).
+	AnalysisStatusWaitingForReference AnalysisStatus = "waiting_for_reference"
 )
 
 // Analysis is one "compare my recording to this song" job: the user's

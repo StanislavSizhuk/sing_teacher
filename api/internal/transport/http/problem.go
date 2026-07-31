@@ -110,6 +110,10 @@ func classify(err error) (status int, title, detail, code string) {
 		return http.StatusConflict, "Conflict", "This analysis can no longer be canceled.", "ANALYSIS_NOT_QUEUED"
 	case errors.Is(err, domain.ErrAnalysisNotFailed):
 		return http.StatusConflict, "Conflict", "Only a failed analysis can be retried.", "ANALYSIS_NOT_FAILED"
+	case errors.Is(err, domain.ErrReferencePrepFailed):
+		return http.StatusConflict, "Conflict", "Reference preparation failed for this song.", "REFERENCE_PREP_FAILED"
+	case errors.Is(err, domain.ErrSongPrepNotFailed):
+		return http.StatusConflict, "Conflict", "Only a song stuck in a failed preparation state can be re-prepared.", "SONG_PREP_NOT_FAILED"
 	default:
 		return http.StatusInternalServerError, "Internal Server Error", "Something went wrong. Please try again.", "INTERNAL"
 	}

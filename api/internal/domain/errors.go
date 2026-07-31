@@ -95,4 +95,14 @@ var (
 	// ErrAnalysisNotFailed means a retry was requested for an analysis that
 	// is not in the failed state (FR-26).
 	ErrAnalysisNotFailed = errors.New("analysis is not in the failed state")
+
+	// ErrReferencePrepFailed means the song's cold path (Demucs/Whisper/
+	// reference pitch) failed, so an analysis against it cannot be queued
+	// until the song is re-prepared (FR-17, spec 10).
+	ErrReferencePrepFailed = errors.New("reference preparation failed for this song")
+
+	// ErrSongPrepNotFailed means POST /songs/{id}/prepare was called for a
+	// song whose prep_status is not 'failed' -- only a failed prep can be
+	// restarted (FR-17).
+	ErrSongPrepNotFailed = errors.New("song preparation is not in the failed state")
 )
