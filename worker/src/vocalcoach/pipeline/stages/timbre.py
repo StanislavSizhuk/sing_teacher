@@ -1,8 +1,8 @@
-"""Stage 9: compare MFCC timbre profiles between the recording and the
+"""Stage 10: compare MFCC timbre profiles between the recording and the
 reference vocal stem, after DTW alignment (spec 6.3.9).
 
 A rough "how similar does it sound" indicator, not a diagnosis of vocal
-technique -- the report text stage 11 (E4) builds from this score must say
+technique -- the report text stage 13 (E4) builds from this score must say
 so explicitly (spec 6.3.9's mandated disclaimer).
 """
 
@@ -11,30 +11,16 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import librosa
 import numpy as np
 
-from vocalcoach.audio.io import read_mono
 from vocalcoach.audio.timemap import TimeMap
-from vocalcoach.constants import (
-    ENVELOPE_HOP_SECONDS,
-    TIMBRE_MFCC_COEFFICIENTS,
-    TIMBRE_TIMEOUT_SECONDS,
-)
+from vocalcoach.constants import FEATURES_HOP_SECONDS, TIMBRE_TIMEOUT_SECONDS
+from vocalcoach.dsp.features import load_shared_features
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 
 STAGE_NAME = "timbre"
-
-
-def _mfcc(path: Path, hop_seconds: float) -> np.ndarray:
-    samples, sample_rate = read_mono(path)
-    hop_length = max(1, round(sample_rate * hop_seconds))
-    mfcc = librosa.feature.mfcc(
-        y=samples, sr=sample_rate, n_mfcc=TIMBRE_MFCC_COEFFICIENTS, hop_length=hop_length
-    )
-    return np.asarray(mfcc.T)  # (n_frames, n_mfcc)
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -52,18 +38,16 @@ class TimbreStage(PipelineStage):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        user_mfcc = _mfcc(Path(preprocess["recording_path"]), ENVELOPE_HOP_SECONDS)
-        reference_mfcc = _mfcc(
-            Path(context.result("separate_reference").data["stem_path"]), ENVELOPE_HOP_SECONDS
-        )
+        features_path = Path(context.result("features").data["features_path"])
+        features = load_shared_features(features_path)
+        user_mfcc, reference_mfcc = features.user.mfcc, features.reference.mfcc
         time_map = TimeMap.from_align_stage_data(context.result("align").data)
 
         similarities: list[float] = []
         last_index = len(reference_mfcc) - 1
         for i, user_vector in enumerate(user_mfcc):
-            reference_time = time_map.user_to_reference(i * ENVELOPE_HOP_SECONDS)
-            reference_index = min(max(round(reference_time / ENVELOPE_HOP_SECONDS), 0), last_index)
+            reference_time = time_map.user_to_reference(i * FEATURES_HOP_SECONDS)
+            reference_index = min(max(round(reference_time / FEATURES_HOP_SECONDS), 0), last_index)
             similarities.append(_cosine_similarity(user_vector, reference_mfcc[reference_index]))
 
         mean_similarity = sum(similarities) / len(similarities) if similarities else 0.0

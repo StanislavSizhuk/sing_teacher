@@ -29,7 +29,7 @@ class PostgresSongRepository:
             cur.execute(
                 """
                 SELECT id, content_hash, duration_sec, vocal_stem_processed,
-                       lyrics_json, reference_pitch_json
+                       lyrics_json, reference_pitch, reference_pitch_meta
                 FROM songs
                 WHERE id = %s
                 """,
@@ -38,7 +38,7 @@ class PostgresSongRepository:
             row = cur.fetchone()
         if row is None:
             raise LookupError(f"song {song_id} not found")
-        song_id_, content_hash, duration_sec, processed, lyrics_json, pitch_json = row
+        song_id_, content_hash, duration_sec, processed, lyrics_json, pitch_bytes, pitch_meta = row
         return SongRecord(
             id=str(song_id_),
             content_hash=content_hash,
@@ -46,7 +46,9 @@ class PostgresSongRepository:
             vocal_stem_processed=processed,
             lyrics=Lyrics.model_validate(lyrics_json) if lyrics_json is not None else None,
             reference_pitch=(
-                PitchCurve.model_validate(pitch_json) if pitch_json is not None else None
+                PitchCurve.from_bytes(bytes(pitch_bytes), pitch_meta)
+                if pitch_bytes is not None
+                else None
             ),
         )
 
@@ -59,14 +61,15 @@ class PostgresSongRepository:
         self._conn.commit()
 
     def mark_vocal_stem_processed(self, song_id: str, reference_pitch: PitchCurve) -> None:
+        data, meta = reference_pitch.to_bytes()
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE songs
-                SET reference_pitch_json = %s, vocal_stem_processed = true
+                SET reference_pitch = %s, reference_pitch_meta = %s, vocal_stem_processed = true
                 WHERE id = %s
                 """,
-                (Jsonb(reference_pitch.model_dump(mode="json")), song_id),
+                (data, Jsonb(meta), song_id),
             )
         self._conn.commit()
 
@@ -157,6 +160,30 @@ class PostgresAnalysisRepository:
             cur.execute(
                 "UPDATE analyses SET pitch_curve_json = %s WHERE id = %s",
                 (Jsonb(data.model_dump(mode="json")), analysis_id),
+            )
+        self._conn.commit()
+
+    def save_user_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None:
+        data, meta = curve.to_bytes()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE analyses SET user_pitch = %s, user_pitch_meta = %s WHERE id = %s",
+                (data, Jsonb(meta), analysis_id),
+            )
+        self._conn.commit()
+
+    def prune_dense_stage_fields(self, analysis_id: str) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE analyses
+                SET stages_json = stages_json
+                    #- '{pitch,data,user_pitch_curve}'
+                    #- '{pitch,data,reference_pitch_curve}'
+                    #- '{pitch,data,piano_roll}'
+                WHERE id = %s
+                """,
+                (analysis_id,),
             )
         self._conn.commit()
 

@@ -115,20 +115,30 @@ class DemucsSeparator:
 
 
 class WhisperTranscriber:
-    """Real `Transcriber` backed by OpenAI Whisper (spec 6.3.3)."""
+    """Real `Transcriber` backed by `faster-whisper`'s CTranslate2 runtime
+    (spec 6.3.3, 5.1, ADR-0021) -- the same Whisper models openai-whisper
+    used, substantially faster and lighter on CPU at int8 quantization,
+    comparable transcription quality.
+    """
 
     _TARGET_SAMPLE_RATE_HZ = 16000  # Whisper's fixed training sample rate
 
-    def __init__(self, model_name: str, weights_dir: Path) -> None:
+    def __init__(self, model_name: str, weights_dir: Path, compute_type: str) -> None:
         self._model_name = model_name
         self._weights_dir = weights_dir
+        self._compute_type = compute_type
         self._model: Any = None
 
     def _loaded(self) -> Any:
         if self._model is None:
-            import whisper  # heavy import deferred to first use
+            from faster_whisper import WhisperModel  # heavy import deferred to first use
 
-            self._model = whisper.load_model(self._model_name, download_root=str(self._weights_dir))
+            self._model = WhisperModel(
+                self._model_name,
+                device="cpu",
+                compute_type=self._compute_type,
+                download_root=str(self._weights_dir),
+            )
         return self._model
 
     def transcribe(self, samples: np.ndarray, sample_rate_hz: int) -> Lyrics:
@@ -140,17 +150,13 @@ class WhisperTranscriber:
             audio = librosa.resample(
                 samples, orig_sr=sample_rate_hz, target_sr=self._TARGET_SAMPLE_RATE_HZ
             )
-        result = model.transcribe(audio.astype(np.float32), word_timestamps=True)
+        segments, info = model.transcribe(audio.astype(np.float32), word_timestamps=True)
         words = [
-            LyricsWord(
-                word=str(word["word"]).strip(),
-                start=float(word["start"]),
-                end=float(word["end"]),
-            )
-            for segment in result.get("segments", [])
-            for word in segment.get("words", [])
+            LyricsWord(word=str(word.word).strip(), start=float(word.start), end=float(word.end))
+            for segment in segments
+            for word in (segment.words or [])
         ]
-        return Lyrics(language=str(result.get("language", "unknown")), words=words)
+        return Lyrics(language=str(info.language or "unknown"), words=words)
 
     def release(self) -> None:
         self._model = None
@@ -228,9 +234,11 @@ class ModelRegistry:
         whisper_model: str,
         pitch_engine: PitchEngine,
         weights_dir: Path,
+        whisper_compute_type: str = "int8",
     ) -> None:
         self._demucs_model = demucs_model
         self._whisper_model = whisper_model
+        self._whisper_compute_type = whisper_compute_type
         self._pitch_engine = pitch_engine
         self._weights_dir = weights_dir
         self._separator: VocalSeparator | None = None
@@ -245,8 +253,13 @@ class ModelRegistry:
 
     def transcriber(self) -> Transcriber:
         if self._transcriber is None:
-            logger.info("loading whisper model", extra={"model": self._whisper_model})
-            self._transcriber = WhisperTranscriber(self._whisper_model, self._weights_dir)
+            logger.info(
+                "loading whisper model",
+                extra={"model": self._whisper_model, "compute_type": self._whisper_compute_type},
+            )
+            self._transcriber = WhisperTranscriber(
+                self._whisper_model, self._weights_dir, self._whisper_compute_type
+            )
         return self._transcriber
 
     def pitch_detector(self) -> PitchDetector:

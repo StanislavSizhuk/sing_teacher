@@ -11,17 +11,20 @@ dependencies = [
     "librosa>=0.10.2,<0.11",
     "soundfile>=0.12.1,<0.13",
     "pyloudnorm>=0.1.1,<0.2",
-    "dtw-python>=1.5.3,<2",
     "redis>=5.2,<6",
     "psycopg[binary]>=3.2,<4",
     "torch>=2.5,<3",
     "torchaudio>=2.5,<3",
     "demucs>=4.0.1,<5",
-    "openai-whisper>=20240930",
+    # CTranslate2 int8 runtime, not openai-whisper's own inference (spec
+    # 5.1/ADR-0021): same Whisper models, substantially faster and lighter
+    # on CPU at the same accuracy -- a runtime swap, not a model swap.
+    "faster-whisper>=1.0,<2",
     "torchcrepe>=0.0.23,<0.1",
-    # openai-whisper's own pin resolves to a numba too old to build on
-    # Python 3.12 (llvmlite 0.36 has no py312 wheel); force a modern one
-    # that still satisfies every dependent (librosa, resampy, whisper).
+    # Used directly for the banded DTW (spec 6.7, dsp/dtw.py), not just a
+    # transitive pin anymore -- openai-whisper's own pin still resolves to a
+    # numba too old to build on Python 3.12 (llvmlite 0.36 has no py312
+    # wheel), so this also forces a modern one every dependent is fine with.
     "numba>=0.60,<1",
 ]
 
@@ -81,9 +84,8 @@ module = [
     "librosa.*",
     "soundfile.*",
     "pyloudnorm.*",
-    "dtw.*",
     "demucs.*",
-    "whisper.*",
+    "faster_whisper.*",
     "torchcrepe.*",
     "scipy.*",
 ]

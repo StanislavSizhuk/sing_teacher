@@ -1,4 +1,4 @@
-"""Stage 5: track pitch for both signals and score the user's accuracy
+"""Stage 6: track pitch for both signals and score the user's accuracy
 against the reference, note-for-note in cents (spec 6.3.5). The reference
 curve is cached on the song (spec 6.6) once computed.
 """
@@ -9,6 +9,8 @@ import math
 import time
 from pathlib import Path
 
+import numpy as np
+
 from vocalcoach.audio.io import read_mono
 from vocalcoach.audio.timemap import TimeMap
 from vocalcoach.constants import (
@@ -18,6 +20,8 @@ from vocalcoach.constants import (
     PITCH_SCORE_CENTS_FOR_ZERO,
     PITCH_TIMEOUT_SECONDS,
 )
+from vocalcoach.dsp.features import load_shared_features
+from vocalcoach.dsp.vad import voiced_mask, voiced_spans
 from vocalcoach.errors import NoVoiceDetected
 from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
@@ -32,6 +36,36 @@ def _voiced_fraction(hz: list[float | None]) -> float:
     if not hz:
         return 0.0
     return sum(1 for value in hz if value is not None) / len(hz)
+
+
+def _detect_gated(
+    detector: PitchDetector,
+    samples: np.ndarray,
+    sample_rate_hz: int,
+    hop_seconds: float,
+    rms: np.ndarray,
+) -> list[float | None]:
+    """Runs `detector` only over the spans `rms`'s VAD mask (spec 6.5) marks
+    voiced, filling every other frame with `None` directly instead of
+    running the detector over silence it would only report as unvoiced
+    anyway. Each span is detected independently rather than one call over a
+    concatenation of all of them, so a span's own length is the only frame
+    count its output ever needs to line up with.
+    """
+    mask = voiced_mask(rms, hop_seconds)
+    total_frames = len(mask)
+    result: list[float | None] = [None] * total_frames
+
+    for start, end in voiced_spans(mask):
+        hop_length = max(1, round(sample_rate_hz * hop_seconds))
+        chunk = samples[start * hop_length : end * hop_length]
+        if len(chunk) == 0:
+            continue
+        detected = detector.detect(chunk, sample_rate_hz, hop_seconds)
+        span_len = end - start
+        for i, value in enumerate(detected[:span_len]):
+            result[start + i] = value
+    return result
 
 
 def _cents_deviation(user_hz: float, reference_hz: float) -> float:
@@ -76,10 +110,15 @@ class PitchStage(PipelineStage):
         sample_rate = int(preprocess["sample_rate_hz"])
 
         reference_cached = context.vocal_stem_processed and context.reference_pitch is not None
+        features = load_shared_features(Path(context.result("features").data["features_path"]))
         try:
             user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
-            user_hz = self._detector.detect(user_samples, sample_rate, PITCH_HOP_SECONDS)
-            reference_curve = self._reference_pitch_curve(context, sample_rate)
+            user_hz = _detect_gated(
+                self._detector, user_samples, sample_rate, PITCH_HOP_SECONDS, features.user.rms_fine
+            )
+            reference_curve = self._reference_pitch_curve(
+                context, sample_rate, features.reference.rms_fine
+            )
         finally:
             self._detector.release()
 
@@ -129,13 +168,17 @@ class PitchStage(PipelineStage):
             },
         )
 
-    def _reference_pitch_curve(self, context: AnalysisContext, sample_rate: int) -> PitchCurve:
+    def _reference_pitch_curve(
+        self, context: AnalysisContext, sample_rate: int, reference_rms_fine: np.ndarray
+    ) -> PitchCurve:
         if context.vocal_stem_processed and context.reference_pitch is not None:
             return context.reference_pitch
 
         stem_path = Path(context.result("separate_reference").data["stem_path"])
         reference_samples, _sr = read_mono(stem_path)
-        reference_hz = self._detector.detect(reference_samples, sample_rate, PITCH_HOP_SECONDS)
+        reference_hz = _detect_gated(
+            self._detector, reference_samples, sample_rate, PITCH_HOP_SECONDS, reference_rms_fine
+        )
         return PitchCurve(hop_seconds=PITCH_HOP_SECONDS, hz=reference_hz)
 
 

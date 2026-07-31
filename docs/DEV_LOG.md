@@ -216,3 +216,48 @@ production VPS's actual 4 vCPU target (spec 5.1/NFR-04), which has never
 been provisioned. If real margin there turns out smaller, spec 19's
 remaining fallback (transcribe only the chorus) is still on the table
 (ADR-0014, alternatives considered).
+
+## 2026-07-30 -- M1: single-pipeline performance pass
+
+**Done:** All seven M1 items (spec 18) landed on `perf/m1-pipeline-performance`,
+one commit per change: explicit `WORKER_CPU_THREADS`/BLAS thread config
+(spec 6.11), a shared MFCC/RMS/onset feature cache removing align+timbre's
+and dynamics+breath's duplicate `librosa` calls (spec 6.9), an energy-based
+VAD gate on pitch detection (spec 6.5, interim -- ADR-0023), an own
+two-level banded DTW replacing `dtw-python` (spec 6.7, ADR-0017; caught and
+fixed a real tail-extrapolation bug in the coarse-to-fine projection along
+the way), parallel execution of the five independent aspect stages (spec
+6.10), `faster-whisper` replacing `openai-whisper` (ADR-0021), and dense
+pitch curves stored as `bytea` instead of JSONB, including pruning them
+back out of `stages_json` once durably saved (spec 7.3, ADR-0022). ADR-0015
+records the standing decision this milestone is built on: optimize via
+runtimes/algorithms, not a Rust/C rewrite.
+
+Measured before/after on a real ~207s song (not a synthetic fixture, per
+spec 18's acceptance criterion), `docs/PERFORMANCE.md`: total warm-path
+wall time 64.4s -> 44.2s (**-31%**). Biggest single contributors:
+`transcribe` -51% (`faster-whisper`), `pitch` -23% (VAD gate), and the five
+aspect stages combined -93% (shared cache: 985ms -> 70ms). T8/T9/T13
+(spec 15.2) all green: banded-memory DTW on a 20k-frame synthetic sequence,
+honest `ALIGNMENT_FAILED`/`ALIGNMENT_TOO_LARGE` on incompatible/oversized
+input, and parallel-vs-sequential aspect execution scoring identically.
+109 worker unit tests + 9 integration tests (against a real migrated
+Postgres/Redis) green; Go unit + integration tests green; no existing test
+broken.
+
+**Next:** M2 (cold/warm path split, spec 6.2/10) is next per spec 18's
+fixed ordering. `pyworld` (named alongside `faster-whisper` in spec 6.6)
+and Silero VAD (spec 6.5/6.6) are both explicitly deferred past M1 --
+ADR-0015 and ADR-0023 record why and when to revisit.
+
+**Blockers:** none.
+
+**Risks:** Measured on the same 12 vCPU/31 GB dev machine as the
+ADR-0014 investigation, not yet the 4 vCPU/8 GB production VPS target
+(still not provisioned, spec 16.3) -- the before/after *comparison* is
+valid (same machine, same conditions), the absolute numbers are not yet
+validated against the real target hardware. `ALIGN_MAX_NORMALIZED_DISTANCE`'s
+new value (70.0, recalibrated for the own DTW's cost scale) is an empirical
+starting point against this repo's synthetic test fixtures, same
+calibration caveat as every other scoring threshold (spec 19) -- worth
+revisiting once golden fixtures exist.

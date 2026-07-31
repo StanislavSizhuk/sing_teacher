@@ -34,6 +34,8 @@ class FakeAnalysisRepo:
         self.marked_failed: list[tuple[str, str]] = []
         self.saved_scores: list[tuple[str, str, float]] = []
         self.saved_piano_rolls: list[tuple[str, PianoRollData]] = []
+        self.saved_user_pitch_curves: list[tuple[str, PitchCurve]] = []
+        self.pruned_dense_fields: list[str] = []
         self.saved_scoring_results: list[tuple[str, float, str, str]] = []
         self.progress_snapshots: list[tuple[str, str, float]] = []
 
@@ -45,6 +47,12 @@ class FakeAnalysisRepo:
 
     def save_piano_roll(self, analysis_id, data):
         self.saved_piano_rolls.append((analysis_id, data))
+
+    def save_user_pitch_curve(self, analysis_id, curve):
+        self.saved_user_pitch_curves.append((analysis_id, curve))
+
+    def prune_dense_stage_fields(self, analysis_id):
+        self.pruned_dense_fields.append(analysis_id)
 
     def save_scoring_result(self, analysis_id, overall_score, feedback_text, scoring_version):
         self.saved_scoring_results.append(
@@ -147,12 +155,17 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
         deviation_cents=[0.0, None, 5.9],
         off_pitch=[False, False, False],
     )
+    user_pitch_curve = PitchCurve(hop_seconds=0.01, hz=[440.0, None, 441.5])
     stages = {
         "pitch": StageResult(
             stage="pitch",
             status=StageStatus.DONE,
             duration_ms=1,
-            data={"score": 87.5, "piano_roll": piano_roll.model_dump(mode="json")},
+            data={
+                "score": 87.5,
+                "piano_roll": piano_roll.model_dump(mode="json"),
+                "user_pitch_curve": user_pitch_curve.model_dump(mode="json"),
+            },
         ),
         "rhythm": StageResult(
             stage="rhythm", status=StageStatus.DONE, duration_ms=1, data={"score": 91.0}
@@ -187,8 +200,12 @@ def test_handle_success_denormalizes_scores_piano_roll_and_aggregate(
     assert ("a5", "rhythm", 91.0) in analyses.saved_scores
     assert len(analyses.saved_scores) == 2  # "align" has no "score" key, nothing else does either
     assert analyses.saved_piano_rolls == [("a5", piano_roll)]
+    assert analyses.saved_user_pitch_curves == [("a5", user_pitch_curve)]
     assert analyses.saved_scoring_results == [("a5", 88.4, "Overall score: 88/100.", "1.0")]
     assert analyses.progress_snapshots == [("a5", "u1", 88.4)]
+    # The dense curves above are pruned back out of stages_json only after
+    # they're durably saved elsewhere, and before mark_done (spec 7.3, 6.8).
+    assert analyses.pruned_dense_fields == ["a5"]
     # Score persistence must happen before mark_done, not after -- a reader
     # that sees status="done" should already find every score in place.
     assert analyses.marked_done == [("a5", {})]

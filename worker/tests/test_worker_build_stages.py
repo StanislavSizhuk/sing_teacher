@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from vocalcoach.config import load_settings
+from vocalcoach.pipeline.base import ParallelGroup
 from vocalcoach.pipeline.registry import ModelRegistry
 from vocalcoach.worker import build_stages
 
@@ -32,7 +33,17 @@ def settings(monkeypatch: pytest.MonkeyPatch):
     return load_settings()
 
 
-def test_every_stage_is_picklable(settings, tmp_path: Path) -> None:
+def _flatten_stage_names(entries) -> list[str]:
+    names: list[str] = []
+    for entry in entries:
+        if isinstance(entry, ParallelGroup):
+            names.extend(stage.name for stage in entry.stages)
+        else:
+            names.append(entry.name)
+    return names
+
+
+def test_every_stage_is_picklable_and_covers_the_full_pipeline(settings, tmp_path: Path) -> None:
     registry = ModelRegistry(
         demucs_model=settings.demucs_model,
         whisper_model=settings.whisper_model,
@@ -42,6 +53,42 @@ def test_every_stage_is_picklable(settings, tmp_path: Path) -> None:
 
     stages = build_stages(settings, registry)
 
-    assert len(stages) == 12
-    for stage in stages:
-        pickle.dumps(stage)
+    # The 5 independent aspect stages count as one ParallelGroup entry by
+    # default (spec 6.10), so top-level entries (9) are fewer than the 13
+    # actual stages they flatten to.
+    assert len(stages) == 9
+    assert _flatten_stage_names(stages) == [
+        "preprocess",
+        "separate_reference",
+        "features",
+        "transcribe",
+        "align",
+        "pitch",
+        "rhythm",
+        "vibrato",
+        "dynamics",
+        "timbre",
+        "breath",
+        "recording_condition",
+        "aggregate",
+    ]
+    for entry in stages:
+        pickle.dumps(entry)
+
+
+def test_pipeline_parallel_aspects_false_keeps_stages_flat(
+    settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PIPELINE_PARALLEL_ASPECTS", "false")
+    settings = load_settings()
+    registry = ModelRegistry(
+        demucs_model=settings.demucs_model,
+        whisper_model=settings.whisper_model,
+        pitch_engine=settings.pitch_engine,
+        weights_dir=tmp_path,
+    )
+
+    stages = build_stages(settings, registry)
+
+    assert not any(isinstance(entry, ParallelGroup) for entry in stages)
+    assert len(stages) == 13

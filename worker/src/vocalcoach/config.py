@@ -95,10 +95,22 @@ class Settings(BaseSettings):
     max_audio_seconds: int = Field(360, alias="MAX_AUDIO_SECONDS")
     audio_ttl_seconds: int = Field(300, alias="AUDIO_TTL_SECONDS")
 
+    # Normalized to a concrete count by `runtime.threads.configure_worker_threads`
+    # before this settings object is ever built (spec 6.11) -- 0 here would
+    # only mean "autodetect wasn't applied yet", which should never happen.
+    worker_cpu_threads: int = Field(0, alias="WORKER_CPU_THREADS")
+    # Spec 6.10/15.3: off only for deterministic tests that need an exact,
+    # reproducible stage order -- production always wants this on.
+    pipeline_parallel_aspects: bool = Field(True, alias="PIPELINE_PARALLEL_ASPECTS")
+
     pitch_engine: PitchEngine = Field("crepe", alias="PITCH_ENGINE")
     # "base", not spec 6.2's named "small": ADR-0014, real hardware measured
     # "small" landing on top of TRANSCRIBE_TIMEOUT_SECONDS instead of under it.
     whisper_model: str = Field("base", alias="WHISPER_MODEL")
+    # faster-whisper's CTranslate2 quantization (spec 6.6/ADR-0021); int8 is
+    # what makes it substantially faster/lighter than openai-whisper's own
+    # float32 inference on CPU at comparable accuracy.
+    whisper_compute_type: str = Field("int8", alias="WHISPER_COMPUTE_TYPE")
     demucs_model: str = Field("htdemucs", alias="DEMUCS_MODEL")
     scoring_version: str = Field("1.0", alias="SCORING_VERSION")
     # Raw string, not a nested model: pydantic-settings' env source tries to

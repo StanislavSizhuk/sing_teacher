@@ -23,12 +23,12 @@ func NewSongRepository(pool *pgxpool.Pool) *SongRepository {
 }
 
 const songColumns = `id, source_type, source_url, content_hash, title, artist, duration_sec,
-	lyrics_json, reference_pitch_json, vocal_stem_processed, created_at`
+	lyrics_json, reference_pitch, vocal_stem_processed, created_at`
 
 func scanSong(row pgx.Row) (*domain.Song, error) {
 	var s domain.Song
 	err := row.Scan(&s.ID, &s.SourceType, &s.SourceURL, &s.ContentHash, &s.Title, &s.Artist, &s.DurationSec,
-		&s.LyricsJSON, &s.ReferencePitchJSON, &s.VocalStemProcessed, &s.CreatedAt)
+		&s.LyricsJSON, &s.ReferencePitch, &s.VocalStemProcessed, &s.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrNotFound

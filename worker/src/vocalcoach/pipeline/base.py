@@ -8,6 +8,7 @@ stage order -- `PipelineRunner` itself never changes (Open/Closed, spec
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult
@@ -32,3 +33,23 @@ class PipelineStage(ABC):
         never got to persist its result.
         """
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class ParallelGroup:
+    """A batch of stages with no dependency on each other -- every aspect
+    stage past alignment only reads `preprocess`/`separate_reference`/
+    `features`/`align`/`pitch`'s already-finished output, never another
+    aspect stage's (spec 6.10). `PipelineRunner` runs every member
+    concurrently, each still in its own subprocess (spec 6.5's isolation
+    guarantee is unaffected), with BLAS threads forced to 1 apiece for the
+    duration -- 5 members x 4 threads each on a 4-vCPU box would make this
+    slower than running them one at a time, not faster (spec 6.10's
+    explicit warning).
+    """
+
+    stages: tuple[PipelineStage, ...]
+
+    @property
+    def name(self) -> str:
+        return "+".join(stage.name for stage in self.stages)

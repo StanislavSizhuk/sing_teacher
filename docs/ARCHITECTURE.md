@@ -140,28 +140,45 @@ queue/consumer.py  →  queue/handler.py  →  pipeline/runner.py  →  pipeline
 ```
 
 - `worker.py`: the entrypoint, wiring config → Postgres/Redis connections →
-  repositories → `ModelRegistry` → the 12 stages → `PipelineRunner` →
+  repositories → `ModelRegistry` → the 13 stages → `PipelineRunner` →
   `AnalysisJobHandler` → `Consumer`, then blocking in the consumer loop
-  until SIGTERM/SIGINT.
+  until SIGTERM/SIGINT. `__main__.py` calls
+  `runtime.threads.configure_worker_threads()` (M1, spec 6.11) as the very
+  first line, before `worker.py` (or anything it imports) ever runs --
+  numpy/torch read their BLAS thread pool size from env vars at import
+  time, so this has to happen before any of those imports, not inside
+  `worker.run()`.
 - `pipeline/base.py`/`pipeline/stages/`: `PipelineStage` is the Open/Closed
   seam spec 12.3 asks for -- a new stage is a new class plus one line in
   `worker.build_stages`, nothing else changes. See `docs/ML_PIPELINE.md`
-  for what each of the 12 stages does. No stage constructor takes a
+  for what each of the 13 stages does. No stage constructor takes a
   repository: every stage instance is pickled across `PipelineRunner`'s
   spawn-based subprocess boundary, and a `SongRepository` holding a live
   DB connection cannot survive that (a stage that tried this -- `transcribe`
   and `pitch` originally did -- crashed the moment a job actually reached
   it, `TypeError: no default __reduce__ due to non-trivial __cinit__` on
   the connection object). Their song-cache writes (`songs.lyrics_json`,
-  `reference_pitch_json`/`vocal_stem_processed`) move to
-  `AnalysisJobHandler` instead, which runs in the parent process and holds
-  the real connection.
+  `reference_pitch`/`vocal_stem_processed`) move to `AnalysisJobHandler`
+  instead, which runs in the parent process and holds the real connection.
+  `pipeline/base.py` also defines `ParallelGroup` (M1, spec 6.10): a batch
+  of stages with no dependency on each other, run as concurrent
+  subprocesses rather than one at a time -- see `docs/ML_PIPELINE.md`'s
+  "Parallel aspect stages" section.
+- `dsp/`, `runtime/` (M1): DSP primitives every stage that needs them reads
+  from, instead of each stage owning its own `librosa`/DTW code --
+  `dsp/features.py` (the shared MFCC/RMS/onset cache, spec 6.9),
+  `dsp/vad.py` (the pitch-detection VAD gate, spec 6.5), `dsp/dtw.py` (the
+  banded two-level DTW, spec 6.7), `runtime/threads.py` (spec 6.11's
+  thread configuration).
 - `pipeline/runner.py`: `PipelineRunner` orchestrates order, per-stage
   timeout, transient retry, and progress persistence -- and nothing else
   (spec 12.3: "нічого не знає про DSP"). Every stage runs in its own
   spawned child process (ADR-0012), which is what makes a timeout
   enforceable at all and what satisfies spec 6.5's "Demucs and Whisper
   never resident together" as a consequence rather than a special case.
+  `ParallelGroup` entries run their members as concurrent subprocesses
+  instead, with BLAS threads forced to 1 apiece for the duration
+  (spec 6.10).
   Any non-picklable value bound into a stage instance (a lambda closing
   over a local variable, e.g.) fails the same way, only once a job
   actually reaches that stage, not at import/construction time -- see
