@@ -364,7 +364,10 @@ queue/scheduler.py  →  queue/consumer.py  →  queue/handler.py       →  pip
    a fresh page load or the polling fallback can render "stage N of M" and
    a live elapsed timer without ever needing the WS message that first
    announced it.
-7. `POST /analyses/{id}/cancel` (FR-25) works while `queued`.
+7. `POST /analyses/{id}/cancel` (FR-25) works while `queued` or
+   `waiting_for_reference` (M2: a job still waiting on its song's cold path
+   never published to any stream, so canceling it is a plain status flip,
+   nothing to remove from Redis).
    `POST /analyses/{id}/retry` (FR-26) resets status/error/queue
    bookkeeping and re-enqueues, without touching the stored recording or
    `stages_json` -- the worker resumes from the first stage that row

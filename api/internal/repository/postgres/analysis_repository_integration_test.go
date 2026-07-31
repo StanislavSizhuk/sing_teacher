@@ -111,6 +111,26 @@ func TestAnalysisRepository_Cancel_QueuedAnalysis_Succeeds(t *testing.T) {
 	require.Nil(t, canceled.QueuePosition)
 }
 
+func TestAnalysisRepository_Cancel_WaitingForReference_Succeeds(t *testing.T) {
+	pool := setupPostgres(t)
+	ctx := context.Background()
+	userRepo := postgres.NewUserRepository(pool)
+	songRepo := postgres.NewSongRepository(pool)
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+
+	user := newTestUser(fmt.Sprintf("cancel-waiting-%s@example.com", uuid.NewString()))
+	require.NoError(t, userRepo.Create(ctx, user))
+	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusWaitingForReference}
+	require.NoError(t, analysisRepo.Create(ctx, a))
+
+	canceled, err := analysisRepo.Cancel(ctx, a.ID, user.ID)
+	require.NoError(t, err, "FR-25: waiting_for_reference is cancelable exactly like queued")
+	require.Equal(t, domain.AnalysisStatusCanceled, canceled.Status)
+}
+
 func TestAnalysisRepository_Cancel_AlreadyCanceled_ReturnsErrAnalysisNotQueued(t *testing.T) {
 	pool := setupPostgres(t)
 	ctx := context.Background()

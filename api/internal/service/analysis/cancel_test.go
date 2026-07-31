@@ -40,6 +40,23 @@ func TestCancel_NotQueued_ReturnsErrAnalysisNotQueued(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrAnalysisNotQueued)
 }
 
+func TestCancel_WaitingForReference_Succeeds(t *testing.T) {
+	song := waitingSong()
+	d := newTestService(t, song, 360, 20)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusWaitingForReference, created.Status)
+	require.Nil(t, created.QueueStreamID, "never published to analyses:run, so nothing to remove")
+
+	canceled, _, err := d.svc.Cancel(ctx, created.ID, userID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusCanceled, canceled.Status)
+	require.Empty(t, d.queue.removed, "a waiting_for_reference job was never published, so Remove is never called")
+}
+
 func TestCancel_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	song := testSong()
 	d := newTestService(t, song, 360, 20)

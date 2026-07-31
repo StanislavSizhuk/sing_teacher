@@ -89,8 +89,10 @@ var (
 	ErrAnalysisRateLimited = errors.New("too many analyses requested, try again later")
 
 	// ErrAnalysisNotQueued means a cancel was requested for an analysis that
-	// is no longer (or never was) in the queued state (FR-25).
-	ErrAnalysisNotQueued = errors.New("analysis is not in the queued state")
+	// is not in a cancelable state -- queued or waiting_for_reference (FR-25,
+	// spec 6.2/10.3: a job still waiting on its song's cold path is
+	// cancelable exactly like a queued one, it just has no queue position yet).
+	ErrAnalysisNotQueued = errors.New("analysis is not in a cancelable state")
 
 	// ErrAnalysisNotFailed means a retry was requested for an analysis that
 	// is not in the failed state (FR-26).

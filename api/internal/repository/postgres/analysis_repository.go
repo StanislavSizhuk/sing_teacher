@@ -95,14 +95,14 @@ func (r *AnalysisRepository) GetByID(ctx context.Context, id, userID uuid.UUID) 
 	return scanAnalysis(r.pool.QueryRow(ctx, q, id, userID))
 }
 
-// Cancel moves a queued analysis to canceled (FR-25). It returns
-// domain.ErrNotFound if the id doesn't exist or isn't owned by userID, and
-// domain.ErrAnalysisNotQueued if it exists but has already left the queued
-// state.
+// Cancel moves a queued or waiting_for_reference analysis to canceled
+// (FR-25, spec 6.2/10.3). It returns domain.ErrNotFound if the id doesn't
+// exist or isn't owned by userID, and domain.ErrAnalysisNotQueued if it
+// exists but has already left one of those two cancelable states.
 func (r *AnalysisRepository) Cancel(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
 	const q = `
 		UPDATE analyses SET status = 'canceled', queue_position = NULL
-		WHERE id = $1 AND user_id = $2 AND status = 'queued'
+		WHERE id = $1 AND user_id = $2 AND status IN ('queued', 'waiting_for_reference')
 		RETURNING ` + analysisColumns
 
 	updated, err := scanAnalysis(r.pool.QueryRow(ctx, q, id, userID))
@@ -119,11 +119,11 @@ func (r *AnalysisRepository) Cancel(ctx context.Context, id, userID uuid.UUID) (
 	if getErr != nil {
 		return nil, getErr
 	}
-	if existing.Status != domain.AnalysisStatusQueued {
+	if existing.Status != domain.AnalysisStatusQueued && existing.Status != domain.AnalysisStatusWaitingForReference {
 		return nil, domain.ErrAnalysisNotQueued
 	}
-	// Existed and was queued moments ago but the UPDATE still matched zero
-	// rows: raced with a concurrent cancel. Report the same outcome either way.
+	// Existed and was cancelable moments ago but the UPDATE still matched
+	// zero rows: raced with a concurrent cancel. Report the same outcome either way.
 	return nil, domain.ErrAnalysisNotQueued
 }
 

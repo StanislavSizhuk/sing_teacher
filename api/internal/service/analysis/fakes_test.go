@@ -86,7 +86,7 @@ func (f *fakeAnalysisRepository) Cancel(_ context.Context, id, userID uuid.UUID)
 	if !ok || a.UserID != userID {
 		return nil, domain.ErrNotFound
 	}
-	if a.Status != domain.AnalysisStatusQueued {
+	if a.Status != domain.AnalysisStatusQueued && a.Status != domain.AnalysisStatusWaitingForReference {
 		return nil, domain.ErrAnalysisNotQueued
 	}
 	a.Status = domain.AnalysisStatusCanceled
