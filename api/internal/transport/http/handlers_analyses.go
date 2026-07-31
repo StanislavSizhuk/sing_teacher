@@ -15,7 +15,7 @@ import (
 
 // AnalysisQueuer is what AnalysisHandler needs from the analysis service.
 type AnalysisQueuer interface {
-	Enqueue(ctx context.Context, userID, songID uuid.UUID, recording io.Reader) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
+	Enqueue(ctx context.Context, userID, songID uuid.UUID, mode domain.AnalysisMode, allowTransposition bool, recording io.Reader) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
 	Cancel(ctx context.Context, id, userID uuid.UUID) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
 	Retry(ctx context.Context, id, userID uuid.UUID) (a *domain.Analysis, positions map[uuid.UUID]int, err error)
 	GetByID(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
@@ -70,6 +70,12 @@ func (h *AnalysisHandler) Create(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, r, "song_id must be a valid uuid")
 		return
 	}
+	mode, err := validateAnalysisMode(r.FormValue("mode"))
+	if err != nil {
+		badRequest(w, r, err.Error())
+		return
+	}
+	allowTransposition := parseAllowTransposition(r.FormValue("allow_transposition"), mode)
 	file, _, err := r.FormFile("recording")
 	if err != nil {
 		badRequest(w, r, "recording file is required")
@@ -77,7 +83,7 @@ func (h *AnalysisHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	result, positions, err := h.svc.Enqueue(r.Context(), userID, songID, file)
+	result, positions, err := h.svc.Enqueue(r.Context(), userID, songID, mode, allowTransposition, file)
 	if err != nil {
 		writeServiceError(h.logger, w, r, err)
 		return

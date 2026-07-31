@@ -777,6 +777,21 @@ components:
         song_id:
           type: string
           format: uuid
+        mode:
+          type: string
+          enum: [clean, mixed]
+          default: clean
+          description: >-
+            Which analysis mode to run (spec 2.3, FR-27). `clean` (a
+            cappella) is recommended and scores all six aspects at the
+            highest accuracy; `mixed` (any accompaniment) scores four, at
+            reduced accuracy. Defaults to `clean` when omitted.
+        allow_transposition:
+          type: boolean
+          description: >-
+            Whether the user may have sung in a different key (FR-31, spec
+            6.8). Defaults to `false` for `clean` and `true` for `mixed`
+            when omitted.
         recording:
           type: string
           format: binary
@@ -784,7 +799,7 @@ components:
 
     Analysis:
       type: object
-      required: [id, song_id, status, created_at]
+      required: [id, song_id, status, mode, created_at]
       properties:
         id:
           type: string
@@ -799,6 +814,18 @@ components:
             waiting_for_reference means the job was created before its
             song's cold path reached ready; it transitions to queued
             automatically once the song is ready (spec 6.2, 10.3, FR-16).
+        mode:
+          type: string
+          enum: [clean, mixed]
+          description: The mode the user chose at POST /analyses (spec 2.3, FR-27).
+        effective_mode:
+          type: string
+          enum: [clean, mixed]
+          description: >-
+            What the worker's stage A3 actually reconciled `mode` to once it
+            saw the recording (spec 6.16) -- e.g. auto-downgraded from
+            `mixed` to `clean` when no accompaniment was detected (FR-29).
+            Absent until that stage completes.
         queue_position:
           type: integer
           description: 1-based position among currently queued jobs. Absent once no longer queued.
@@ -852,6 +879,50 @@ components:
         scoring_version:
           type: string
           description: Which SCORING_WEIGHTS this analysis was scored under (spec 6.4).
+        weights_profile:
+          type: string
+          description: >-
+            Which named weight profile (`clean_v1`/`mixed_v1`, spec 6.14)
+            overall_score was computed under. Two analyses with different
+            weights_profile must never have their overall_score compared
+            directly without flagging that to the user (FR-49).
+        confidence:
+          type: string
+          enum: [high, medium, low]
+          description: >-
+            Overall reliability of this analysis's scores (spec 6.15,
+            FR-47). Absent until stage 11 (aggregate) completes.
+        aspect_confidence:
+          type: object
+          description: Per-aspect confidence level, keyed by aspect name (spec 6.15).
+          additionalProperties:
+            type: string
+            enum: [high, medium, low]
+        warnings:
+          type: array
+          description: >-
+            Machine-readable warning codes (spec 6.18), e.g.
+            `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`,
+            `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`,
+            `KEY_SHIFT_OUT_OF_RANGE`. The client localizes these to a
+            human-readable message rather than showing the code (FR-47).
+          items:
+            type: string
+        unavailable_aspects:
+          type: object
+          description: >-
+            Every aspect this mode does not score, mapped to a
+            machine-readable reason (FR-41) -- e.g. `breath`/`timbre` under
+            `NOT_MEASURABLE_WITH_ACCOMPANIMENT` in `mixed`. An aspect listed
+            here is never also present as a `0` in its `*_score` field: it
+            is simply absent there.
+          additionalProperties:
+            type: string
+        key_shift_semitones:
+          type: number
+          description: >-
+            Applied tonality-normalization shift in semitones, if any (spec
+            6.8, FR-46). Absent when no shift was applied.
         piano_roll:
           $ref: "#/components/schemas/PianoRoll"
         created_at:
@@ -913,14 +984,25 @@ components:
 
     ProgressPoint:
       type: object
-      description: One dated overall_score sample for the FR-35 progress chart.
-      required: [analysis_id, overall_score, created_at]
+      description: >-
+        One dated overall_score sample for the FR-35/FR-49 progress chart.
+        mode/confidence are denormalized alongside overall_score: two points
+        with different mode were scored under different weights_profile
+        (spec 6.14) and must be visually distinguished, never presented as
+        directly comparable (FR-49).
+      required: [analysis_id, overall_score, mode, created_at]
       properties:
         analysis_id:
           type: string
           format: uuid
         overall_score:
           type: number
+        mode:
+          type: string
+          enum: [clean, mixed]
+        confidence:
+          type: string
+          enum: [high, medium, low]
         created_at:
           type: string
           format: date-time

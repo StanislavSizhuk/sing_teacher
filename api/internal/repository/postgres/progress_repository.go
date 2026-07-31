@@ -28,10 +28,13 @@ func NewProgressRepository(pool *pgxpool.Pool) *ProgressRepository {
 }
 
 // ListByUser returns userID's progress points oldest first, the order a
-// chart draws in, capped at progressPointsCap.
+// chart draws in, capped at progressPointsCap. Mode/Confidence come along
+// with every point (spec 7) so the FR-49 chart can tell a clean-mode point
+// from a mixed-mode one -- and therefore not directly comparable -- without
+// a second round trip to analyses.
 func (r *ProgressRepository) ListByUser(ctx context.Context, userID uuid.UUID) ([]domain.ProgressPoint, error) {
 	const q = `
-		SELECT analysis_id, overall_score, created_at
+		SELECT analysis_id, overall_score, mode, confidence, created_at
 		FROM progress_snapshots
 		WHERE user_id = $1
 		ORDER BY created_at ASC
@@ -46,7 +49,7 @@ func (r *ProgressRepository) ListByUser(ctx context.Context, userID uuid.UUID) (
 	points := make([]domain.ProgressPoint, 0)
 	for rows.Next() {
 		var p domain.ProgressPoint
-		if err := rows.Scan(&p.AnalysisID, &p.OverallScore, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.AnalysisID, &p.OverallScore, &p.Mode, &p.Confidence, &p.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan progress snapshot: %w", err)
 		}
 		points = append(points, p)

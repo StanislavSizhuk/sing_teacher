@@ -26,7 +26,7 @@ func TestAnalysisRepository_Create_AssignsQueueSeqAndCreatedAt(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	require.False(t, a.CreatedAt.IsZero())
 	require.Positive(t, a.QueueSeq)
@@ -49,7 +49,7 @@ func TestAnalysisRepository_Create_WaitingForReference_Persists(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusWaitingForReference}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusWaitingForReference, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 
 	got, err := analysisRepo.GetByID(ctx, a.ID, user.ID)
@@ -60,6 +60,48 @@ func TestAnalysisRepository_Create_WaitingForReference_Persists(t *testing.T) {
 	positions, err := analysisRepo.RecalculatePositions(ctx)
 	require.NoError(t, err)
 	require.NotContains(t, positions, a.ID, "a waiting analysis has no position on analyses:run")
+}
+
+// TestAnalysisRepository_Create_PersistsModeAndAllowTransposition covers
+// FR-27/FR-31 end to end through the repository, and exercises scanning the
+// nullable effective_mode/confidence columns (both custom string-backed
+// domain types) back out once the worker (simulated here with a direct
+// UPDATE) has written them (spec 6.15, 6.16).
+func TestAnalysisRepository_Create_PersistsModeAndAllowTransposition(t *testing.T) {
+	pool := setupPostgres(t)
+	ctx := context.Background()
+	userRepo := postgres.NewUserRepository(pool)
+	songRepo := postgres.NewSongRepository(pool)
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+
+	user := newTestUser(fmt.Sprintf("mode-%s@example.com", uuid.NewString()))
+	require.NoError(t, userRepo.Create(ctx, user))
+	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	a := &domain.Analysis{
+		ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued,
+		Mode: domain.AnalysisModeMixed, AllowTransposition: true,
+	}
+	require.NoError(t, analysisRepo.Create(ctx, a))
+
+	got, err := analysisRepo.GetByID(ctx, a.ID, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisModeMixed, got.Mode)
+	require.True(t, got.AllowTransposition)
+	require.Nil(t, got.EffectiveMode, "unset until the worker's recording_condition stage runs")
+	require.Nil(t, got.Confidence, "unset until the worker's aggregate stage runs")
+
+	_, err = pool.Exec(ctx,
+		`UPDATE analyses SET effective_mode = 'clean', confidence = 'medium' WHERE id = $1`, a.ID)
+	require.NoError(t, err)
+
+	got, err = analysisRepo.GetByID(ctx, a.ID, user.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.EffectiveMode)
+	require.Equal(t, domain.AnalysisModeClean, *got.EffectiveMode)
+	require.NotNil(t, got.Confidence)
+	require.Equal(t, domain.ConfidenceMedium, *got.Confidence)
 }
 
 func TestAnalysisRepository_GetByID_ScopedToOwner(t *testing.T) {
@@ -76,7 +118,7 @@ func TestAnalysisRepository_GetByID_ScopedToOwner(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 
 	got, err := analysisRepo.GetByID(ctx, a.ID, owner.ID)
@@ -99,7 +141,7 @@ func TestAnalysisRepository_Cancel_QueuedAnalysis_Succeeds(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	_, err = pool.Exec(ctx, `UPDATE analyses SET queue_position = 4 WHERE id = $1`, a.ID)
 	require.NoError(t, err)
@@ -123,7 +165,7 @@ func TestAnalysisRepository_Cancel_WaitingForReference_Succeeds(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusWaitingForReference}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusWaitingForReference, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 
 	canceled, err := analysisRepo.Cancel(ctx, a.ID, user.ID)
@@ -143,7 +185,7 @@ func TestAnalysisRepository_Cancel_AlreadyCanceled_ReturnsErrAnalysisNotQueued(t
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	_, err = analysisRepo.Cancel(ctx, a.ID, user.ID)
 	require.NoError(t, err)
@@ -166,7 +208,7 @@ func TestAnalysisRepository_Cancel_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 
 	_, err = analysisRepo.Cancel(ctx, a.ID, stranger.ID)
@@ -185,7 +227,7 @@ func TestAnalysisRepository_Retry_FailedAnalysis_Succeeds(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	require.NoError(t, analysisRepo.SetQueueStreamID(ctx, a.ID, "1234-0"))
 
@@ -218,7 +260,7 @@ func TestAnalysisRepository_Retry_NotFailed_ReturnsErrAnalysisNotFailed(t *testi
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 
 	_, err = analysisRepo.Retry(ctx, a.ID, user.ID)
@@ -239,7 +281,7 @@ func TestAnalysisRepository_Retry_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	_, err = pool.Exec(ctx, `UPDATE analyses SET status = 'failed' WHERE id = $1`, a.ID)
 	require.NoError(t, err)
@@ -260,7 +302,7 @@ func TestAnalysisRepository_SetQueueStreamID_Persists(t *testing.T) {
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 	require.NoError(t, analysisRepo.Create(ctx, a))
 	require.NoError(t, analysisRepo.SetQueueStreamID(ctx, a.ID, "1234-0"))
 
@@ -284,7 +326,7 @@ func TestAnalysisRepository_RecalculatePositions_AssignsFIFOOrder(t *testing.T) 
 
 	var ids []uuid.UUID
 	for i := 0; i < 3; i++ {
-		a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+		a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 		require.NoError(t, analysisRepo.Create(ctx, a))
 		ids = append(ids, a.ID)
 	}
@@ -310,7 +352,7 @@ func TestAnalysisRepository_RecalculatePositions_AfterCancel_ShiftsRemaining(t *
 
 	var ids []uuid.UUID
 	for i := 0; i < 3; i++ {
-		a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued}
+		a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
 		require.NoError(t, analysisRepo.Create(ctx, a))
 		ids = append(ids, a.ID)
 	}

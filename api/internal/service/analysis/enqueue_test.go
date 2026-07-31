@@ -73,7 +73,7 @@ func TestEnqueue_Success_ReturnsAnalysisAndPosition(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	userID := uuid.New()
 
-	got, positions, err := d.svc.Enqueue(context.Background(), userID, song.ID, validWAVReader())
+	got, positions, err := d.svc.Enqueue(context.Background(), userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, domain.AnalysisStatusQueued, got.Status)
 	require.NotNil(t, got.QueuePosition)
@@ -81,6 +81,25 @@ func TestEnqueue_Success_ReturnsAnalysisAndPosition(t *testing.T) {
 	require.Equal(t, 1, positions[got.ID])
 	require.Len(t, d.queue.enqueued, 1)
 	require.NotNil(t, got.QueueStreamID)
+}
+
+// TestEnqueue_StoresModeAndAllowTransposition covers FR-27/FR-31: the
+// caller's own mode choice (already validated/defaulted by the transport
+// layer) must reach the stored row unchanged -- this is what the worker's
+// AnalysisContext (M4) ends up building the pipeline from.
+func TestEnqueue_StoresModeAndAllowTransposition(t *testing.T) {
+	song := testSong()
+	d := newTestService(t, song, 360, 20)
+
+	got, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeMixed, true, validWAVReader())
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisModeMixed, got.Mode)
+	require.True(t, got.AllowTransposition)
+
+	stored, err := d.analyses.GetByID(context.Background(), got.ID, got.UserID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisModeMixed, stored.Mode)
+	require.True(t, stored.AllowTransposition)
 }
 
 // TestEnqueue_SongNotReady_WaitsForReference is T11's Go-service half (spec
@@ -92,7 +111,7 @@ func TestEnqueue_SongNotReady_WaitsForReference(t *testing.T) {
 	song := waitingSong()
 	d := newTestService(t, song, 360, 20)
 
-	got, positions, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	got, positions, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, domain.AnalysisStatusWaitingForReference, got.Status)
 	require.Nil(t, got.QueuePosition)
@@ -108,7 +127,7 @@ func TestEnqueue_SongPrepFailed_Rejected(t *testing.T) {
 	song := failedPrepSong()
 	d := newTestService(t, song, 360, 20)
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.ErrorIs(t, err, domain.ErrReferencePrepFailed)
 	require.Empty(t, d.analyses.byID, "a known-failed prep must never create a job")
 	require.Equal(t, 0, d.rate.calls, "rate limit must not be spent on a request rejected for a failed song")
@@ -117,7 +136,7 @@ func TestEnqueue_SongPrepFailed_Rejected(t *testing.T) {
 func TestEnqueue_SongNotFound_Rejected(t *testing.T) {
 	d := newTestService(t, testSong(), 360, 20)
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), uuid.New(), validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), uuid.New(), domain.AnalysisModeClean, false, validWAVReader())
 	require.ErrorIs(t, err, domain.ErrNotFound)
 	require.Equal(t, 0, d.rate.calls, "rate limit must not be spent on a request that fails song lookup")
 }
@@ -127,7 +146,7 @@ func TestEnqueue_RateLimited_Rejected(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	d.rate.allowed = false
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.ErrorIs(t, err, domain.ErrAnalysisRateLimited)
 	var throttled *domain.ThrottledError
 	require.ErrorAs(t, err, &throttled)
@@ -138,7 +157,7 @@ func TestEnqueue_QueueFull_Rejected(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	d.queue.length = 20
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.ErrorIs(t, err, domain.ErrQueueFull)
 	require.Empty(t, d.queue.enqueued, "a full queue must never publish the job")
 }
@@ -147,7 +166,7 @@ func TestEnqueue_UnsupportedFormat_Rejected(t *testing.T) {
 	song := testSong()
 	d := newTestService(t, song, 360, 20)
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, strings.NewReader("not audio"))
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, strings.NewReader("not audio"))
 	require.ErrorIs(t, err, domain.ErrUnsupportedAudioFormat)
 	require.Equal(t, 0, d.processor.transcodeCalls)
 }
@@ -157,7 +176,7 @@ func TestEnqueue_TooLong_Rejected(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	d.processor.seconds = 500
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.ErrorIs(t, err, domain.ErrAudioTooLong)
 	require.Equal(t, 0, d.processor.transcodeCalls)
 }
@@ -167,7 +186,7 @@ func TestEnqueue_TranscodeError_NoAnalysisCreated(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	d.processor.transcodeErr = errBoom
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.Error(t, err)
 	require.Empty(t, d.analyses.byID, "a failed transcode must never leave a queued row behind")
 }
@@ -178,11 +197,11 @@ func TestEnqueue_MultipleJobs_PositionsIncrementInOrder(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, 1, *first.QueuePosition)
 
-	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, 2, *second.QueuePosition)
 }
@@ -197,7 +216,7 @@ func TestEnqueue_QueueFillsBetweenPreCheckAndAdmission_RollsBackRow(t *testing.T
 	d := newTestService(t, song, 360, 20)
 	d.queue.forceFull = true
 
-	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.ErrorIs(t, err, domain.ErrQueueFull)
 	require.Empty(t, d.queue.enqueued, "a losing entrant must never publish the job")
 	require.Empty(t, d.analyses.byID, "the pre-admission row must be rolled back, not left as a phantom queued job")
@@ -225,7 +244,7 @@ func TestEnqueue_ConcurrentBurst_NeverExceedsQueueMaxLength(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+			_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 			results[i] = err
 		}(i)
 	}

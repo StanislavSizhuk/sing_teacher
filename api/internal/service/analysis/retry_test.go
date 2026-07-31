@@ -16,7 +16,7 @@ func TestRetry_FailedAnalysis_Succeeds_Requeues(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	errCode := "INTERNAL"
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
@@ -37,7 +37,7 @@ func TestRetry_NotFailed_ReturnsErrAnalysisNotFailed(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 
 	_, _, err = d.svc.Retry(ctx, created.ID, userID)
@@ -49,7 +49,7 @@ func TestRetry_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	ctx := context.Background()
 
-	created, _, err := d.svc.Enqueue(ctx, uuid.New(), song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
 
@@ -63,7 +63,7 @@ func TestRetry_QueueFull_Rejected(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
 	d.queue.length = 20
@@ -78,9 +78,9 @@ func TestRetry_MovesToBackOfQueue(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
-	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, validWAVReader())
+	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
 	require.NoError(t, err)
 
 	d.analyses.byID[first.ID].Status = domain.AnalysisStatusFailed
