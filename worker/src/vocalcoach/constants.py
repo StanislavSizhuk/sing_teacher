@@ -10,10 +10,8 @@ from __future__ import annotations
 PIPELINE_SAMPLE_RATE_HZ = 22050
 TARGET_LOUDNESS_LUFS = -23.0
 
-# Per-stage timeouts in seconds (spec 6.2 table).
-PREPROCESS_TIMEOUT_SECONDS = 30
-SEPARATE_REFERENCE_TIMEOUT_SECONDS = 300
-TRANSCRIBE_TIMEOUT_SECONDS = 180
+# Warm-path (A1-A10) per-stage timeouts in seconds (spec 6.5 table, M2).
+PREPROCESS_TIMEOUT_SECONDS = 45  # A1: recording only, the reference half moved to P1 (M2)
 ALIGN_TIMEOUT_SECONDS = 60
 PITCH_TIMEOUT_SECONDS = 180
 RHYTHM_TIMEOUT_SECONDS = 30
@@ -21,6 +19,13 @@ VIBRATO_TIMEOUT_SECONDS = 30
 DYNAMICS_TIMEOUT_SECONDS = 30
 TIMBRE_TIMEOUT_SECONDS = 30
 BREATH_TIMEOUT_SECONDS = 30
+
+# Cold-path (P1-P4) per-stage timeouts in seconds (spec 6.4 table, M2): run
+# once per song, asynchronously, well before any analysis waits on them.
+PREP_REFERENCE_TIMEOUT_SECONDS = 60  # P1: decode/normalize the reference mixture
+SEPARATE_REFERENCE_TIMEOUT_SECONDS = 600  # P2: Demucs
+TRANSCRIBE_TIMEOUT_SECONDS = 240  # P3: faster-whisper, optional (FR-18)
+PREP_REFERENCE_PITCH_TIMEOUT_SECONDS = 120  # P4: reference pitch curve
 
 # Pitch detection range: C2 (65.4 Hz) to C6 (1046.5 Hz) comfortably spans a
 # solo singing voice from low bass to high soprano/whistle-adjacent belting.
@@ -115,8 +120,14 @@ CREPE_VOICED_THRESHOLD = 0.5  # torchcrepe periodicity below this = unvoiced
 MAX_STAGE_RETRIES = 2
 RETRY_BACKOFF_BASE_SECONDS = 2.0
 
-# Queue reliability (spec 10.1).
-PENDING_CLAIM_MIN_IDLE = 15 * 60  # seconds a delivered job may sit unacked before reclaim
+# Queue reliability (spec 10.1, 10.3). songs:prep gets a longer idle
+# threshold than analyses:run -- its stages (P2 Demucs alone: 600s) run
+# far longer than any single warm-path stage, so the same 15-minute bar
+# would reclaim a song prep that is simply still working.
+PENDING_CLAIM_MIN_IDLE = (
+    15 * 60
+)  # seconds a delivered analyses:run job may sit unacked before reclaim
+SONGS_PREP_PENDING_CLAIM_MIN_IDLE = 20 * 60
 MAX_CLAIM_ATTEMPTS = 3  # after this many reclaims the job is given up on as failed
 
 # Stage 11 recording-condition check (spec 2.3, 6.9): the user's own

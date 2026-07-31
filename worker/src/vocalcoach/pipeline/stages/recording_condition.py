@@ -59,7 +59,7 @@ def _loud_unvoiced_fraction(rms: np.ndarray, user_hz: list[float | None]) -> flo
     return loud_and_unvoiced / frame_count
 
 
-class RecordingConditionStage(PipelineStage):
+class RecordingConditionStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `background_music_detected` (bool),
     `non_vocal_energy_fraction` (0-1, the loud-but-unvoiced frame fraction
     the decision is based on).

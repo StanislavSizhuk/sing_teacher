@@ -39,7 +39,7 @@ _MAX_NORMALIZED_DISTANCE_MESSAGE = (
 )
 
 
-class AlignStage(PipelineStage):
+class AlignStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `index1`/`index2` (the warping path, as parallel
     frame-index arrays into the user/reference sequences at the fine hop),
     `hop_seconds`, `normalized_distance`, `coarse_normalized_distance`
@@ -66,8 +66,7 @@ class AlignStage(PipelineStage):
             ) from exc
 
         user_fine_mfcc = compute_mfcc(Path(preprocess["recording_path"]), PITCH_HOP_SECONDS)
-        stem_path = Path(context.result("separate_reference").data["stem_path"])
-        reference_fine_mfcc = compute_mfcc(stem_path, PITCH_HOP_SECONDS)
+        reference_fine_mfcc = compute_mfcc(context.reference_vocal_stem_path, PITCH_HOP_SECONDS)
 
         refine_band = max(1, round(ALIGN_REFINE_WINDOW_SECONDS / PITCH_HOP_SECONDS))
         full_center = refine_center(

@@ -7,6 +7,7 @@ interpolation (spec 11.5, 12.5: no concatenated SQL).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -17,59 +18,151 @@ from vocalcoach.models.audio import Lyrics, PianoRollData, PitchCurve
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
 
+_SONG_COLUMNS = """id, content_hash, duration_sec, prep_status, vocal_stem_path,
+                   reference_pitch, reference_pitch_meta, lyrics_json, lyrics_available,
+                   prep_stages_json"""
+
+
+def _row_to_song_record(row: tuple[Any, ...]) -> SongRecord:
+    (
+        song_id,
+        content_hash,
+        duration_sec,
+        prep_status,
+        vocal_stem_path,
+        pitch_bytes,
+        pitch_meta,
+        lyrics_json,
+        lyrics_available,
+        prep_stages_json,
+    ) = row
+    prep_stages = (
+        {name: StageResult.model_validate(value) for name, value in prep_stages_json.items()}
+        if prep_stages_json
+        else {}
+    )
+    return SongRecord(
+        id=str(song_id),
+        content_hash=content_hash,
+        duration_sec=duration_sec,
+        prep_status=prep_status,
+        vocal_stem_path=Path(vocal_stem_path) if vocal_stem_path is not None else None,
+        reference_pitch=(
+            PitchCurve.from_bytes(bytes(pitch_bytes), pitch_meta)
+            if pitch_bytes is not None
+            else None
+        ),
+        lyrics=Lyrics.model_validate(lyrics_json) if lyrics_json is not None else None,
+        lyrics_available=lyrics_available,
+        prep_stages=prep_stages,
+    )
+
 
 class PostgresSongRepository:
-    """`SongRepository` backed by the `songs` table the Go API also owns."""
+    """`SongRepository` backed by the `songs` table the Go API also owns.
+
+    Read by both job kinds (spec 6.6): the warm path only ever reads a
+    `ready` song's cached reference; the cold path (`SongPrepJobHandler`)
+    also owns every write here, including per-P-stage progress
+    (`mark_prep_processing`/`save_prep_stage_progress`, this repository's
+    `ProgressReporter`-facing half) and the terminal `ready`/`failed` writes.
+    """
 
     def __init__(self, conn: psycopg.Connection[Any]) -> None:
         self._conn = conn
 
     def get_by_id(self, song_id: str) -> SongRecord:
+        # _SONG_COLUMNS is a fixed module-level column list, never
+        # user-controlled input -- the only variable part of this
+        # statement is the parameterized %s (spec 11.5, 12.5).
+        query = f"SELECT {_SONG_COLUMNS} FROM songs WHERE id = %s"  # noqa: S608
         with self._conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, content_hash, duration_sec, vocal_stem_processed,
-                       lyrics_json, reference_pitch, reference_pitch_meta
-                FROM songs
-                WHERE id = %s
-                """,
-                (song_id,),
-            )
+            cur.execute(query, (song_id,))
             row = cur.fetchone()
         if row is None:
             raise LookupError(f"song {song_id} not found")
-        song_id_, content_hash, duration_sec, processed, lyrics_json, pitch_bytes, pitch_meta = row
-        return SongRecord(
-            id=str(song_id_),
-            content_hash=content_hash,
-            duration_sec=duration_sec,
-            vocal_stem_processed=processed,
-            lyrics=Lyrics.model_validate(lyrics_json) if lyrics_json is not None else None,
-            reference_pitch=(
-                PitchCurve.from_bytes(bytes(pitch_bytes), pitch_meta)
-                if pitch_bytes is not None
-                else None
-            ),
-        )
+        return _row_to_song_record(row)
 
-    def save_lyrics(self, song_id: str, lyrics: Lyrics) -> None:
+    def mark_prep_processing(
+        self, song_id: str, first_stage: str, _stage_index: int, _total_stages: int
+    ) -> None:
+        """`ProgressReporter.mark_processing`: `songs` tracks the current
+        P-stage by name only (spec 7 schema), unlike `analyses` which also
+        renders "stage N of M" for the client (spec 8.3) -- the cold path
+        has no live UI consumer for that granularity yet, only FR-14's
+        prep_status/prep_stage.
+        """
         with self._conn.cursor() as cur:
             cur.execute(
-                "UPDATE songs SET lyrics_json = %s WHERE id = %s",
-                (Jsonb(lyrics.model_dump(mode="json")), song_id),
+                "UPDATE songs SET prep_status = 'processing', prep_stage = %s WHERE id = %s",
+                (first_stage, song_id),
             )
         self._conn.commit()
 
-    def mark_vocal_stem_processed(self, song_id: str, reference_pitch: PitchCurve) -> None:
+    def save_prep_stage_progress(
+        self,
+        song_id: str,
+        result: StageResult,
+        next_stage: str | None,
+        _next_stage_index: int | None,
+        _total_stages: int,
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE songs
+                SET prep_stages_json = COALESCE(prep_stages_json, '{}'::jsonb) || %s::jsonb,
+                    prep_stage = %s
+                WHERE id = %s
+                """,
+                (Jsonb({result.stage: result.model_dump(mode="json")}), next_stage, song_id),
+            )
+        self._conn.commit()
+
+    def mark_prep_ready(
+        self,
+        song_id: str,
+        *,
+        vocal_stem_path: Path,
+        reference_pitch: PitchCurve,
+        lyrics: Lyrics | None,
+        lyrics_available: bool,
+    ) -> None:
+        """Terminal success (spec 6.4): every P-stage finished, P3
+        (transcription) optionally so -- `lyrics_available` is the
+        authoritative flag either way (FR-18), `lyrics` itself stays NULL
+        when P3 was skipped.
+        """
         data, meta = reference_pitch.to_bytes()
         with self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE songs
-                SET reference_pitch = %s, reference_pitch_meta = %s, vocal_stem_processed = true
+                SET prep_status = 'ready', prep_stage = NULL, prep_error_code = NULL,
+                    vocal_stem_path = %s, reference_pitch = %s, reference_pitch_meta = %s,
+                    lyrics_json = %s, lyrics_available = %s, prepared_at = now()
                 WHERE id = %s
                 """,
-                (data, Jsonb(meta), song_id),
+                (
+                    str(vocal_stem_path),
+                    data,
+                    Jsonb(meta),
+                    Jsonb(lyrics.model_dump(mode="json")) if lyrics is not None else None,
+                    lyrics_available,
+                    song_id,
+                ),
+            )
+        self._conn.commit()
+
+    def mark_prep_failed(self, song_id: str, error_code: str) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE songs
+                SET prep_status = 'failed', prep_error_code = %s, prep_stage = NULL
+                WHERE id = %s
+                """,
+                (error_code, song_id),
             )
         self._conn.commit()
 
@@ -243,3 +336,92 @@ class PostgresAnalysisRepository:
                 (error_code, analysis_id),
             )
         self._conn.commit()
+
+    def wake_waiting_for_reference(self, song_id: str) -> tuple[list[str], dict[str, int]]:
+        """Transitions every `waiting_for_reference` analysis of song_id to
+        `queued` (spec 10.3, FR-16) once its cold path reaches `ready`, then
+        recalculates FIFO `queue_position` for every now-queued row. The
+        `WITH ranked AS (...) UPDATE ... RETURNING` below is an exact mirror
+        of `api/internal/repository/postgres.AnalysisRepository.
+        RecalculatePositions` -- Go and Python must never derive this
+        differently (spec 12.1 DRY), so if that query changes, this one
+        must change with it. Original `queue_seq` (submission order) is
+        kept, not redrawn: an analysis that waited for a slow song does not
+        lose its place to one submitted later against an already-ready song.
+
+        Returns `(newly_queued_ids, changed_positions)` as two separate
+        things on purpose: `newly_queued_ids` is only the ids this call
+        itself moved out of waiting -- the caller XADDs exactly these onto
+        analyses:run (an already-queued row publishing a second stream
+        entry for the same job_id would make the consumer see it twice).
+        `changed_positions` is every id whose `queue_position` changed,
+        which can include already-queued rows the newly-woken ones' earlier
+        queue_seq pushed back -- those still get a `queued` WS event with
+        their new position, just no fresh stream entry.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE analyses SET status = 'queued'
+                WHERE song_id = %s AND status = 'waiting_for_reference'
+                RETURNING id
+                """,
+                (song_id,),
+            )
+            newly_queued = [str(row[0]) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                WITH ranked AS (
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY queue_seq) AS rn
+                    FROM analyses
+                    WHERE status = 'queued'
+                )
+                UPDATE analyses a
+                SET queue_position = ranked.rn
+                FROM ranked
+                WHERE a.id = ranked.id AND a.queue_position IS DISTINCT FROM ranked.rn
+                RETURNING a.id, ranked.rn
+                """
+            )
+            changed_positions = {str(row[0]): int(row[1]) for row in cur.fetchall()}
+        self._conn.commit()
+        return newly_queued, changed_positions
+
+    def fail_waiting_for_reference(self, song_id: str, error_code: str) -> list[str]:
+        """FR-17: every analysis still waiting on a song whose cold path
+        just failed gets failed too -- it can never complete on its own.
+        The user restarts the song's prep (POST /songs/{id}/prepare) and
+        retries the analysis (FR-26). Returns the ids failed, so the caller
+        can publish a `failed` event for each over WS.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE analyses
+                SET status = 'failed', error_code = %s, completed_at = now()
+                WHERE song_id = %s AND status = 'waiting_for_reference'
+                RETURNING id
+                """,
+                (error_code, song_id),
+            )
+            rows = cur.fetchall()
+        self._conn.commit()
+        return [str(row[0]) for row in rows]
+
+    def oldest_waiting_song_id(self) -> str | None:
+        """The song whose cold path a waiting analysis has been queued
+        against the longest (spec 10.2 rule 2: that song's `songs:prep`
+        entry jumps the line). `Scheduler` checks this before every
+        `songs:prep` tick -- read-only, no commit needed.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT song_id FROM analyses
+                WHERE status = 'waiting_for_reference'
+                ORDER BY queue_seq LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+        return str(row[0]) if row is not None else None

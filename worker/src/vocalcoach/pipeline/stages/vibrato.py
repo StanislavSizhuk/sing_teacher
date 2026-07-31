@@ -125,7 +125,7 @@ def _score(user: VibratoProfile, reference: VibratoProfile) -> float:
     return round(100.0 * (1.0 - penalty), 1)
 
 
-class VibratoStage(PipelineStage):
+class VibratoStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `score` (0-100), `user` and `reference` profiles
     (`detected`, `rate_hz`, `depth_cents`).
     """
@@ -137,10 +137,9 @@ class VibratoStage(PipelineStage):
         start = time.monotonic()
         pitch_data = context.result("pitch").data
         user_curve = PitchCurve.model_validate(pitch_data["user_pitch_curve"])
-        reference_curve = PitchCurve.model_validate(pitch_data["reference_pitch_curve"])
 
         user_profile = _profile(user_curve)
-        reference_profile = _profile(reference_curve)
+        reference_profile = _profile(context.reference_pitch)
         score = _score(user_profile, reference_profile)
 
         return StageResult(

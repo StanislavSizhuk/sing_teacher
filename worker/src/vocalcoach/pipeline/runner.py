@@ -1,7 +1,13 @@
 """`PipelineRunner`: orchestrates stage order, per-stage timeouts, transient
-retries, and progress persistence (spec 12.3). It contains no DSP -- every
-stage is opaque to it, and adding a new stage never requires editing this
-file (spec 12.3 Open/Closed).
+retries, optional-stage skipping, and progress persistence (spec 12.3). It
+contains no DSP -- every stage is opaque to it, and adding a new stage
+never requires editing this file (spec 12.3 Open/Closed).
+
+Generic over `ContextT` (`pipeline.base.PipelineContext`) so the same
+runner drives both the warm path (`AnalysisContext`) and the cold path
+(`SongPrepContext`, spec 6.2/6.4, M2) -- retries, timeouts and subprocess
+isolation are identical for both, only the job-specific progress writes
+differ, which is exactly what `ProgressReporter` isolates (spec 12.1 DRY).
 
 Every stage runs in its own child process. That is what makes a per-stage
 timeout enforceable at all: a blocked native call (a stuck BLAS/torch
@@ -24,7 +30,7 @@ import time
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from multiprocessing import get_context
-from typing import Protocol
+from typing import Generic, Protocol
 
 from vocalcoach.constants import MAX_STAGE_RETRIES, RETRY_BACKOFF_BASE_SECONDS
 from vocalcoach.errors import (
@@ -33,9 +39,8 @@ from vocalcoach.errors import (
     PipelineError,
     TransientPipelineError,
 )
-from vocalcoach.models.context import AnalysisContext
-from vocalcoach.models.results import StageResult
-from vocalcoach.pipeline.base import ParallelGroup, PipelineStage
+from vocalcoach.models.results import StageResult, StageStatus
+from vocalcoach.pipeline.base import ContextT, ParallelGroup, PipelineStage
 from vocalcoach.pipeline.events import EventPublisher
 
 logger = logging.getLogger(__name__)
@@ -51,21 +56,22 @@ _BLAS_THREAD_ENV_VARS = (
 )
 
 
-class RunnerAnalysisRepository(Protocol):
-    """The narrow slice of `AnalysisRepository` the runner itself needs
-    (spec 12.2's "interfaces declared by the consumer" applied to Python):
-    tracking which stage is running and persisting each one's result.
-    Everything else on the full repository (scores, terminal states) is the
-    job handler's concern, not the runner's.
+class ProgressReporter(Protocol):
+    """The narrow slice of progress-tracking a job kind needs (spec 12.2's
+    "interfaces declared by the consumer" applied to Python): which stage is
+    running, and persisting each one's result. Deliberately carries no job
+    id -- one instance is already bound to a single job (an
+    `AnalysisProgressReporter`/`SongPrepProgressReporter` adapter closing
+    over its analysis_id/song_id), which is what lets `PipelineRunner`
+    itself stay job-kind-agnostic. Terminal-state handling (scores,
+    `prep_status`, `ready`/`failed`) is each job handler's own concern, not
+    the runner's.
     """
 
-    def mark_processing(
-        self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
-    ) -> None: ...
+    def mark_processing(self, first_stage: str, stage_index: int, total_stages: int) -> None: ...
 
     def save_stage_progress(
         self,
-        analysis_id: str,
         result: StageResult,
         next_stage: str | None,
         next_stage_index: int | None,
@@ -76,7 +82,7 @@ class RunnerAnalysisRepository(Protocol):
 class RunOutcome(StrEnum):
     """What happened when `PipelineRunner.run` returned without raising."""
 
-    #: Every remaining stage finished; the caller should mark the analysis done.
+    #: Every remaining stage finished; the caller should mark the job done.
     COMPLETED = "completed"
     #: `should_stop` fired between stages; progress is saved, nothing else
     #: to do -- the job stays `processing` and XAUTOCLAIM picks it back up.
@@ -84,8 +90,8 @@ class RunOutcome(StrEnum):
 
 
 def _stage_worker(
-    stage: PipelineStage,
-    context: AnalysisContext,
+    stage: PipelineStage[ContextT],
+    context: ContextT,
     result_queue: multiprocessing.Queue,  # type: ignore[type-arg]
 ) -> None:
     try:
@@ -98,7 +104,7 @@ def _stage_worker(
 
 
 def _join_subprocess(
-    stage: PipelineStage,
+    stage: PipelineStage[ContextT],
     process: multiprocessing.process.BaseProcess,
     result_queue: multiprocessing.Queue,  # type: ignore[type-arg]
 ) -> StageResult | PipelineError:
@@ -133,7 +139,7 @@ def _join_subprocess(
     return payload  # type: ignore[no-any-return]
 
 
-def _run_in_subprocess(stage: PipelineStage, context: AnalysisContext) -> StageResult:
+def _run_in_subprocess(stage: PipelineStage[ContextT], context: ContextT) -> StageResult:
     ctx = get_context("spawn")
     result_queue: multiprocessing.Queue = ctx.Queue()  # type: ignore[type-arg]
     process = ctx.Process(target=_stage_worker, args=(stage, context, result_queue))
@@ -167,7 +173,7 @@ def _restore_env(original: dict[str, str | None]) -> None:
 
 
 def _start_group(
-    group: ParallelGroup, context: AnalysisContext
+    group: ParallelGroup[ContextT], context: ContextT
 ) -> dict[str, StageResult | PipelineError]:
     ctx = get_context("spawn")
     processes = []
@@ -190,8 +196,10 @@ def _start_group(
     }
 
 
-def _flatten(entries: Sequence[PipelineStage | ParallelGroup]) -> list[PipelineStage]:
-    flat: list[PipelineStage] = []
+def _flatten(
+    entries: Sequence[PipelineStage[ContextT] | ParallelGroup[ContextT]],
+) -> list[PipelineStage[ContextT]]:
+    flat: list[PipelineStage[ContextT]] = []
     for entry in entries:
         if isinstance(entry, ParallelGroup):
             flat.extend(entry.stages)
@@ -201,9 +209,10 @@ def _flatten(entries: Sequence[PipelineStage | ParallelGroup]) -> list[PipelineS
 
 
 def _remaining_entries(
-    entries: Sequence[PipelineStage | ParallelGroup], already_done: dict[str, StageResult]
-) -> list[PipelineStage | ParallelGroup]:
-    remaining: list[PipelineStage | ParallelGroup] = []
+    entries: Sequence[PipelineStage[ContextT] | ParallelGroup[ContextT]],
+    already_done: dict[str, StageResult],
+) -> list[PipelineStage[ContextT] | ParallelGroup[ContextT]]:
+    remaining: list[PipelineStage[ContextT] | ParallelGroup[ContextT]] = []
     for entry in entries:
         if isinstance(entry, ParallelGroup):
             members = tuple(stage for stage in entry.stages if stage.name not in already_done)
@@ -214,33 +223,39 @@ def _remaining_entries(
     return remaining
 
 
-class PipelineRunner:
+# Generic[ContextT] (not PEP 695's `class Foo[T]`), same reason as
+# pipeline/base.py's PipelineStage/ParallelGroup: this instance's ContextT
+# must stay tied to it across __init__ and every method (run,
+# _run_entry_with_retries, ...), which requires the class itself, not each
+# method independently, to carry the type parameter.
+class PipelineRunner(Generic[ContextT]):  # noqa: UP046
     """Runs a fixed, ordered list of stages (or `ParallelGroup`s of them)
-    against one analysis."""
+    against one job -- an analysis (warm path) or a song's cold path."""
 
     def __init__(
         self,
-        stages: Sequence[PipelineStage | ParallelGroup],
-        analyses: RunnerAnalysisRepository,
+        stages: Sequence[PipelineStage[ContextT] | ParallelGroup[ContextT]],
         events: EventPublisher,
     ) -> None:
         self._stages = list(stages)
-        self._analyses = analyses
         self._events = events
 
     def run(
         self,
-        analysis_id: str,
-        initial_context: AnalysisContext,
+        job_id: str,
+        initial_context: ContextT,
         already_done: dict[str, StageResult],
+        progress: ProgressReporter,
         should_stop: Callable[[], bool] = lambda: False,
     ) -> RunOutcome:
         """Runs every stage not already in `already_done` (spec 6.8: a
         retried job resumes from the first unfinished stage, not from
-        zero). Raises `PipelineError` if a stage exhausts its retries or
-        fails with a non-retryable error; the caller is responsible for
-        `mark_failed` and the `failed` event, since it also owns the
-        queue-level ack/retry decision (spec 10.1).
+        zero). Raises `PipelineError` if a required stage exhausts its
+        retries or fails with a non-retryable error; the caller is
+        responsible for marking the job failed and publishing the failure
+        event, since it also owns the queue-level ack/retry decision (spec
+        10.1). An optional stage (`required = False`) never raises -- see
+        `_run_stage_with_retries`.
         """
         context = initial_context
         for result in already_done.values():
@@ -259,9 +274,7 @@ class PipelineRunner:
 
         if remaining_flat:
             first = remaining_flat[0]
-            self._analyses.mark_processing(
-                analysis_id, first.name, stage_positions[first.name], total
-            )
+            progress.mark_processing(first.name, stage_positions[first.name], total)
 
         flat_position = 0
         for entry in remaining_entries:
@@ -269,17 +282,15 @@ class PipelineRunner:
                 next_name = remaining_flat[flat_position].name
                 logger.info(
                     "stopping between stages for graceful shutdown",
-                    extra={"analysis_id": analysis_id, "next_stage": next_name},
+                    extra={"job_id": job_id, "next_stage": next_name},
                 )
                 return RunOutcome.INTERRUPTED
 
             members = self._members(entry)
             for stage in members:
-                self._events.publish_stage(
-                    analysis_id, stage.name, stage_positions[stage.name], total
-                )
+                self._events.publish_stage(job_id, stage.name, stage_positions[stage.name], total)
 
-            results = self._run_entry_with_retries(analysis_id, entry, context)
+            results = self._run_entry_with_retries(job_id, entry, context)
 
             for stage in members:
                 result = results[stage.name]
@@ -291,14 +302,13 @@ class PipelineRunner:
                     else None
                 )
                 next_stage_index = stage_positions[next_stage] if next_stage is not None else None
-                self._analyses.save_stage_progress(
-                    analysis_id, result, next_stage, next_stage_index, total
-                )
+                progress.save_stage_progress(result, next_stage, next_stage_index, total)
                 logger.info(
                     "stage done",
                     extra={
-                        "analysis_id": analysis_id,
+                        "job_id": job_id,
                         "stage": result.stage,
+                        "status": str(result.status),
                         "duration_ms": result.duration_ms,
                     },
                 )
@@ -306,18 +316,23 @@ class PipelineRunner:
         return RunOutcome.COMPLETED
 
     @staticmethod
-    def _members(entry: PipelineStage | ParallelGroup) -> tuple[PipelineStage, ...]:
+    def _members(
+        entry: PipelineStage[ContextT] | ParallelGroup[ContextT],
+    ) -> tuple[PipelineStage[ContextT], ...]:
         return entry.stages if isinstance(entry, ParallelGroup) else (entry,)
 
     def _run_entry_with_retries(
-        self, analysis_id: str, entry: PipelineStage | ParallelGroup, context: AnalysisContext
+        self,
+        job_id: str,
+        entry: PipelineStage[ContextT] | ParallelGroup[ContextT],
+        context: ContextT,
     ) -> dict[str, StageResult]:
         if isinstance(entry, ParallelGroup):
-            return self._run_group_with_retries(analysis_id, entry, context)
-        return {entry.name: self._run_stage_with_retries(analysis_id, entry, context)}
+            return self._run_group_with_retries(job_id, entry, context)
+        return {entry.name: self._run_stage_with_retries(job_id, entry, context)}
 
     def _run_group_with_retries(
-        self, analysis_id: str, group: ParallelGroup, context: AnalysisContext
+        self, job_id: str, group: ParallelGroup[ContextT], context: ContextT
     ) -> dict[str, StageResult]:
         outcomes = _start_group(group, context)
 
@@ -328,6 +343,9 @@ class PipelineRunner:
                 results[stage.name] = outcome
                 continue
             if isinstance(outcome, LogicalPipelineError):
+                if not stage.required:
+                    results[stage.name] = self._skipped_result(job_id, stage, outcome)
+                    continue
                 raise outcome
             # TransientPipelineError: the concurrent run failed for this one
             # member alone -- retry it by itself, on the same backoff policy
@@ -335,29 +353,33 @@ class PipelineRunner:
             # whole (mostly-succeeded) group.
             logger.warning(
                 "parallel stage failed, retrying alone",
-                extra={"analysis_id": analysis_id, "stage": stage.name, "error": str(outcome)},
+                extra={"job_id": job_id, "stage": stage.name, "error": str(outcome)},
             )
-            results[stage.name] = self._run_stage_with_retries(analysis_id, stage, context)
+            results[stage.name] = self._run_stage_with_retries(job_id, stage, context)
         return results
 
     def _run_stage_with_retries(
-        self, analysis_id: str, stage: PipelineStage, context: AnalysisContext
+        self, job_id: str, stage: PipelineStage[ContextT], context: ContextT
     ) -> StageResult:
         attempt = 0
         while True:
             try:
                 return _run_in_subprocess(stage, context)
-            except LogicalPipelineError:
+            except LogicalPipelineError as exc:
+                if not stage.required:
+                    return self._skipped_result(job_id, stage, exc)
                 raise
             except TransientPipelineError as exc:
                 attempt += 1
                 if attempt > MAX_STAGE_RETRIES:
+                    if not stage.required:
+                        return self._skipped_result(job_id, stage, exc)
                     raise
                 delay = RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
                 logger.warning(
                     "stage failed, retrying",
                     extra={
-                        "analysis_id": analysis_id,
+                        "job_id": job_id,
                         "stage": stage.name,
                         "attempt": attempt,
                         "error": str(exc),
@@ -365,3 +387,27 @@ class PipelineRunner:
                     },
                 )
                 time.sleep(delay)
+
+    @staticmethod
+    def _skipped_result(
+        job_id: str, stage: PipelineStage[ContextT], exc: PipelineError
+    ) -> StageResult:
+        """Spec 6.3: an optional stage's failure never aborts the pipeline
+        -- it is recorded as `SKIPPED` with the reason (FR-18), and every
+        stage depending on its output must treat that output as absent."""
+        logger.warning(
+            "optional stage failed, skipping",
+            extra={
+                "job_id": job_id,
+                "stage": stage.name,
+                "error_code": exc.error_code,
+                "error": str(exc),
+            },
+        )
+        return StageResult(
+            stage=stage.name,
+            status=StageStatus.SKIPPED,
+            duration_ms=0,
+            error_code=exc.error_code,
+            error_message=str(exc),
+        )

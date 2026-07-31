@@ -24,7 +24,7 @@ def _weighted_overall_score(aspect_scores: dict[str, float], weights: ScoringWei
     return round(total, 1)
 
 
-class AggregateStage(PipelineStage):
+class AggregateStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `overall_score` (0-100, spec 6.4's weighted sum),
     `feedback_text` (FR-32), `scoring_version`, `aspect_scores` (the six
     inputs, for observability -- the per-aspect columns are already written

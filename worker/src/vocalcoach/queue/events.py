@@ -48,5 +48,8 @@ class RedisEventPublisher:
             }
         )
 
+    def publish_queued(self, analysis_id: str, position: int) -> None:
+        self._publish({"analysis_id": analysis_id, "type": "queued", "position": position})
+
     def _publish(self, payload: dict[str, object]) -> None:
         self._client.publish(CHANNEL_NAME, json.dumps(payload))

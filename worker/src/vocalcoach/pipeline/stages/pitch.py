@@ -1,6 +1,8 @@
-"""Stage 6: track pitch for both signals and score the user's accuracy
+"""Stage 6: track pitch for the user's recording and score its accuracy
 against the reference, note-for-note in cents (spec 6.3.5). The reference
-curve is cached on the song (spec 6.6) once computed.
+curve itself is cold-path output (spec 6.4 P4, M2) -- already cached on the
+song and detected exactly once, ever, before this stage's song ever reaches
+`ready`; this stage only ever reads it, never (re)computes it.
 """
 
 from __future__ import annotations
@@ -8,8 +10,6 @@ from __future__ import annotations
 import math
 import time
 from pathlib import Path
-
-import numpy as np
 
 from vocalcoach.audio.io import read_mono
 from vocalcoach.audio.timemap import TimeMap
@@ -21,7 +21,7 @@ from vocalcoach.constants import (
     PITCH_TIMEOUT_SECONDS,
 )
 from vocalcoach.dsp.features import load_shared_features
-from vocalcoach.dsp.vad import voiced_mask, voiced_spans
+from vocalcoach.dsp.pitch_detection import detect_gated
 from vocalcoach.errors import NoVoiceDetected
 from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
@@ -38,36 +38,6 @@ def _voiced_fraction(hz: list[float | None]) -> float:
     return sum(1 for value in hz if value is not None) / len(hz)
 
 
-def _detect_gated(
-    detector: PitchDetector,
-    samples: np.ndarray,
-    sample_rate_hz: int,
-    hop_seconds: float,
-    rms: np.ndarray,
-) -> list[float | None]:
-    """Runs `detector` only over the spans `rms`'s VAD mask (spec 6.5) marks
-    voiced, filling every other frame with `None` directly instead of
-    running the detector over silence it would only report as unvoiced
-    anyway. Each span is detected independently rather than one call over a
-    concatenation of all of them, so a span's own length is the only frame
-    count its output ever needs to line up with.
-    """
-    mask = voiced_mask(rms, hop_seconds)
-    total_frames = len(mask)
-    result: list[float | None] = [None] * total_frames
-
-    for start, end in voiced_spans(mask):
-        hop_length = max(1, round(sample_rate_hz * hop_seconds))
-        chunk = samples[start * hop_length : end * hop_length]
-        if len(chunk) == 0:
-            continue
-        detected = detector.detect(chunk, sample_rate_hz, hop_seconds)
-        span_len = end - start
-        for i, value in enumerate(detected[:span_len]):
-            result[start + i] = value
-    return result
-
-
 def _cents_deviation(user_hz: float, reference_hz: float) -> float:
     return 1200.0 * math.log2(user_hz / reference_hz)
 
@@ -77,25 +47,15 @@ def _score_from_mean_abs_cents(mean_abs_cents: float) -> float:
     return round(100.0 * (1.0 - fraction), 1)
 
 
-class PitchStage(PipelineStage):
+class PitchStage(PipelineStage[AnalysisContext]):
     """`StageResult.data`: `score` (0-100), `mean_abs_cents`,
-    `compared_frames`, `voiced_fraction`, `user_pitch_curve`,
-    `reference_pitch_curve` -- both curves are carried here (not just
-    looked up again from `context`/the song row) so stage 7's vibrato
-    analysis has one place to read them from regardless of whether the
-    reference curve came from cache or was just computed. `piano_roll`
-    (a `PianoRollData`) is what the job handler persists into
-    `analyses.pitch_curve_json` (spec 7, FR-31) -- unlike the two curves
-    above, it is already resampled onto the user's time grid, ready for a
+    `compared_frames`, `voiced_fraction`, `user_pitch_curve` (the reference
+    curve is not repeated here -- it never changes per-analysis, callers
+    needing it read `context.reference_pitch` directly). `piano_roll` (a
+    `PianoRollData`) is what the job handler persists into
+    `analyses.pitch_curve_json` (spec 7, FR-31) -- unlike `user_pitch_curve`,
+    it is already resampled onto the user's time grid, ready for a
     frame-for-frame overlay.
-
-    Does not write `songs.reference_pitch_json`/`vocal_stem_processed`
-    itself: every stage instance is pickled across `PipelineRunner`'s
-    spawn-based subprocess boundary (runner.py), and a `SongRepository`
-    holding a live DB connection isn't picklable. The job handler persists
-    `reference_pitch_curve` out of this stage's `StageResult` once the
-    pipeline finishes, in the parent process where the real repository
-    connection lives (spec 6.6 cache write).
     """
 
     name = STAGE_NAME
@@ -109,15 +69,11 @@ class PitchStage(PipelineStage):
         preprocess = context.result("preprocess").data
         sample_rate = int(preprocess["sample_rate_hz"])
 
-        reference_cached = context.vocal_stem_processed and context.reference_pitch is not None
         features = load_shared_features(Path(context.result("features").data["features_path"]))
         try:
             user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
-            user_hz = _detect_gated(
+            user_hz = detect_gated(
                 self._detector, user_samples, sample_rate, PITCH_HOP_SECONDS, features.user.rms_fine
-            )
-            reference_curve = self._reference_pitch_curve(
-                context, sample_rate, features.reference.rms_fine
             )
         finally:
             self._detector.release()
@@ -131,7 +87,7 @@ class PitchStage(PipelineStage):
 
         time_map = TimeMap.from_align_stage_data(context.result("align").data)
         aligned_reference_hz, deviations_cents = _align_and_compare(
-            user_hz, reference_curve.hz, time_map
+            user_hz, context.reference_pitch.hz, time_map
         )
         present_deviations = [c for c in deviations_cents if c is not None]
         mean_abs_cents = (
@@ -162,24 +118,9 @@ class PitchStage(PipelineStage):
                 "compared_frames": len(present_deviations),
                 "voiced_fraction": voiced_fraction,
                 "user_pitch_curve": user_curve.model_dump(mode="json"),
-                "reference_pitch_curve": reference_curve.model_dump(mode="json"),
-                "reference_cached": reference_cached,
                 "piano_roll": piano_roll.model_dump(mode="json"),
             },
         )
-
-    def _reference_pitch_curve(
-        self, context: AnalysisContext, sample_rate: int, reference_rms_fine: np.ndarray
-    ) -> PitchCurve:
-        if context.vocal_stem_processed and context.reference_pitch is not None:
-            return context.reference_pitch
-
-        stem_path = Path(context.result("separate_reference").data["stem_path"])
-        reference_samples, _sr = read_mono(stem_path)
-        reference_hz = _detect_gated(
-            self._detector, reference_samples, sample_rate, PITCH_HOP_SECONDS, reference_rms_fine
-        )
-        return PitchCurve(hop_seconds=PITCH_HOP_SECONDS, hz=reference_hz)
 
 
 def _align_and_compare(

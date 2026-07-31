@@ -1,41 +1,40 @@
 """Redis Streams consumer (spec 10.1, ADR-0002): `XREADGROUP` delivery,
 `XACK` once a job reaches a terminal outcome, `XAUTOCLAIM`-equivalent
-reclaim for a job whose worker died mid-stage, graceful shutdown on
-SIGTERM/SIGINT.
+reclaim for a job whose worker died mid-stage.
 
-`StreamName`/`GroupName` must match `api/internal/queue`'s constants
-exactly -- they name the one channel the Go API and this worker agree on.
+One `Consumer` instance drives one stream. Parameterized by stream/group
+name and reclaim threshold (spec 10.3: 15 min for `analyses:run`, 20 min
+for `songs:prep`) rather than duplicated per stream (spec 12.1 DRY) --
+`queue.scheduler.Scheduler` owns two instances, one per spec 10.1 stream,
+and decides between them (spec 10.2's one-ML-slot-with-priority rule).
+
+Stream/group names must match `api/internal/queue`'s constants exactly
+(`queue.streams`) -- they name the channels the Go API and this worker agree on.
 """
 
 from __future__ import annotations
 
 import logging
-import signal
-import socket
 from collections.abc import Callable
-from types import FrameType
 from typing import Any, Protocol, cast
 
 import redis
-
-from vocalcoach.constants import MAX_CLAIM_ATTEMPTS, PENDING_CLAIM_MIN_IDLE
 
 logger = logging.getLogger(__name__)
 
 
 class JobHandler(Protocol):
-    """The narrow slice of `AnalysisJobHandler` the consumer needs -- it
-    orchestrates Redis, not analysis lifecycle, so it only calls in
-    (spec 12.2's "interfaces declared by the consumer" applied to Python).
+    """The narrow slice of a job handler (`AnalysisJobHandler`/
+    `SongPrepJobHandler`) the consumer needs -- it orchestrates Redis, not
+    job lifecycle, so it only calls in (spec 12.2's "interfaces declared by
+    the consumer" applied to Python).
     """
 
-    def handle(self, analysis_id: str, should_stop: Callable[[], bool]) -> bool: ...
+    def handle(self, job_id: str, should_stop: Callable[[], bool]) -> bool: ...
 
-    def mark_permanently_failed(self, analysis_id: str) -> None: ...
+    def mark_permanently_failed(self, job_id: str) -> None: ...
 
 
-STREAM_NAME = "analyses:queue"
-GROUP_NAME = "analyses:workers"
 BLOCK_MS = 5000
 RECLAIM_BATCH_SIZE = 100
 
@@ -44,55 +43,61 @@ RECLAIM_BATCH_SIZE = 100
 # ever uses the sync `redis.Redis`, so each call site below casts its
 # result back to the shape the sync client actually returns.
 _StreamEntry = tuple[str, dict[str, str]]
-_ReadGroupReply = list[tuple[str, list[_StreamEntry]]]
+ReadGroupReply = list[tuple[str, list[_StreamEntry]]]
 _PendingEntry = dict[str, Any]
 
 
 class Consumer:
-    """Drives the worker's main loop: one job at a time, in order (spec
-    NFR-04's single active worker), forever until asked to stop.
+    """Drives one Redis Streams queue for this worker process: claim,
+    process one job at a time (spec NFR-04/NFR-07's single active ML
+    slot -- enforced by the caller never running two `Consumer`s
+    concurrently, not by anything in this class), ack, reclaim.
     """
 
     def __init__(
         self,
         client: redis.Redis,
         handler: JobHandler,
-        consumer_name: str | None = None,
+        stream_name: str,
+        group_name: str,
+        reclaim_min_idle_seconds: int,
+        max_claim_attempts: int,
+        consumer_name: str,
     ) -> None:
         self._client = client
         self._handler = handler
-        self._consumer_name = consumer_name or f"worker-{socket.gethostname()}"
-        self._stopping = False
+        self._stream_name = stream_name
+        self._group_name = group_name
+        self._reclaim_min_idle_seconds = reclaim_min_idle_seconds
+        self._max_claim_attempts = max_claim_attempts
+        self._consumer_name = consumer_name
 
-    def install_signal_handlers(self) -> None:
-        signal.signal(signal.SIGTERM, self._request_stop)
-        signal.signal(signal.SIGINT, self._request_stop)
-
-    def _request_stop(self, signum: int, _frame: FrameType | None) -> None:
-        logger.info("shutdown requested", extra={"signal": signum})
-        self._stopping = True
-
-    def should_stop(self) -> bool:
-        return self._stopping
-
-    def _ensure_group(self) -> None:
+    def ensure_group(self) -> None:
         """Idempotent: the Go API also creates this group at its own
         startup (`queue.Producer.EnsureGroup`); whichever process starts
         first wins. Also the recovery path if the group ever goes missing
-        mid-run (see `run_forever`) -- re-creating it is safe and cheap
+        mid-run (see `read_next`) -- re-creating it is safe and cheap
         either way."""
         try:
-            self._client.xgroup_create(STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
+            self._client.xgroup_create(self._stream_name, self._group_name, id="0", mkstream=True)
         except redis.ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
 
-    def _read_next(self) -> _ReadGroupReply:
+    def read_next(self, *, block_ms: int | None = None) -> ReadGroupReply:
+        """Delivers at most one currently-undelivered entry. `block_ms=0`
+        (or omitted with `BLOCK_MS`) blocks up to that long when the stream
+        is empty; pass `block_ms=1` for an effectively non-blocking check
+        (redis-py's blocking API has no true zero-wait mode)."""
         try:
             return cast(
-                _ReadGroupReply,
+                ReadGroupReply,
                 self._client.xreadgroup(
-                    GROUP_NAME, self._consumer_name, {STREAM_NAME: ">"}, count=1, block=BLOCK_MS
+                    self._group_name,
+                    self._consumer_name,
+                    {self._stream_name: ">"},
+                    count=1,
+                    block=BLOCK_MS if block_ms is None else block_ms,
                 ),
             )
         except redis.ResponseError as exc:
@@ -104,94 +109,135 @@ class Consumer:
             # crash here previously took the whole process down, silently
             # abandoning whatever job Redis still had pending for it until
             # something else restarted the container.
-            logger.warning("consumer group missing, re-creating", extra={"error": str(exc)})
-            self._ensure_group()
+            logger.warning(
+                "consumer group missing, re-creating",
+                extra={"stream": self._stream_name, "error": str(exc)},
+            )
+            self.ensure_group()
             return []
 
-    def run_forever(self) -> None:
-        self._ensure_group()
-        self._reclaim_stuck_jobs()
-        while not self._stopping:
-            entries = self._read_next()
-            if not entries:
-                continue
-            _stream_name, messages = entries[0]
-            for entry_id, fields in messages:
-                if self._stopping:
-                    # Picked up right before a shutdown signal: leave it
-                    # unacked rather than start a fresh job during teardown.
-                    return
-                self._process_entry(entry_id, fields)
-
-    def _process_entry(self, entry_id: str, fields: dict[str, str]) -> None:
-        analysis_id = fields.get("job_id")
-        if not analysis_id:
-            logger.error("stream entry missing job_id, dropping", extra={"entry_id": entry_id})
-            self._client.xack(STREAM_NAME, GROUP_NAME, entry_id)
+    def process_entry(
+        self, entry_id: str, fields: dict[str, str], should_stop: Callable[[], bool]
+    ) -> None:
+        job_id = fields.get("job_id")
+        if not job_id:
+            logger.error(
+                "stream entry missing job_id, dropping",
+                extra={"stream": self._stream_name, "entry_id": entry_id},
+            )
+            self._client.xack(self._stream_name, self._group_name, entry_id)
             return
 
-        logger.info("processing analysis", extra={"analysis_id": analysis_id, "entry_id": entry_id})
+        logger.info(
+            "processing job",
+            extra={"stream": self._stream_name, "job_id": job_id, "entry_id": entry_id},
+        )
         try:
-            terminal = self._handler.handle(analysis_id, self.should_stop)
+            terminal = self._handler.handle(job_id, should_stop)
         except Exception:
             logger.exception(
                 "job handler crashed, leaving pending for reclaim",
-                extra={"analysis_id": analysis_id},
+                extra={"stream": self._stream_name, "job_id": job_id},
             )
             return
         if terminal:
-            self._client.xack(STREAM_NAME, GROUP_NAME, entry_id)
+            self._client.xack(self._stream_name, self._group_name, entry_id)
 
-    def _reclaim_stuck_jobs(self) -> None:
+    def claim_new_entries(self) -> None:
+        """Delivers every currently-undelivered entry to this consumer's
+        PEL without processing any of them. Redis Streams has no primitive
+        to selectively deliver one arbitrary undelivered entry out of FIFO
+        order, so priority scheduling (spec 10.2 rule 2) works the other
+        way around: claim everything into the PEL up front (cheap --
+        `songs:prep` is capped at 20 entries, spec 10.1), then choose which
+        *pending* entry to actually process (`pending_entries` +
+        `fields_for`/`process_entry`), which Redis does let a caller pick
+        freely.
+        """
+        self._client.xreadgroup(
+            self._group_name,
+            self._consumer_name,
+            {self._stream_name: ">"},
+            count=RECLAIM_BATCH_SIZE,
+            block=1,
+        )
+
+    def pending_entries(self) -> list[_PendingEntry]:
+        """This consumer's own currently-pending (claimed, unacked)
+        entries, oldest first (Redis returns `XPENDING` ranges in stream ID
+        order)."""
+        return cast(
+            list[_PendingEntry],
+            self._client.xpending_range(
+                self._stream_name,
+                self._group_name,
+                min="-",
+                max="+",
+                count=RECLAIM_BATCH_SIZE,
+                consumername=self._consumer_name,
+            ),
+        )
+
+    def fields_for(self, entry_id: str) -> dict[str, str] | None:
+        messages = cast(
+            list[_StreamEntry], self._client.xrange(self._stream_name, entry_id, entry_id)
+        )
+        return messages[0][1] if messages else None
+
+    def reclaim_stuck_jobs(self) -> None:
         """Runs at startup: anything still pending after
-        `PENDING_CLAIM_MIN_IDLE` belonged to a worker that died mid-stage
-        (spec 10.1). Claimed jobs resume normally via `stages_json`; a job
-        claimed too many times gives up instead of retrying forever.
+        `reclaim_min_idle_seconds` belonged to a worker that died mid-stage
+        (spec 10.1, 10.3). Claimed jobs resume normally via their own
+        resumability (`stages_json`/`prep_stages_json`); a job claimed too
+        many times gives up instead of retrying forever.
         """
         pending = cast(
             list[_PendingEntry],
             self._client.xpending_range(
-                STREAM_NAME,
-                GROUP_NAME,
+                self._stream_name,
+                self._group_name,
                 min="-",
                 max="+",
                 count=RECLAIM_BATCH_SIZE,
-                idle=PENDING_CLAIM_MIN_IDLE * 1000,
+                idle=self._reclaim_min_idle_seconds * 1000,
             ),
         )
         for entry in pending:
             entry_id = cast(str, entry["message_id"])
             delivery_count = cast(int, entry["times_delivered"])
-            if delivery_count > MAX_CLAIM_ATTEMPTS:
+            if delivery_count > self._max_claim_attempts:
                 self._give_up(entry_id)
                 continue
 
             claimed = cast(
                 list[_StreamEntry],
                 self._client.xclaim(
-                    STREAM_NAME,
-                    GROUP_NAME,
+                    self._stream_name,
+                    self._group_name,
                     self._consumer_name,
-                    PENDING_CLAIM_MIN_IDLE * 1000,
+                    self._reclaim_min_idle_seconds * 1000,
                     [entry_id],
                 ),
             )
             for claimed_id, fields in claimed:
                 logger.warning(
                     "reclaimed stuck job",
-                    extra={"entry_id": claimed_id, "delivery_count": delivery_count},
+                    extra={
+                        "stream": self._stream_name,
+                        "entry_id": claimed_id,
+                        "delivery_count": delivery_count,
+                    },
                 )
-                self._process_entry(claimed_id, fields)
+                self.process_entry(claimed_id, fields, lambda: False)
 
     def _give_up(self, entry_id: str) -> None:
-        messages = cast(list[_StreamEntry], self._client.xrange(STREAM_NAME, entry_id, entry_id))
-        if messages:
-            _id, fields = messages[0]
-            analysis_id = fields.get("job_id")
-            if analysis_id:
+        fields = self.fields_for(entry_id)
+        if fields is not None:
+            job_id = fields.get("job_id")
+            if job_id:
                 logger.error(
                     "giving up on job after max claim attempts",
-                    extra={"analysis_id": analysis_id},
+                    extra={"stream": self._stream_name, "job_id": job_id},
                 )
-                self._handler.mark_permanently_failed(analysis_id)
-        self._client.xack(STREAM_NAME, GROUP_NAME, entry_id)
+                self._handler.mark_permanently_failed(job_id)
+        self._client.xack(self._stream_name, self._group_name, entry_id)
