@@ -238,3 +238,27 @@ tagged yet.
   (ADR-0014, measured at 143.5s on the same song -- real margin) --
   exactly the fallback spec 19's risk table already prescribed for this
   measured outcome.
+
+## [Unreleased] -- M4
+
+### Added
+
+- `POST /analyses` accepts `mode` (`clean`/`mixed`, FR-27, default
+  `clean`) and an optional `allow_transposition` override (FR-31),
+  validated and defaulted at the transport boundary; migration 00011
+  stores them on the row alongside the worker's confidence/warnings/
+  unavailable-aspects output (spec 6.14, 6.15) so `GET /analyses/{id}` and
+  `GET /progress` can surface it without parsing `stages_json`.
+- The worker builds each analysis's `AnalysisContext` from its own stored
+  `mode`/`allow_transposition` instead of an always-`clean` default --
+  `mode` selection is now wired end to end, not just worker-internal (M3).
+- `web/`: a mode selector with a plain-language explanation of each mode's
+  consequences shown before recording (FR-28); an unavailable aspect
+  renders as "Not measured" with its reason, never a blank dash or a `0`
+  (FR-41); a confidence badge and translated warning codes (FR-47); a note
+  when the worker's `effective_mode` differs from what the user picked
+  (FR-29/30); the applied key-shift-in-semitones line (FR-46); and a
+  progress chart that shape-differentiates `clean`/`mixed` points with a
+  legend and a comparability warning, since the two are scored under
+  different `weights_profile` (FR-49).
+- `docs/REVIEW_CHECKLIST.md`: a "Data honesty and mode UI" section for M4.

@@ -7,14 +7,20 @@ end for the first time (spawn-boundary pickling, Demucs model loading, the
 retry/work-dir interaction, a Redis Streams resilience gap) plus the spec
 6.9 recording-condition stage, M1's performance pass (shared feature
 cache, VAD gate, banded DTW, parallel aspect stages, explicit thread
-config), and M2's cold/warm pipeline split (spec 6.2, 10): a second Redis
+config), M2's cold/warm pipeline split (spec 6.2, 10): a second Redis
 Stream (`songs:prep`) and worker job kind (`SongPrepJobHandler`) move
 Demucs/Whisper/reference-pitch detection out of an analysis's own
 critical path into a job that starts the moment a song is added, so the
-first analysis of any song is no slower than the second. Components and
-flows still planned for later stages (Google sign-in UI, a paginated
-analysis history endpoint, `mixed` mode) are noted as such, not described
-as if they existed.
+first analysis of any song is no slower than the second, M3's `mixed`-mode
+pipeline stages (melody extraction, weight profiles, the confidence
+model), and M4's end-to-end wiring of both: `mode` selection at
+`POST /analyses` (FR-27), the worker building each analysis's pipeline
+context from it instead of a hardcoded default, confidence/warnings/
+unavailable-aspects surfaced through the API and `web/` (FR-41, FR-47),
+mode explained before recording (FR-28), and the FR-49 progress chart
+distinguishing `clean` from `mixed` points. Components and flows still
+planned for later stages (Google sign-in UI, a paginated analysis history
+endpoint) are noted as such, not described as if they existed.
 
 ## Components (target end-state, spec 5.2)
 
@@ -337,21 +343,31 @@ queue/scheduler.py  →  queue/consumer.py  →  queue/handler.py       →  pip
 
 **Warm path (analysis requested):**
 
-4. `POST /analyses` (multipart, JWT-authenticated): the recording goes
-   through the identical sniff/probe/transcode pipeline, but only after the
-   cheapest checks first -- song exists and its `prep_status` isn't
-   `failed` (`REFERENCE_PREP_FAILED` otherwise, FR-17), per-user rate
-   limit. If the song is `ready`: queue capacity (`429 QUEUE_FULL` past
+4. `POST /analyses` (multipart, JWT-authenticated): a `mode` field (`clean`
+   default, or `mixed`, FR-27) and an optional `allow_transposition`
+   override (FR-31, defaulted per mode by the transport layer, spec 8.3)
+   travel alongside the recording, validated and stored on the row before
+   any of the rest of this happens. The recording itself goes through the
+   identical sniff/probe/transcode pipeline, but only after the cheapest
+   checks first -- song exists and its `prep_status` isn't `failed`
+   (`REFERENCE_PREP_FAILED` otherwise, FR-17), per-user rate limit. If the
+   song is `ready`: queue capacity (`429 QUEUE_FULL` past
    `QUEUE_MAX_LENGTH`), a `queued` `analyses` row, an `XADD` to
    `analyses:run`, every queued job's position recomputed -- unchanged
    from pre-M2 behavior. If the song is still `pending`/`processing`: a
    `waiting_for_reference` row instead (spec 6.2, 10.3, FR-16), nothing
    published to any stream yet -- there is no ML job to admit until the
    song's cold path finishes.
-5. `python-worker`'s scheduler picks the `analyses:run` job up, runs stages
-   A1-A10 (`docs/ML_PIPELINE.md`) against the song's already-cached
-   reference (never re-decoding it, never re-running Demucs/Whisper), and
-   persists progress after each one.
+5. `python-worker`'s scheduler picks the `analyses:run` job up, builds the
+   pipeline's `AnalysisContext` from the row's own `mode`/
+   `allow_transposition` (M4 -- no more hardcoded `clean` default in
+   `AnalysisJobHandler`), runs stages A1-A10 (`docs/ML_PIPELINE.md`)
+   against the song's already-cached reference (never re-decoding it,
+   never re-running Demucs/Whisper), and persists progress after each one.
+   Stage 11's confidence/warnings/unavailable-aspects output (spec 6.14,
+   6.15, FR-41, FR-47) lands in dedicated `analyses` columns the same way,
+   so `GET /analyses/{id}` (spec 8.4) and `GET /progress` (FR-49) can
+   surface it without parsing `stages_json`.
 6. `GET /ws/analyses/{id}` pushes `{"type":"queued","position":N}` while
    queued (from the HTTP handler *or*, for a woken analysis, from the
    worker directly once its song reaches `ready`), then
