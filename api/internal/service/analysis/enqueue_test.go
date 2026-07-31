@@ -46,7 +46,22 @@ func newTestService(t *testing.T, song *domain.Song, maxAudioSeconds, queueMaxLe
 }
 
 func testSong() *domain.Song {
-	return &domain.Song{ID: uuid.New(), SourceType: domain.SongSourceUpload, ContentHash: "h", Title: "T", DurationSec: 200}
+	return &domain.Song{
+		ID: uuid.New(), SourceType: domain.SongSourceUpload, ContentHash: "h", Title: "T", DurationSec: 200,
+		PrepStatus: domain.SongPrepReady,
+	}
+}
+
+func waitingSong() *domain.Song {
+	s := testSong()
+	s.PrepStatus = domain.SongPrepPending
+	return s
+}
+
+func failedPrepSong() *domain.Song {
+	s := testSong()
+	s.PrepStatus = domain.SongPrepFailed
+	return s
 }
 
 func validWAVReader() *strings.Reader {
@@ -66,6 +81,37 @@ func TestEnqueue_Success_ReturnsAnalysisAndPosition(t *testing.T) {
 	require.Equal(t, 1, positions[got.ID])
 	require.Len(t, d.queue.enqueued, 1)
 	require.NotNil(t, got.QueueStreamID)
+}
+
+// TestEnqueue_SongNotReady_WaitsForReference is T11's Go-service half (spec
+// 6.2, 10.3, FR-16): a song whose cold path hasn't reached ready yet still
+// accepts the analysis -- it just holds in waiting_for_reference instead of
+// queued, and is never published onto analyses:run (no queue position, no
+// stream entry) until the song's prep wakes it.
+func TestEnqueue_SongNotReady_WaitsForReference(t *testing.T) {
+	song := waitingSong()
+	d := newTestService(t, song, 360, 20)
+
+	got, positions, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusWaitingForReference, got.Status)
+	require.Nil(t, got.QueuePosition)
+	require.Nil(t, got.QueueStreamID)
+	require.Empty(t, positions)
+	require.Empty(t, d.queue.enqueued, "a waiting analysis must never publish onto analyses:run")
+	require.Len(t, d.analyses.byID, 1, "the job is still created, just held, so a retry/upload is never required later")
+}
+
+// TestEnqueue_SongPrepFailed_Rejected covers FR-17: no point creating a
+// waiting job for a song whose cold path is already known to have failed.
+func TestEnqueue_SongPrepFailed_Rejected(t *testing.T) {
+	song := failedPrepSong()
+	d := newTestService(t, song, 360, 20)
+
+	_, _, err := d.svc.Enqueue(context.Background(), uuid.New(), song.ID, validWAVReader())
+	require.ErrorIs(t, err, domain.ErrReferencePrepFailed)
+	require.Empty(t, d.analyses.byID, "a known-failed prep must never create a job")
+	require.Equal(t, 0, d.rate.calls, "rate limit must not be spent on a request rejected for a failed song")
 }
 
 func TestEnqueue_SongNotFound_Rejected(t *testing.T) {

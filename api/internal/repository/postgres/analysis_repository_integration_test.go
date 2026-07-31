@@ -32,6 +32,36 @@ func TestAnalysisRepository_Create_AssignsQueueSeqAndCreatedAt(t *testing.T) {
 	require.Positive(t, a.QueueSeq)
 }
 
+// TestAnalysisRepository_Create_WaitingForReference_Persists guards the
+// migration 00010 status CHECK constraint: a job created for a song whose
+// cold path isn't ready yet (spec 6.2, 10.3, FR-16) must be a valid row, and
+// must never be picked up by RecalculatePositions (it isn't on
+// analyses:run yet, so it has no queue position at all).
+func TestAnalysisRepository_Create_WaitingForReference_Persists(t *testing.T) {
+	pool := setupPostgres(t)
+	ctx := context.Background()
+	userRepo := postgres.NewUserRepository(pool)
+	songRepo := postgres.NewSongRepository(pool)
+	analysisRepo := postgres.NewAnalysisRepository(pool)
+
+	user := newTestUser(fmt.Sprintf("analysis-waiting-%s@example.com", uuid.NewString()))
+	require.NoError(t, userRepo.Create(ctx, user))
+	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
+	require.NoError(t, err)
+
+	a := &domain.Analysis{ID: uuid.New(), UserID: user.ID, SongID: song.ID, Status: domain.AnalysisStatusWaitingForReference}
+	require.NoError(t, analysisRepo.Create(ctx, a))
+
+	got, err := analysisRepo.GetByID(ctx, a.ID, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusWaitingForReference, got.Status)
+	require.Nil(t, got.QueuePosition)
+
+	positions, err := analysisRepo.RecalculatePositions(ctx)
+	require.NoError(t, err)
+	require.NotContains(t, positions, a.ID, "a waiting analysis has no position on analyses:run")
+}
+
 func TestAnalysisRepository_GetByID_ScopedToOwner(t *testing.T) {
 	pool := setupPostgres(t)
 	ctx := context.Background()
