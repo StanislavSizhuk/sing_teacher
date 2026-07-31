@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
-import { enqueueAnalysis, logout, restoreSession, type Song } from './api/client'
+import { enqueueAnalysis, logout, restoreSession, type AnalysisMode, type Song } from './api/client'
 import { Button } from './components/Button'
 import { ErrorAlert } from './components/ErrorAlert'
 import { SegmentedControl } from './components/SegmentedControl'
@@ -22,8 +22,8 @@ type View = 'analyze' | 'progress'
 function AnalyzeFlow() {
   const [step, setStep] = useState<Step>({ kind: 'song' })
   const enqueue = useMutation({
-    mutationFn: (input: { songId: string; recording: File | Blob }) =>
-      enqueueAnalysis(input.songId, input.recording),
+    mutationFn: (input: { songId: string; recording: File | Blob; mode: AnalysisMode }) =>
+      enqueueAnalysis(input.songId, input.recording, input.mode),
     onSuccess: (analysis, variables) =>
       setStep({ kind: 'queue', analysisId: analysis.id, recording: variables.recording }),
   })
@@ -37,7 +37,7 @@ function AnalyzeFlow() {
       {step.kind === 'record' && (
         <>
           <RecordingCapture
-            onReady={(recording) => enqueue.mutate({ songId: step.song.id, recording })}
+            onReady={(recording, mode) => enqueue.mutate({ songId: step.song.id, recording, mode })}
           />
           {enqueue.isPending && <p className="text-ink-700 text-sm">Submitting…</p>}
           <ErrorAlert error={enqueue.error} />
