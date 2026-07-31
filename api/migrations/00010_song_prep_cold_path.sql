@@ -11,7 +11,9 @@ ALTER TABLE songs ADD COLUMN prep_status TEXT NOT NULL DEFAULT 'pending'
     CHECK (prep_status IN ('pending', 'processing', 'ready', 'failed'));
 ALTER TABLE songs ADD COLUMN prep_stage TEXT;
 ALTER TABLE songs ADD COLUMN prep_error_code TEXT;
-ALTER TABLE songs ADD COLUMN prep_durations_json JSONB;
+-- Per-stage duration_ms already lives inside each StageResult in
+-- prep_stages_json (NFR-15) -- no separate durations column, same as
+-- analyses has no stage_durations_json distinct from stages_json.
 ALTER TABLE songs ADD COLUMN prep_stages_json JSONB;
 ALTER TABLE songs ADD COLUMN vocal_stem_path TEXT;
 ALTER TABLE songs ADD COLUMN lyrics_available BOOLEAN NOT NULL DEFAULT false;
@@ -54,7 +56,6 @@ ALTER TABLE songs DROP COLUMN IF EXISTS prepared_at;
 ALTER TABLE songs DROP COLUMN IF EXISTS lyrics_available;
 ALTER TABLE songs DROP COLUMN IF EXISTS vocal_stem_path;
 ALTER TABLE songs DROP COLUMN IF EXISTS prep_stages_json;
-ALTER TABLE songs DROP COLUMN IF EXISTS prep_durations_json;
 ALTER TABLE songs DROP COLUMN IF EXISTS prep_error_code;
 ALTER TABLE songs DROP COLUMN IF EXISTS prep_stage;
 ALTER TABLE songs DROP COLUMN IF EXISTS prep_status;
