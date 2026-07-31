@@ -109,6 +109,7 @@ func (h *SongHandler) createFromUpload(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(h.logger, w, r, err)
 		return
 	}
+	logSongPrepOutcome(h.logger, r, result.ID, reused)
 	writeJSON(w, http.StatusCreated, newSongResponse(result, reused))
 }
 
@@ -129,7 +130,21 @@ func (h *SongHandler) createFromYouTube(w http.ResponseWriter, r *http.Request) 
 		writeServiceError(h.logger, w, r, err)
 		return
 	}
+	logSongPrepOutcome(h.logger, r, result.ID, reused)
 	writeJSON(w, http.StatusCreated, newSongResponse(result, reused))
+}
+
+// logSongPrepOutcome records whether a song submission reused an already
+// (or already being) prepared cold-path cache, or queued a fresh one (spec
+// 6.13, T10): "cache_hit" here is the reused=true case -- no P-stage will
+// run again for this song -- distinct from "queued", where AddFromUpload/
+// AddFromYouTube just published a fresh songs:prep entry (FR-15).
+func logSongPrepOutcome(logger *slog.Logger, r *http.Request, songID uuid.UUID, reused bool) {
+	outcome := "queued"
+	if reused {
+		outcome = "cache_hit"
+	}
+	logger.Info("song cold path", "song_id", songID, "outcome", outcome, "request_id", requestIDFromContext(r.Context()))
 }
 
 // Get handles GET /songs/{id}: reference preparation status (FR-14).
