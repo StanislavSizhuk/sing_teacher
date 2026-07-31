@@ -7,8 +7,8 @@ import { ProgressChart } from './ProgressChart'
 describe('ProgressChart', () => {
   it('renders an accessible image summarizing the series', () => {
     const points: ProgressPoint[] = [
-      { analysisId: '1', overallScore: 60, createdAt: '2026-01-01T00:00:00Z' },
-      { analysisId: '2', overallScore: 82, createdAt: '2026-02-01T00:00:00Z' },
+      { analysisId: '1', overallScore: 60, createdAt: '2026-01-01T00:00:00Z', mode: 'clean' },
+      { analysisId: '2', overallScore: 82, createdAt: '2026-02-01T00:00:00Z', mode: 'clean' },
     ]
     render(<ProgressChart points={points} />)
 

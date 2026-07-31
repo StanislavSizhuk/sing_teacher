@@ -4,7 +4,7 @@ import type { ProgressPoint } from '../../api/client'
 import { buildLinePath, layoutPoints, scoreToY, summarize, timeToX } from './progressChartMath'
 
 function point(overallScore: number, createdAt: string, analysisId = createdAt): ProgressPoint {
-  return { analysisId, overallScore, createdAt }
+  return { analysisId, overallScore, createdAt, mode: 'clean' }
 }
 
 describe('scoreToY', () => {
