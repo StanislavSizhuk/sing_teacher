@@ -219,9 +219,7 @@ export interface AddSongByYouTube {
 /** Restarts a song's cold path after it reached prep_status='failed'
  * (FR-17); rejected with SONG_PREP_NOT_FAILED otherwise. */
 export async function prepareSong(id: string): Promise<Song> {
-  const data = await withAuth(() =>
-    raw.POST('/songs/{id}/prepare', { params: { path: { id } } }),
-  )
+  const data = await withAuth(() => raw.POST('/songs/{id}/prepare', { params: { path: { id } } }))
   return toSong(data)
 }
 
