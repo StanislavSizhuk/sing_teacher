@@ -76,8 +76,11 @@ stands, not just cross-referenced against the threat-model prose below.
 
 ### 11.4 YouTube caveat
 
-- [x] `FEATURE_YOUTUBE_IMPORT` defaults `false` in `.env.example` and is
-  not overridden in `deploy/docker-compose.yml`.
+- [x] `FEATURE_YOUTUBE_IMPORT` defaults `true` in `.env.example`
+  (ADR-0028) and is not overridden in `deploy/docker-compose.yml` -- the
+  per-use disclaimer and host allowlist below are the controls, not the
+  flag itself, which is now an operator escape hatch rather than a
+  default-off safety net.
 - [x] UI shows the personal/non-commercial disclaimer before the YouTube
   URL field every time that tab is selected
   (`web/src/features/songs/AddSongForm.tsx`).
@@ -224,16 +227,17 @@ by ADR-0013's `web`/Caddy compose wiring, verified above.
 - **Paths are never derived from user input.** `internal/storage.FileStore`
   names every file after a server-generated UUID
   (`song-<id>.wav`/`analysis-<id>.wav`); a submitted filename is never read.
-- **YouTube import is feature-flagged off by default in production**
-  (`FEATURE_YOUTUBE_IMPORT`, spec 11.4) and, when enabled, restricted to an
-  exact host allowlist (`youtube.com`, `www.youtube.com`, `m.youtube.com`,
+- **YouTube import is feature-flagged** (`FEATURE_YOUTUBE_IMPORT`, spec
+  11.4), on by default since ADR-0028, restricted to an exact host
+  allowlist (`youtube.com`, `www.youtube.com`, `m.youtube.com`,
   `music.youtube.com`, `youtu.be`) with an exact (not suffix) match, so
   `youtube.com.evil.example` is rejected -- yt-dlp itself understands
   hundreds of sites, and without this allowlist the import endpoint would be
   a generic URL-fetch oracle. `web/`'s YouTube tab shows the spec-11.4
   disclaimer before the URL field, every time that tab is selected (not
-  just once) -- the feature flag defaulting off in production is the real
-  control; the disclaimer is belt-and-suspenders for when it's on.
+  just once) -- with the flag on by default, the disclaimer and the
+  allowlist are the real controls, not the flag itself; an operator with a
+  stricter posture can still set it back to `false`.
 - **Memory limit on external processes** is enforced at the container/cgroup
   level (`deploy.resources.limits.memory: 512M` on `go-api`, covering the Go
   process and any spawned `ffmpeg`/`yt-dlp` child), not a per-process

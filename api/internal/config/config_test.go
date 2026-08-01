@@ -51,7 +51,10 @@ func TestLoad_ValidConfig_AppliesDefaults(t *testing.T) {
 	require.Equal(t, 20, cfg.Limits.QueueMaxLength)
 	require.Equal(t, 10, cfg.Limits.UserAnalysesPerHour)
 	require.Equal(t, 300, cfg.Limits.AudioTTLSeconds)
-	require.False(t, cfg.Features.YouTubeImport, "youtube import must default to off (spec 11.4)")
+	require.False(t, cfg.Features.YouTubeImport,
+		"an entirely unset FEATURE_YOUTUBE_IMPORT must fail closed, even though "+
+			".env.example now ships it as true (ADR-0028) -- a stripped or "+
+			"misconfigured env should not silently enable an external-fetch feature")
 }
 
 func TestLoad_FeatureYouTubeImport_ParsesTrue(t *testing.T) {

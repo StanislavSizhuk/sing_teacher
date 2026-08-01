@@ -1301,7 +1301,7 @@ Pitch-крива 3-хвилинного запису з кроком 10 мс —
 на офіційні API з ліцензійним доступом.
 
 **Вимога до реалізації:** функціонал YouTube вмикається прапорцем
-`FEATURE_YOUTUBE_IMPORT` (за замовчуванням `false` у продакшн-конфізі), а UI
+`FEATURE_YOUTUBE_IMPORT` (за замовчуванням `true` у продакшн-конфізі), а UI
 показує disclaimer перед першим використанням.
 
 ### 11.5 Дані і секрети
@@ -2019,7 +2019,7 @@ SCORING_WEIGHTS_CLEAN=pitch:0.35,rhythm:0.20,breath:0.15,dynamics:0.10,vibrato:0
 SCORING_WEIGHTS_MIXED=pitch:0.50,rhythm:0.30,dynamics:0.10,vibrato:0.10
 
 # --- features ---
-FEATURE_YOUTUBE_IMPORT=false
+FEATURE_YOUTUBE_IMPORT=true
 FEATURE_MIXED_MODE=true
 ```
 
