@@ -146,6 +146,5 @@ uv run mypy .
 
 ## License / disclaimer
 
-Personal, non-commercial project. YouTube import (when enabled in a later
-stage) is for personal use only; see `docs/SECURITY.md` for the associated
-ToS/copyright caveat.
+Personal, non-commercial project. YouTube import is for personal use
+only; see `docs/SECURITY.md` for the associated ToS/copyright caveat.

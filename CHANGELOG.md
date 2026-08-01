@@ -262,3 +262,15 @@ tagged yet.
   legend and a comparability warning, since the two are scored under
   different `weights_profile` (FR-49).
 - `docs/REVIEW_CHECKLIST.md`: a "Data honesty and mode UI" section for M4.
+
+## [Unreleased] -- enable YouTube import by default
+
+### Changed
+
+- `FEATURE_YOUTUBE_IMPORT` now defaults `true` in `.env.example` (ADR-0028)
+  -- song selection straight from YouTube, not just file upload, is a
+  primary product path (spec 2.1) and was effectively dead code left off
+  by default. No code changed: the personal/non-commercial disclaimer
+  (`web/`'s YouTube tab) and the exact-match host allowlist
+  (`internal/youtube/url.go`) are unchanged and remain the real controls;
+  `docs/SECURITY.md`'s 11.4 checklist is updated to match.
