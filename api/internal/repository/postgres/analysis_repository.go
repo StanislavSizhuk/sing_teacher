@@ -180,6 +180,48 @@ func (r *AnalysisRepository) Retry(ctx context.Context, id, userID uuid.UUID) (*
 	return nil, domain.ErrAnalysisNotFailed
 }
 
+// RetryToWaitingForReference moves a failed analysis back to
+// waiting_for_reference rather than queued (spec 6.2, FR-16): its song's
+// cold path hasn't reached ready yet, so there is no ML job for the worker
+// to serve. queue_seq is still redrawn, same as Retry -- a job resubmitted
+// now takes its place behind everything already queued or waiting at that
+// moment, but wake_waiting_for_reference (worker/repositories/postgres.py)
+// keeps that value as-is once the song's prep actually wakes it (spec 12.1
+// DRY: the two must never derive queue placement differently). Same error
+// sentinels as Retry.
+func (r *AnalysisRepository) RetryToWaitingForReference(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
+	const q = `
+		UPDATE analyses
+		SET status = 'waiting_for_reference',
+			error_code = NULL,
+			current_stage = NULL,
+			current_stage_index = NULL,
+			total_stages = NULL,
+			current_stage_started_at = NULL,
+			queue_stream_id = NULL,
+			queue_position = NULL,
+			queue_seq = nextval('analyses_queue_seq_seq')
+		WHERE id = $1 AND user_id = $2 AND status = 'failed'
+		RETURNING ` + analysisColumns
+
+	updated, err := scanAnalysis(r.pool.QueryRow(ctx, q, id, userID))
+	if err == nil {
+		return updated, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		return nil, err
+	}
+
+	existing, getErr := r.GetByID(ctx, id, userID)
+	if getErr != nil {
+		return nil, getErr
+	}
+	if existing.Status != domain.AnalysisStatusFailed {
+		return nil, domain.ErrAnalysisNotFailed
+	}
+	return nil, domain.ErrAnalysisNotFailed
+}
+
 // RecalculatePositions reassigns a 1-based FIFO queue_position to every
 // currently queued analysis, ordered by queue_seq, and returns only the
 // rows whose position actually changed -- the set the caller needs to push

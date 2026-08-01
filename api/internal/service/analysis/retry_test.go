@@ -72,6 +72,45 @@ func TestRetry_QueueFull_Rejected(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrQueueFull)
 }
 
+func TestRetry_SongPrepFailed_ReturnsErrReferencePrepFailed(t *testing.T) {
+	song := testSong()
+	d := newTestService(t, song, 360, 20)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	require.NoError(t, err)
+	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
+	// The song's own cold path failed after the analysis was created --
+	// e.g. queue/prep_handler.py's fail_waiting_for_reference carried this
+	// analysis down with it (spec 6.2, FR-17).
+	d.songs.byID[song.ID].PrepStatus = domain.SongPrepFailed
+
+	_, _, err = d.svc.Retry(ctx, created.ID, userID)
+	require.ErrorIs(t, err, domain.ErrReferencePrepFailed)
+	require.Equal(t, domain.AnalysisStatusFailed, d.analyses.byID[created.ID].Status,
+		"a retry rejected outright must not mutate the row")
+}
+
+func TestRetry_SongNotReadyYet_WaitsInsteadOfQueueing(t *testing.T) {
+	song := waitingSong()
+	d := newTestService(t, song, 360, 20)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusWaitingForReference, created.Status)
+	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
+
+	retried, positions, err := d.svc.Retry(ctx, created.ID, userID)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnalysisStatusWaitingForReference, retried.Status)
+	require.Nil(t, retried.ErrorCode)
+	require.Nil(t, positions)
+	require.Empty(t, d.queue.enqueued, "must not publish onto analyses:run before the song is ready")
+}
+
 func TestRetry_MovesToBackOfQueue(t *testing.T) {
 	song := testSong()
 	d := newTestService(t, song, 360, 20)

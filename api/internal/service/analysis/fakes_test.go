@@ -113,6 +113,26 @@ func (f *fakeAnalysisRepository) Retry(_ context.Context, id, userID uuid.UUID) 
 	return cloneAnalysis(a), nil
 }
 
+func (f *fakeAnalysisRepository) RetryToWaitingForReference(_ context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.byID[id]
+	if !ok || a.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	if a.Status != domain.AnalysisStatusFailed {
+		return nil, domain.ErrAnalysisNotFailed
+	}
+	a.Status = domain.AnalysisStatusWaitingForReference
+	a.ErrorCode = nil
+	a.CurrentStage = nil
+	a.QueuePosition = nil
+	a.QueueStreamID = nil
+	f.nextSeq++
+	a.QueueSeq = f.nextSeq
+	return cloneAnalysis(a), nil
+}
+
 func (f *fakeAnalysisRepository) RecalculatePositions(_ context.Context) (map[uuid.UUID]int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

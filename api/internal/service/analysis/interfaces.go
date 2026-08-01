@@ -28,6 +28,11 @@ type Repository interface {
 	// Retry moves a failed analysis back to queued, at the back of the FIFO
 	// order, without touching its stored recording (FR-26).
 	Retry(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
+	// RetryToWaitingForReference moves a failed analysis back to
+	// waiting_for_reference instead of queued -- the song's cold path
+	// hasn't reached ready yet, so there is no ML job for the worker to
+	// serve (mirrors Enqueue's own not-ready branch, spec 6.2, FR-16).
+	RetryToWaitingForReference(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error)
 	// RecalculatePositions reassigns FIFO queue_position to every queued
 	// analysis and returns only the ids whose position changed -- the set
 	// the caller needs to push over WebSocket (spec 10).

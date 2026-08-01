@@ -467,7 +467,11 @@ paths:
             format: uuid
       responses:
         "202":
-          description: Re-queued. Position updates follow over the WebSocket channel.
+          description: >
+            Re-queued, or back to waiting_for_reference if the song's cold
+            path still hasn't reached ready (spec 6.2, 10.3, FR-16) -- same
+            duality as enqueueAnalysis. Position updates follow over the
+            WebSocket channel.
           content:
             application/json:
               schema:
@@ -481,7 +485,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
         "409":
-          description: The analysis is not in the failed state (`ANALYSIS_NOT_FAILED`).
+          description: >
+            Either the analysis is not in the failed state
+            (`ANALYSIS_NOT_FAILED`), or its song's cold path itself failed
+            (`REFERENCE_PREP_FAILED`, FR-17) -- restart the song's prep
+            (POST /songs/{id}/prepare) before retrying this analysis again.
           content:
             application/problem+json:
               schema:
