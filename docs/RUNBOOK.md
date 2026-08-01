@@ -134,3 +134,37 @@ never been restored is not a backup.
 ## Incidents
 
 None yet -- stage E1 has not been operated in production.
+
+### 2026-08-01 -- song stuck at "waiting for song to be ready" (dev environment)
+
+**Symptom:** a song's cold-path prep and every analysis waiting on it sat on
+"waiting for song to be ready" for several minutes, then flipped to
+`failed` / `TIMEOUT`.
+
+**Cause:** two independent issues in the dev compose stack:
+
+1. `prep_reference_pitch` (CREPE, CPU) kept exceeding its 120s timeout
+   (`PREP_REFERENCE_PITCH_TIMEOUT_SECONDS`) on CPU-only dev hardware.
+   `PipelineRunner` retried it 3 times before failing the job -- that retry
+   sequence is what produced the multi-minute wait before the terminal
+   `failed` state.
+2. `transcribe` was separately crashing with `ModuleNotFoundError: No
+   module named 'faster_whisper'` (optional stage, skipped, not the
+   blocker): the `python-worker` image had been built before the commit
+   that swapped `openai-whisper` for `faster-whisper`, and
+   `deploy/docker-compose.dev.yml`'s anonymous `/src/.venv` volume carries
+   the old venv forward across a plain `up --build` unless anonymous
+   volumes are explicitly renewed.
+
+**Action:** rebuilt the worker image with
+`docker compose -f deploy/docker-compose.dev.yml up -d --build --renew-anon-volumes python-worker`;
+set `PITCH_ENGINE=pyin` in the local (gitignored) `.env` for this CPU-only
+machine. Verified against the stem that had timed out: pyin processed a
+330s reference track in 76s, crepe never finished inside 120s.
+
+**Prevention:** after any change to `worker/pyproject.toml` /
+`worker/uv.lock`, rebuild with `--renew-anon-volumes` -- a plain `--build`
+alone reuses the old anonymous `.venv` volume and silently keeps stale
+dependencies. Keep `PITCH_ENGINE=crepe` only on dev hardware that can
+actually clear a multi-minute song inside
+`PREP_REFERENCE_PITCH_TIMEOUT_SECONDS`; default to `pyin` otherwise.
