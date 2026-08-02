@@ -186,7 +186,14 @@ export const uk: Translations = {
       `Ваш запис був на ${semitones} ${pluralize('uk', semitones, { one: 'півтон', few: 'півтони', many: 'півтонів', other: 'півтона' })} ` +
       `${direction === 'above' ? 'вище' : 'нижче'} за тональність референсу; результати вище вже це враховують.`,
   },
+  analysisResult: {
+    yourRecording: 'Ваш запис',
+  },
   pianoRoll: {
+    caption: 'Висота тону в часі: ваш голос порівняно з референсною мелодією.',
+    legendYou: 'Ваш голос',
+    legendReference: 'Референс',
+    legendOffPitch: 'Фальшива нота',
     summary: (offPitchCount: number) =>
       'Піано-рол: ваша крива висоти тону поверх референсної кривої, ' +
       `${offPitchCount} ${pluralize('uk', offPitchCount, { one: 'фальшива нота', few: 'фальшиві ноти', many: 'фальшивих нот', other: 'фальшивої ноти' })} позначено червоним`,
@@ -229,8 +236,12 @@ export const uk: Translations = {
     columnDate: 'Дата',
     columnMode: 'Режим',
     columnOverallScore: 'Загальний результат',
+    columnAction: 'Дія',
+    viewAnalysis: 'Переглянути',
     modeClean: 'А капела',
     modeMixed: 'З музикою',
+    backToHistory: 'Назад до історії',
+    loadingSession: 'Завантаження аналізу…',
   },
   analysisError: {
     timeout:

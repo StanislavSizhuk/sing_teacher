@@ -187,7 +187,14 @@ export const en = {
       `Your recording was ${semitones} ${pluralize('en', semitones, { one: 'semitone', other: 'semitones' })} ` +
       `${direction} the reference's key; scores above already account for it.`,
   },
+  analysisResult: {
+    yourRecording: 'Your recording',
+  },
   pianoRoll: {
+    caption: 'Pitch over time: your voice compared to the reference melody.',
+    legendYou: 'Your voice',
+    legendReference: 'Reference',
+    legendOffPitch: 'Off-pitch note',
     summary: (offPitchCount: number) =>
       'Piano roll: your pitch curve over the reference pitch curve, ' +
       `${offPitchCount} ${pluralize('en', offPitchCount, { one: 'off-pitch note', other: 'off-pitch notes' })} highlighted in red`,
@@ -230,8 +237,12 @@ export const en = {
     columnDate: 'Date',
     columnMode: 'Mode',
     columnOverallScore: 'Overall score',
+    columnAction: 'Action',
+    viewAnalysis: 'View',
     modeClean: 'A cappella',
     modeMixed: 'With music',
+    backToHistory: 'Back to history',
+    loadingSession: 'Loading this analysis…',
   },
   analysisError: {
     // Terminal analysis error codes (worker/src/vocalcoach/errors.py) --

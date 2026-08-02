@@ -158,12 +158,29 @@ export function PianoRoll({ data, audioRef }: PianoRollProps) {
 
   const offPitchCount = data.offPitch.filter(Boolean).length
   return (
-    <canvas
-      ref={canvasRef}
-      role="img"
-      aria-label={t.pianoRoll.summary(offPitchCount)}
-      className="border-ink-300 bg-ink-0 w-full rounded border"
-      style={{ height: CANVAS_HEIGHT }}
-    />
+    <div className="flex flex-col gap-2">
+      <p className="text-ink-700 text-sm">{t.pianoRoll.caption}</p>
+      <canvas
+        ref={canvasRef}
+        role="img"
+        aria-label={t.pianoRoll.summary(offPitchCount)}
+        className="border-ink-300 bg-ink-0 w-full rounded border"
+        style={{ height: CANVAS_HEIGHT }}
+      />
+      <div aria-hidden="true" className="text-ink-700 flex flex-wrap items-center gap-4 text-xs">
+        <span className="flex items-center gap-1.5">
+          <span className="bg-ink-950 inline-block h-0.5 w-4" />
+          {t.pianoRoll.legendYou}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="bg-ink-500 inline-block h-0.5 w-4" />
+          {t.pianoRoll.legendReference}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="bg-danger inline-block h-2 w-2 rounded-full" />
+          {t.pianoRoll.legendOffPitch}
+        </span>
+      </div>
+    </div>
   )
 }
