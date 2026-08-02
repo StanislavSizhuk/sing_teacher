@@ -207,9 +207,7 @@ def test_mixed_with_accompaniment_is_unremarkable(tmp_path: Path, wav_writer) ->
     assert result.data["warnings"] == []
 
 
-def test_mixed_mode_reads_raw_recording_not_the_separated_stem(
-    tmp_path: Path, wav_writer
-) -> None:
+def test_mixed_mode_reads_raw_recording_not_the_separated_stem(tmp_path: Path, wav_writer) -> None:
     """ADR-0034 regression: `SeparateRecordingStage` runs before this stage
     in `mixed` (`worker.build_stages`), and the shared feature cache's
     `user` side is now computed from its stem, not the raw recording. The

@@ -21,9 +21,7 @@ from vocalcoach.pipeline.stages.separate_recording import SeparateRecordingStage
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
 
-def _through_separation(
-    tmp_path: Path, recording: Path, reference: Path, *, mode: Mode = "clean"
-):
+def _through_separation(tmp_path: Path, recording: Path, reference: Path, *, mode: Mode = "clean"):
     # ADR-0033: align now aligns on pitch, so it needs a real reference
     # curve -- computed the same way the cold path would, reused here
     # rather than re-derived (spec 12.1 DRY, same helper
@@ -40,9 +38,7 @@ def _through_separation(
     # ever read it -- `worker.build_stages`'s own stage order, mirrored
     # here so this helper's name (unlike before ADR-0034) is accurate.
     if mode == "mixed":
-        context = context.with_result(
-            SeparateRecordingStage(FakeVocalSeparator()).run(context)
-        )
+        context = context.with_result(SeparateRecordingStage(FakeVocalSeparator()).run(context))
     context = context.with_result(FeaturesStage().run(context))
     return context
 
@@ -223,9 +219,7 @@ def test_align_length_mismatch_with_unrelated_content_still_raises_alignment_fai
         AlignStage(PyinPitchDetector()).run(context)
 
 
-def test_align_mixed_mode_goes_through_separation_and_succeeds(
-    tmp_path: Path, wav_writer
-) -> None:
+def test_align_mixed_mode_goes_through_separation_and_succeeds(tmp_path: Path, wav_writer) -> None:
     """ADR-0034: `mixed` no longer branches inside `align` -- it reads
     `SeparateRecordingStage`'s stem through `voice_audio_path` and runs the
     exact same `detect_gated` call `clean` does. With the identity
