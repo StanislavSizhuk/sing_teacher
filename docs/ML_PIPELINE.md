@@ -106,7 +106,14 @@ checks both orderings score identically.
 2. **`separate_reference`** (P2) -- isolates the reference's vocal stem
    with Demucs (`DEMUCS_MODEL`, default `htdemucs`). The mono signal from
    P1 is duplicated to stereo before Demucs, since its pretrained models
-   expect two channels. Writes the isolated stem to
+   expect two channels. Demucs always processes and returns audio at its
+   own native rate (44.1kHz for `htdemucs`) regardless of what sample rate
+   it's told the input is (`separate_tensor`'s own docstring: "the wave
+   will be resampled if it doesn't match the model") -- `DemucsSeparator`
+   converts the separated stem back down to `PIPELINE_SAMPLE_RATE_HZ`
+   before returning it, since every caller (`VocalSeparator`'s own
+   contract) assumes "same sample rate as the input." Writes the isolated
+   stem to
    `song-stem-<song_id>.wav` under the `song-stems` volume -- the
    scheduler never re-enqueues a song whose `prep_status` is already
    `ready` (spec 10.2), so this stage runs exactly once by construction

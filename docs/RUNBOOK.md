@@ -229,3 +229,47 @@ read (nothing to persist, and `rollback()` reads more honestly than
 exec postgres psql` hangs on one table but `SELECT 1` doesn't, check
 `pg_stat_activity` for `idle in transaction` before assuming the query
 itself is slow.
+
+### 2026-08-02 -- every reference vocal stem was silently 2x its real length
+
+**Symptom:** every warm-path analysis against any song failed
+`ALIGNMENT_FAILED` -- "the `N`-frame reference is unreachable from the
+`N/2`-frame recording" -- even for a recording that was, byte for byte,
+the same song used as the reference.
+
+**Cause:** `DemucsSeparator.separate_vocals`
+(`worker/src/vocalcoach/pipeline/registry.py`) returned Demucs' separated
+stem untouched. `separate_tensor`'s own docstring says the input "will be
+resampled if it doesn't match the model" -- htdemucs' native rate is
+44.1kHz, and it never resamples back down before returning. This
+pipeline runs at `PIPELINE_SAMPLE_RATE_HZ = 22050`, so the returned
+tensor had exactly 2x the samples the caller assumed, silently violating
+`VocalSeparator`'s own documented contract ("same sample rate ... as
+mixture"). `separate_reference.py` labeled the WAV it wrote with the
+*original* 22050 regardless, so `song-stem-<id>.wav`'s header and its
+real sample count disagreed by 2x: reading it back reported double the
+song's true duration (a real 165s song read as 330s). Every later
+consumer of that stem -- P4's reference pitch curve, the warm path's
+`features`/`align` frame counts -- inherited that same 2x inflation,
+which is what made alignment against a correctly-sized recording
+impossible outright. Likely present since `separate_reference` was first
+written; this is probably why the project's ML pipeline had never
+completed a real run before 2026-07-30 (see the post-E6 pipeline audit).
+
+Fixed by resampling the stem back to `sample_rate_hz` with
+`demucs.audio.convert_audio` (the same helper Demucs itself uses for the
+input side) before returning it.
+
+**Action:** `worker/tests/test_registry.py` gained
+`test_demucs_separator_returns_input_sample_rate_not_the_models`, which
+monkeypatches Demucs' own API (no real model/weights needed, spec 15.2)
+to return audio at a different rate than requested and asserts the
+output length matches the input's rate -- confirmed to fail against the
+pre-fix code. Verified live end to end too: re-separating a real 165s
+song's stem after the fix reads back at 165.17s, not 330.34s.
+
+**Prevention:** when a third-party API's docstring says it "will
+resample" one side of a call, check whether it resamples back before
+returning -- and prefer asserting the *contract* (same rate/length as the
+input) in a test with a fake standing in for the real dependency, not
+just the happy path.
