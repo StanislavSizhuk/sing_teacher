@@ -1,7 +1,10 @@
+import { useState } from 'react'
+
 import type { AnalysisMode } from '../../api/client'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { useTranslation } from '../../i18n/useTranslation'
 import type { Translations } from '../../i18n/translations/en'
+import { AnalysisHistoryDetail } from './AnalysisHistoryDetail'
 import { ProgressChart } from './ProgressChart'
 import { hasMultipleModes, summarize } from './progressChartMath'
 import { useProgress } from './useProgress'
@@ -52,6 +55,13 @@ export function ProgressPage() {
   const t = useTranslation()
   const { data: points, error, isLoading } = useProgress()
   const summary = points ? summarize(points) : null
+  const [openAnalysisId, setOpenAnalysisId] = useState<string | null>(null)
+
+  if (openAnalysisId) {
+    return (
+      <AnalysisHistoryDetail analysisId={openAnalysisId} onBack={() => setOpenAnalysisId(null)} />
+    )
+  }
 
   return (
     <div className="flex w-full max-w-2xl flex-col gap-4">
@@ -104,6 +114,9 @@ export function ProgressPage() {
                   <th scope="col" className="px-3 py-2 font-medium">
                     {t.progressPage.columnOverallScore}
                   </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    <span className="sr-only">{t.progressPage.columnAction}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -113,6 +126,15 @@ export function ProgressPage() {
                     <td className="text-ink-700 px-3 py-2">{modeLabels(t)[p.mode]}</td>
                     <td className="text-ink-950 px-3 py-2 font-medium">
                       {Math.round(p.overallScore)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setOpenAnalysisId(p.analysisId)}
+                        className="focus-visible:outline-ink-950 text-ink-700 rounded text-sm whitespace-nowrap underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                      >
+                        {t.progressPage.viewAnalysis}
+                      </button>
                     </td>
                   </tr>
                 ))}
