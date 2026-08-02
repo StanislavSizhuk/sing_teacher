@@ -79,6 +79,7 @@ class PostgresSongRepository:
         with self._conn.cursor() as cur:
             cur.execute(query, (song_id,))
             row = cur.fetchone()
+        self._conn.rollback()  # closes the implicit transaction a read still opens
         if row is None:
             raise LookupError(f"song {song_id} not found")
         return _row_to_song_record(row)
@@ -183,6 +184,7 @@ class PostgresAnalysisRepository:
                 (analysis_id,),
             )
             row = cur.fetchone()
+        self._conn.rollback()  # closes the implicit transaction a read still opens
         if row is None:
             raise LookupError(f"analysis {analysis_id} not found")
         id_, user_id, song_id, status, stages_json, mode, allow_transposition = row
@@ -465,7 +467,18 @@ class PostgresAnalysisRepository:
         """The song whose cold path a waiting analysis has been queued
         against the longest (spec 10.2 rule 2: that song's `songs:prep`
         entry jumps the line). `Scheduler` checks this before every
-        `songs:prep` tick -- read-only, no commit needed.
+        `songs:prep` tick.
+
+        Rolls back rather than skipping any transaction-close at all:
+        psycopg opens an implicit transaction on the first statement of a
+        session regardless of whether it's a read, and `_conn` is
+        long-lived (one per repository instance, not per call) -- with
+        nothing ever ending it, this connection sat `idle in transaction`
+        indefinitely on Scheduler's very first empty tick (no song ever
+        waiting) and held a lock that blocked every later `ALTER TABLE
+        analyses` from the API, including its own migrations, until
+        something else happened to commit on this same connection.
+        `rollback()`, not `commit()`, since nothing here writes.
         """
         with self._conn.cursor() as cur:
             cur.execute(
@@ -476,4 +489,5 @@ class PostgresAnalysisRepository:
                 """
             )
             row = cur.fetchone()
+        self._conn.rollback()
         return str(row[0]) if row is not None else None
