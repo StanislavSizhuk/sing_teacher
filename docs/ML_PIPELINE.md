@@ -193,7 +193,26 @@ checks both orderings score identically.
    its own `StageResult.data` -- `AggregateStage` turns that into a
    confidence step-down and a `LENGTH_MISMATCH_PARTIAL_ANALYSIS` warning
    (spec 6.15/6.18), same shape as every other confidence signal, not a
-   failure. **Level 2 (refine)**
+   failure.
+
+   ADR-0032: `_crop_to_overlap` still assumes both signals *start*
+   together, which a reference that opens with an instrumental intro
+   (sung over by a recording that only starts once the user starts
+   singing) breaks outright. When the direct (offset 0) attempt fails
+   either way -- unreachable within the band, or reachable but over
+   `ALIGN_MAX_NORMALIZED_DISTANCE` -- `_find_reference_start_offset`
+   retries: a cheap, unwarped scan (`dsp/dtw.py::locate_start_offset_scores`,
+   deliberately not DTW, `O(n * ALIGN_MAX_START_OFFSET_SECONDS)`, not
+   `O(n * m)`, to stay within NFR-16) proposes a few candidate reference
+   start frames, and the *same* two-level pipeline re-runs against the
+   best one that passes the same ceiling. Found offsets beyond
+   `ALIGN_MAX_START_OFFSET_SECONDS = 60.0` are not searched for at all --
+   an explicit bound, not a calibrated one. Success records
+   `reference_start_offset_seconds` in `StageResult.data` (`0.0` when
+   untouched) and, when non-zero, `AggregateStage` turns it into a
+   confidence step-down and a `REFERENCE_START_OFFSET_DETECTED` warning,
+   the same shape as `LENGTH_MISMATCH_PARTIAL_ANALYSIS`. **Level 2
+   (refine)**
    projects that coarse path through a `TimeMap` onto `PITCH_HOP_SECONDS`
    (10ms) resolution and runs a second banded pass centered on *that*
    projection, radius `ALIGN_REFINE_WINDOW_SECONDS = 0.2` -- a small,
@@ -211,10 +230,11 @@ checks both orderings score identically.
    see ADR-0017; still an empirical starting point, not yet calibrated on
    real recordings), and also if either banded pass finds the (already
    length-compatible, post-crop) target unreachable within its band at all
-   -- content genuinely diverged, not just length -- or the upfront
-   `DTW_MAX_CELLS` cell-count guard rejects the request outright
-   (`ALIGNMENT_TOO_LARGE`) -- all non-retryable, like any other alignment
-   failure.
+   -- once ADR-0032's offset search has also failed to find a reference
+   start frame that works, meaning content genuinely diverged, not just
+   length or start position -- or the upfront `DTW_MAX_CELLS` cell-count
+   guard rejects the request outright (`ALIGNMENT_TOO_LARGE`) -- all
+   non-retryable, like any other alignment failure.
 
    A `TimeMap` built from one hop is not indexed into directly by a
    different-hop signal; every stage below converts through *time*
