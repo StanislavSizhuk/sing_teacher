@@ -23,10 +23,11 @@ type View = 'analyze' | 'progress'
 
 function AnalyzeFlow() {
   const t = useTranslation()
+  const [language] = useLanguage()
   const [step, setStep] = useState<Step>({ kind: 'song' })
   const enqueue = useMutation({
     mutationFn: (input: { songId: string; recording: File | Blob; mode: AnalysisMode }) =>
-      enqueueAnalysis(input.songId, input.recording, input.mode),
+      enqueueAnalysis(input.songId, input.recording, input.mode, language),
     onSuccess: (analysis, variables) =>
       setStep({ kind: 'queue', analysisId: analysis.id, recording: variables.recording }),
   })

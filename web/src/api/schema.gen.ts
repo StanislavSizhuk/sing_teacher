@@ -402,7 +402,7 @@ export interface components {
       artist?: string
       /**
        * Format: binary
-       * @description Required for source_type=upload. mp3/wav/m4a/flac/ogg, checked by magic bytes.
+       * @description Required for source_type=upload. mp3/wav/m4a/flac/ogg/webm, checked by magic bytes.
        */
       file?: string
       /** @description Required for source_type=youtube. Must be a youtube.com/youtu.be link. */
@@ -450,8 +450,14 @@ export interface components {
       /** @description Whether the user may have sung in a different key (FR-31, spec 6.8). Defaults to `false` for `clean` and `true` for `mixed` when omitted. */
       allow_transposition?: boolean
       /**
+       * @description Language the FR-32 feedback report is written in (ADR-0031). Fixed for this analysis at creation time; a later UI language switch never retroactively re-renders it. Defaults to `en` when omitted.
+       * @default en
+       * @enum {string}
+       */
+      locale: 'en' | 'uk'
+      /**
        * Format: binary
-       * @description The user's recording. mp3/wav/m4a/flac/ogg, checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
+       * @description The user's recording. mp3/wav/m4a/flac/ogg/webm (the last is what MediaRecorder produces in-browser on Chrome/Firefox, FR-20), checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
        */
       recording: string
     }
@@ -516,7 +522,7 @@ export interface components {
       aspect_confidence?: {
         [key: string]: 'high' | 'medium' | 'low'
       }
-      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`. The client localizes these to a human-readable message rather than showing the code (FR-47). */
+      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`, `LENGTH_MISMATCH_PARTIAL_ANALYSIS` (ADR-0030: the recording and reference were cropped to a shared overlap before aligning). The client localizes these to a human-readable message rather than showing the code (FR-47). */
       warnings?: string[]
       /** @description Every aspect this mode does not score, mapped to a machine-readable reason (FR-41) -- e.g. `breath`/`timbre` under `NOT_MEASURABLE_WITH_ACCOMPANIMENT` in `mixed`. An aspect listed here is never also present as a `0` in its `*_score` field: it is simply absent there. */
       unavailable_aspects?: {

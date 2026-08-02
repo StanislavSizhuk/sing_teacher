@@ -800,6 +800,15 @@ components:
             Whether the user may have sung in a different key (FR-31, spec
             6.8). Defaults to `false` for `clean` and `true` for `mixed`
             when omitted.
+        locale:
+          type: string
+          enum: [en, uk]
+          default: en
+          description: >-
+            Language the FR-32 feedback report is written in (ADR-0031).
+            Fixed for this analysis at creation time; a later UI language
+            switch never retroactively re-renders it. Defaults to `en`
+            when omitted.
         recording:
           type: string
           format: binary
