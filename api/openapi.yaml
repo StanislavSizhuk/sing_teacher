@@ -726,7 +726,7 @@ components:
         file:
           type: string
           format: binary
-          description: Required for source_type=upload. mp3/wav/m4a/flac/ogg, checked by magic bytes.
+          description: Required for source_type=upload. mp3/wav/m4a/flac/ogg/webm, checked by magic bytes.
         youtube_url:
           type: string
           maxLength: 2048
@@ -803,7 +803,10 @@ components:
         recording:
           type: string
           format: binary
-          description: The user's recording. mp3/wav/m4a/flac/ogg, checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
+          description: >-
+            The user's recording. mp3/wav/m4a/flac/ogg/webm (the last is
+            what MediaRecorder produces in-browser on Chrome/Firefox, FR-20),
+            checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
 
     Analysis:
       type: object
