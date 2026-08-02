@@ -16,9 +16,9 @@ const CANVAS_HEIGHT = 220
 // Colors match the design tokens in index.css (spec FR-40) -- canvas
 // drawing is imperative, so the values are duplicated here as literals
 // rather than read from CSS custom properties.
-const USER_CURVE_COLOR = '#0a0a0a' // --color-ink-950
-const REFERENCE_CURVE_COLOR = '#737373' // --color-ink-500
-const OFF_PITCH_COLOR = '#b91c1c' // --color-danger
+const USER_CURVE_COLOR = '#15803d' // --color-success
+const REFERENCE_CURVE_COLOR = '#b91c1c' // --color-danger
+const OFF_PITCH_COLOR = '#0a0a0a' // --color-ink-950
 const CURSOR_COLOR = '#404040' // --color-ink-700
 const CURVE_LINE_WIDTH = 2
 const CURSOR_LINE_WIDTH = 1
@@ -169,15 +169,15 @@ export function PianoRoll({ data, audioRef }: PianoRollProps) {
       />
       <div aria-hidden="true" className="text-ink-700 flex flex-wrap items-center gap-4 text-xs">
         <span className="flex items-center gap-1.5">
-          <span className="bg-ink-950 inline-block h-0.5 w-4" />
+          <span className="bg-success inline-block h-0.5 w-4" />
           {t.pianoRoll.legendYou}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="bg-ink-500 inline-block h-0.5 w-4" />
+          <span className="bg-danger inline-block h-0.5 w-4" />
           {t.pianoRoll.legendReference}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="bg-danger inline-block h-2 w-2 rounded-full" />
+          <span className="bg-ink-950 inline-block h-2 w-2 rounded-full" />
           {t.pianoRoll.legendOffPitch}
         </span>
       </div>
