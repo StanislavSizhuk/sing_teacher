@@ -13,9 +13,6 @@ import { useElapsedSeconds } from './useElapsedSeconds'
 
 interface QueueStatusProps {
   analysisId: string
-  /** The recording the user just submitted, kept in memory for the FR-33
-   * synced playback once the analysis is done (see AnalysisResult). */
-  recording: File | Blob
 }
 
 function statusLabels(t: Translations): Record<Analysis['status'], string> {
@@ -42,7 +39,6 @@ function errorMessage(t: Translations, code: string): string {
     INTERNAL: t.analysisError.internal,
     REFERENCE_TOO_QUIET: t.analysisError.referenceTooQuiet,
     NO_VOICE_DETECTED: t.analysisError.noVoiceDetected,
-    MELODY_EXTRACTION_FAILED: t.analysisError.melodyExtractionFailed,
     ALIGNMENT_FAILED: t.analysisError.alignmentFailed,
     ALIGNMENT_TOO_LARGE: t.analysisError.alignmentTooLarge,
   }
@@ -51,7 +47,7 @@ function errorMessage(t: Translations, code: string): string {
 
 /** FR-22..26: shows the live queue position (WS, REST-poll fallback) and
  * lets the owner cancel a queued job or retry a failed one. */
-export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
+export function QueueStatus({ analysisId }: QueueStatusProps) {
   const t = useTranslation()
   const queryClient = useQueryClient()
   const { data: analysis, error, isLoading } = useAnalysisStatus(analysisId)
@@ -125,7 +121,7 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
         </div>
       )}
 
-      {analysis?.status === 'done' && <AnalysisResult analysis={analysis} recording={recording} />}
+      {analysis?.status === 'done' && <AnalysisResult analysis={analysis} />}
 
       <ErrorAlert error={cancel.error ?? retry.error} />
       <div className="flex gap-2">

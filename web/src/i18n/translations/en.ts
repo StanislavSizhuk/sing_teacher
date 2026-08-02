@@ -198,9 +198,6 @@ export const en = {
       `Your recording was ${semitones} ${pluralize('en', semitones, { one: 'semitone', other: 'semitones' })} ` +
       `${direction} the reference's key; scores above already account for it.`,
   },
-  analysisResult: {
-    yourRecording: 'Your recording',
-  },
   pianoRoll: {
     caption: 'Pitch over time: your voice compared to the reference melody.',
     legendYou: 'Your voice',
@@ -268,9 +265,6 @@ export const en = {
     noVoiceDetected:
       "We couldn't detect a singing voice in this recording. Make sure your microphone " +
       'captured your voice clearly and try again.',
-    melodyExtractionFailed:
-      "We couldn't reliably track your voice's melody in this recording. Try recording again " +
-      'with a clearer vocal.',
     alignmentFailed:
       "This recording doesn't match the reference song closely enough to analyze. Make sure " +
       "you're recording the same song and try again.",

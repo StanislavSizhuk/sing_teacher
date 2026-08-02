@@ -18,7 +18,7 @@ import { useTranslation } from './i18n/useTranslation'
 type Step =
   | { kind: 'song' }
   | { kind: 'record'; song: Song }
-  | { kind: 'queue'; analysisId: string; recording: File | Blob }
+  | { kind: 'queue'; analysisId: string }
 
 type View = 'analyze' | 'progress'
 
@@ -29,8 +29,7 @@ function AnalyzeFlow() {
   const enqueue = useMutation({
     mutationFn: (input: { songId: string; recording: File | Blob; mode: AnalysisMode }) =>
       enqueueAnalysis(input.songId, input.recording, input.mode, language),
-    onSuccess: (analysis, variables) =>
-      setStep({ kind: 'queue', analysisId: analysis.id, recording: variables.recording }),
+    onSuccess: (analysis) => setStep({ kind: 'queue', analysisId: analysis.id }),
   })
 
   return (
@@ -58,7 +57,7 @@ function AnalyzeFlow() {
 
       {step.kind === 'queue' && (
         <>
-          <QueueStatus analysisId={step.analysisId} recording={step.recording} />
+          <QueueStatus analysisId={step.analysisId} />
           <Button variant="secondary" onClick={() => setStep({ kind: 'song' })}>
             {t.app.analyzeAnotherSong}
           </Button>

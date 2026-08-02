@@ -1,15 +1,11 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useRef } from 'react'
 
 import type { PianoRoll as PianoRollData } from '../../api/client'
 import { useTranslation } from '../../i18n/useTranslation'
-import { computePitchRange, frameToX, hzToY, timeToFrame, type PitchRange } from './pianoRollMath'
+import { computePitchRange, frameToX, hzToY, type PitchRange } from './pianoRollMath'
 
 interface PianoRollProps {
   data: PianoRollData
-  /** The `<audio>` element playing the user's recording; read directly
-   * (never through React state) so the FR-33 cursor can track playback at
-   * animation-frame rate without a re-render per frame. */
-  audioRef: RefObject<HTMLAudioElement | null>
 }
 
 const CANVAS_HEIGHT = 220
@@ -19,9 +15,13 @@ const CANVAS_HEIGHT = 220
 const USER_CURVE_COLOR = '#15803d' // --color-success
 const REFERENCE_CURVE_COLOR = '#b91c1c' // --color-danger
 const OFF_PITCH_COLOR = '#0a0a0a' // --color-ink-950
-const CURSOR_COLOR = '#404040' // --color-ink-700
 const CURVE_LINE_WIDTH = 2
-const CURSOR_LINE_WIDTH = 1
+// Both curves are drawn at this opacity, not 1: a good match (the common
+// case) puts the user's curve almost directly over the reference's, and at
+// full opacity whichever is drawn second completely hides the other. At
+// <1 alpha, overlapping strokes blend instead, so both stay visible where
+// they coincide.
+const CURVE_OPACITY = 0.7
 const OFF_PITCH_MARKER_RADIUS = 3
 
 function drawCurve(
@@ -67,94 +67,40 @@ function drawOffPitchMarkers(
   })
 }
 
-function drawStaticLayer(data: PianoRollData, width: number): HTMLCanvasElement {
-  const layer = document.createElement('canvas')
-  layer.width = width
-  layer.height = CANVAS_HEIGHT
-  const ctx = layer.getContext('2d')
-  if (!ctx) return layer
+function draw(canvas: HTMLCanvasElement, data: PianoRollData): void {
+  const width = canvas.clientWidth || canvas.width || 600
+  canvas.width = width
+  canvas.height = CANVAS_HEIGHT
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
 
   const range = computePitchRange([data.referenceHz, data.userHz])
+  ctx.globalAlpha = CURVE_OPACITY
   drawCurve(ctx, data.referenceHz, range, REFERENCE_CURVE_COLOR)
   drawCurve(ctx, data.userHz, range, USER_CURVE_COLOR)
+  ctx.globalAlpha = 1
   drawOffPitchMarkers(ctx, data, range)
-  return layer
 }
 
-/** FR-31/FR-33: the user's pitch curve over the reference curve, off-pitch
- * notes marked in color, with a cursor that tracks `audioRef`'s playback
- * position. All three inputs are already frame-aligned by the worker (spec
- * 6.3.4/6.3.5), so this component only draws -- it never re-derives DTW
- * alignment or the off-pitch threshold. */
-export function PianoRoll({ data, audioRef }: PianoRollProps) {
+/** FR-31: the user's pitch curve over the reference curve, off-pitch notes
+ * marked in color. Both inputs are already frame-aligned by the worker
+ * (spec 6.3.4/6.3.5), so this component only draws -- it never re-derives
+ * DTW alignment or the off-pitch threshold. */
+export function PianoRoll({ data }: PianoRollProps) {
   const t = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const staticLayerRef = useRef<HTMLCanvasElement | null>(null)
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
     function render() {
       const canvas = canvasRef.current
-      const layer = staticLayerRef.current
-      const audio = audioRef.current
-      if (!canvas || !layer) return
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(layer, 0, 0)
-
-      const frame = timeToFrame(audio?.currentTime ?? 0, data.hopSeconds)
-      const x = frameToX(frame, data.userHz.length, canvas.width)
-      ctx.strokeStyle = CURSOR_COLOR
-      ctx.lineWidth = CURSOR_LINE_WIDTH
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, canvas.height)
-      ctx.stroke()
-    }
-
-    function rebuildStaticLayer() {
-      const canvas = canvasRef.current
       if (!canvas) return
-      const width = canvas.clientWidth || canvas.width || 600
-      canvas.width = width
-      canvas.height = CANVAS_HEIGHT
-      staticLayerRef.current = drawStaticLayer(data, width)
-      render()
+      draw(canvas, data)
     }
 
-    rebuildStaticLayer()
-    window.addEventListener('resize', rebuildStaticLayer)
-
-    let frameId: number | null = null
-    function loop() {
-      render()
-      frameId = requestAnimationFrame(loop)
-    }
-    function stopLoop() {
-      if (frameId !== null) cancelAnimationFrame(frameId)
-      frameId = null
-      render() // one more paint so the cursor lands exactly where playback stopped
-    }
-
-    const audio = audioRef.current
-    audio?.addEventListener('play', loop)
-    audio?.addEventListener('pause', stopLoop)
-    audio?.addEventListener('ended', stopLoop)
-    audio?.addEventListener('seeked', render)
-
-    return () => {
-      window.removeEventListener('resize', rebuildStaticLayer)
-      if (frameId !== null) cancelAnimationFrame(frameId)
-      audio?.removeEventListener('play', loop)
-      audio?.removeEventListener('pause', stopLoop)
-      audio?.removeEventListener('ended', stopLoop)
-      audio?.removeEventListener('seeked', render)
-    }
-  }, [data, audioRef])
+    render()
+    window.addEventListener('resize', render)
+    return () => window.removeEventListener('resize', render)
+  }, [data])
 
   const offPitchCount = data.offPitch.filter(Boolean).length
   return (

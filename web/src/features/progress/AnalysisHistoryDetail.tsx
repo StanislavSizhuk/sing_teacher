@@ -12,10 +12,7 @@ interface AnalysisHistoryDetailProps {
 /** A past session opened from the Progress table: the same report and piano
  * roll AnalysisResult shows right after an analysis finishes, fetched fresh
  * by id (useAnalysisStatus already stops polling once a status is
- * terminal, which a history item always already is). There is no recording
- * blob to play back here -- that only ever lives in the browser memory of
- * the page load that captured it -- so AnalysisResult's playback section
- * simply doesn't render. */
+ * terminal, which a history item always already is). */
 export function AnalysisHistoryDetail({ analysisId, onBack }: AnalysisHistoryDetailProps) {
   const t = useTranslation()
   const { data: analysis, error, isLoading } = useAnalysisStatus(analysisId)

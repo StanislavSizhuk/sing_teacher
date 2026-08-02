@@ -58,9 +58,3 @@ export function frameToX(frameIndex: number, totalFrames: number, width: number)
   if (totalFrames <= 1) return 0
   return (frameIndex / (totalFrames - 1)) * width
 }
-
-/** Converts a playback time (seconds) to a fractional frame index at the
- * curve's own hop -- used to place the FR-33 playback cursor. */
-export function timeToFrame(seconds: number, hopSeconds: number): number {
-  return seconds / hopSeconds
-}

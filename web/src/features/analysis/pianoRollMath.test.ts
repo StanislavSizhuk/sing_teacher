@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { computePitchRange, frameToX, hzToSemitone, hzToY, timeToFrame } from './pianoRollMath'
+import { computePitchRange, frameToX, hzToSemitone, hzToY } from './pianoRollMath'
 
 describe('hzToSemitone', () => {
   it('is zero at A4 (440 Hz)', () => {
@@ -63,12 +63,5 @@ describe('frameToX', () => {
 
   it('never divides by zero for a single-frame curve', () => {
     expect(frameToX(0, 1, 100)).toBe(0)
-  })
-})
-
-describe('timeToFrame', () => {
-  it('converts seconds to a fractional frame index at the given hop', () => {
-    expect(timeToFrame(1, 0.01)).toBeCloseTo(100)
-    expect(timeToFrame(0.5, 0.1)).toBeCloseTo(5)
   })
 })

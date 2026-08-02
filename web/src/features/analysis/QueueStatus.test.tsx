@@ -28,7 +28,7 @@ function renderQueueStatus() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <QueueStatus analysisId="a1" recording={new Blob()} />
+      <QueueStatus analysisId="a1" />
     </QueryClientProvider>,
   )
 }
