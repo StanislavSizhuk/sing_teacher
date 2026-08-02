@@ -29,6 +29,26 @@ function statusLabels(t: Translations): Record<Analysis['status'], string> {
   }
 }
 
+/** Terminal analysis error codes (worker/src/vocalcoach/errors.py)
+ * translated to a sentence a user can act on -- a raw "Error: CODE" reads
+ * like the service itself is broken rather than a specific, nameable
+ * thing about this recording (spec 8.1's "code is stable, detail is for
+ * humans" split, same pattern as ErrorAlert's FRIENDLY_MESSAGES). Falls
+ * back to naming the code rather than hiding it, for one this map
+ * doesn't know about yet. */
+function errorMessage(t: Translations, code: string): string {
+  const known: Record<string, string> = {
+    TIMEOUT: t.analysisError.timeout,
+    INTERNAL: t.analysisError.internal,
+    REFERENCE_TOO_QUIET: t.analysisError.referenceTooQuiet,
+    NO_VOICE_DETECTED: t.analysisError.noVoiceDetected,
+    MELODY_EXTRACTION_FAILED: t.analysisError.melodyExtractionFailed,
+    ALIGNMENT_FAILED: t.analysisError.alignmentFailed,
+    ALIGNMENT_TOO_LARGE: t.analysisError.alignmentTooLarge,
+  }
+  return known[code] ?? t.analysisError.fallback(code)
+}
+
 /** FR-22..26: shows the live queue position (WS, REST-poll fallback) and
  * lets the owner cancel a queued job or retry a failed one. */
 export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
@@ -100,7 +120,7 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
             </ul>
           )}
           {analysis.status === 'failed' && analysis.errorCode && (
-            <p className="text-danger">{t.queueStatus.error(analysis.errorCode)}</p>
+            <p className="text-danger">{errorMessage(t, analysis.errorCode)}</p>
           )}
         </div>
       )}

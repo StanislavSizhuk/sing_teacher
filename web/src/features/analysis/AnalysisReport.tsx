@@ -43,6 +43,7 @@ function warningText(t: Translations, code: string): string {
     LITTLE_VOICE_DETECTED: t.analysisReport.warningLittleVoiceDetected,
     WEAK_ALIGNMENT: t.analysisReport.warningWeakAlignment,
     KEY_SHIFT_OUT_OF_RANGE: t.analysisReport.warningKeyShiftOutOfRange,
+    LENGTH_MISMATCH_PARTIAL_ANALYSIS: t.analysisReport.warningLengthMismatchPartialAnalysis,
   }
   return known[code] ?? code
 }

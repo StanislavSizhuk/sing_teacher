@@ -138,7 +138,6 @@ export const en = {
       return s
     },
     stageDuration: (name: string, duration: string) => `${name} — ${duration}`,
-    error: (code: string) => `Error: ${code}`,
     cancelPending: 'Canceling…',
     cancel: 'Cancel',
     retryPending: 'Retrying…',
@@ -170,6 +169,9 @@ export const en = {
       "Your recording didn't line up well against the reference track, which lowers confidence in the scores.",
     warningKeyShiftOutOfRange:
       'A key shift was detected but was too large to confidently correct for.',
+    warningLengthMismatchPartialAnalysis:
+      'Your recording and the reference song were significantly different lengths, so only the ' +
+      'matching portion was analyzed -- these scores reflect part of the song, not all of it.',
     confidenceHigh: 'High confidence',
     confidenceMedium: 'Medium confidence',
     confidenceLow: 'Low confidence',
@@ -230,6 +232,29 @@ export const en = {
     columnOverallScore: 'Overall score',
     modeClean: 'A cappella',
     modeMixed: 'With music',
+  },
+  analysisError: {
+    // Terminal analysis error codes (worker/src/vocalcoach/errors.py) --
+    // shown in place of a raw "Error: CODE" (QueueStatus.tsx), the same
+    // spec 8.1 "code is stable, detail is for humans" split ErrorAlert's
+    // FRIENDLY_MESSAGES already uses for request-level errors.
+    timeout:
+      'This analysis took too long and had to be stopped. Try again -- a shorter recording usually helps.',
+    internal: 'Something went wrong while analyzing this recording. Please try again.',
+    referenceTooQuiet:
+      "This song's reference audio couldn't be processed reliably. Try a different song.",
+    noVoiceDetected:
+      "We couldn't detect a singing voice in this recording. Make sure your microphone " +
+      'captured your voice clearly and try again.',
+    melodyExtractionFailed:
+      "We couldn't reliably track your voice's melody in this recording. Try recording again " +
+      'with a clearer vocal.',
+    alignmentFailed:
+      "This recording doesn't match the reference song closely enough to analyze. Make sure " +
+      "you're recording the same song and try again.",
+    alignmentTooLarge:
+      'This recording is too long to compare against the reference. Try a shorter recording.',
+    fallback: (code: string) => `Something went wrong (code: ${code}).`,
   },
 }
 
