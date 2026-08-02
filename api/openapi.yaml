@@ -915,8 +915,10 @@ components:
             Machine-readable warning codes (spec 6.18), e.g.
             `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`,
             `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`,
-            `KEY_SHIFT_OUT_OF_RANGE`. The client localizes these to a
-            human-readable message rather than showing the code (FR-47).
+            `KEY_SHIFT_OUT_OF_RANGE`, `LENGTH_MISMATCH_PARTIAL_ANALYSIS`
+            (ADR-0030: the recording and reference were cropped to a
+            shared overlap before aligning). The client localizes these to
+            a human-readable message rather than showing the code (FR-47).
           items:
             type: string
         unavailable_aspects:

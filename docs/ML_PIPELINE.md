@@ -179,8 +179,21 @@ checks both orderings score identically.
    **Level 1 (coarse)** runs on A2's cached MFCC (50ms hop), banded
    around the literal diagonal, radius `ALIGN_WINDOW_SECONDS = 10.0` --
    deliberately not scaled by the two sequences' length ratio, so a
-   length mismatch alone can still make the target unreachable (the
-   rejection spec 6.8's risk table and T9 depend on). **Level 2 (refine)**
+   *content* mismatch at comparable lengths still makes the target
+   unreachable (the rejection spec 6.8's risk table and T9 depend on).
+   When the two lengths themselves differ by more than that same band
+   (ADR-0030: a take cut short, or one that ran past the song's own end),
+   `_crop_to_overlap` crops whichever side is longer down to *exactly*
+   the shorter side's length first -- not shorter-plus-band, since both
+   `banded_dtw` passes always force their last frame to match the other
+   side's last frame, and cropping with the extra band's worth of slack
+   would force the shorter side to be stretched unnaturally across it.
+   Recording and reference are then scored on that shared overlap instead
+   of failing outright, and the stage records `length_mismatch: true` in
+   its own `StageResult.data` -- `AggregateStage` turns that into a
+   confidence step-down and a `LENGTH_MISMATCH_PARTIAL_ANALYSIS` warning
+   (spec 6.15/6.18), same shape as every other confidence signal, not a
+   failure. **Level 2 (refine)**
    projects that coarse path through a `TimeMap` onto `PITCH_HOP_SECONDS`
    (10ms) resolution and runs a second banded pass centered on *that*
    projection, radius `ALIGN_REFINE_WINDOW_SECONDS = 0.2` -- a small,
@@ -196,11 +209,12 @@ checks both orderings score identically.
    `ALIGN_MAX_NORMALIZED_DISTANCE = 70.0` (recalibrated for this own cost
    function's scale, not carried over from `dtw-python`'s `symmetric2` --
    see ADR-0017; still an empirical starting point, not yet calibrated on
-   real recordings), and also if either banded pass finds the target
-   unreachable within its band at all (length/tempo diverged too far) or
-   the upfront `DTW_MAX_CELLS` cell-count guard rejects the request
-   outright (`ALIGNMENT_TOO_LARGE`) -- all non-retryable, like any other
-   alignment failure.
+   real recordings), and also if either banded pass finds the (already
+   length-compatible, post-crop) target unreachable within its band at all
+   -- content genuinely diverged, not just length -- or the upfront
+   `DTW_MAX_CELLS` cell-count guard rejects the request outright
+   (`ALIGNMENT_TOO_LARGE`) -- all non-retryable, like any other alignment
+   failure.
 
    A `TimeMap` built from one hop is not indexed into directly by a
    different-hop signal; every stage below converts through *time*
