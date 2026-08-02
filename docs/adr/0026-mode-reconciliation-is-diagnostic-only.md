@@ -2,6 +2,15 @@
 
 - Status: Accepted
 - Date: 2026-07-31
+- 2026-08-02: ADR-0034 replaces `mixed`'s melody extraction (A4) with Demucs
+  separation of the recording, read by A3 (`recording_condition`, this ADR)
+  from the **pre-separation** raw recording specifically so this stage's
+  own accompaniment-detection logic still has something to detect --
+  reconciliation's diagnostic-only status and every decision below are
+  otherwise unaffected. The melody-extraction-specific cost note in
+  Consequences (below) is historical: `dsp/melody.py` no longer exists, a
+  `mixed`-declared, actually-a-cappella recording now pays an unnecessary
+  Demucs pass instead, not an unnecessary melody-extraction one.
 
 ## Context
 
