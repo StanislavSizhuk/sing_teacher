@@ -14,7 +14,6 @@ describe('useFixBlobAudioDuration', () => {
   it('seeks to the end and back to force a real duration on an Infinity-duration blob', () => {
     const audio = audioWithDuration(Infinity)
     const ref = createRef<HTMLAudioElement | null>()
-    // @ts-expect-error -- test-only assignment of a readonly ref for renderHook
     ref.current = audio
 
     renderHook(() => useFixBlobAudioDuration(ref, 'blob:fake'))
@@ -32,7 +31,6 @@ describe('useFixBlobAudioDuration', () => {
   it('leaves a file with a real duration untouched', () => {
     const audio = audioWithDuration(12.5)
     const ref = createRef<HTMLAudioElement | null>()
-    // @ts-expect-error -- test-only assignment of a readonly ref for renderHook
     ref.current = audio
 
     renderHook(() => useFixBlobAudioDuration(ref, 'blob:fake'))
@@ -46,7 +44,6 @@ describe('useFixBlobAudioDuration', () => {
   it('does nothing without a src', () => {
     const audio = audioWithDuration(Infinity)
     const ref = createRef<HTMLAudioElement | null>()
-    // @ts-expect-error -- test-only assignment of a readonly ref for renderHook
     ref.current = audio
 
     renderHook(() => useFixBlobAudioDuration(ref, null))

@@ -15,18 +15,19 @@ export function useFixBlobAudioDuration(
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !src) return
+    const el = audio
 
     function onLoadedMetadata() {
-      if (audio.duration !== Infinity) return
+      if (el.duration !== Infinity) return
       function onTimeUpdate() {
-        audio.removeEventListener('timeupdate', onTimeUpdate)
-        audio.currentTime = 0
+        el.removeEventListener('timeupdate', onTimeUpdate)
+        el.currentTime = 0
       }
-      audio.addEventListener('timeupdate', onTimeUpdate)
-      audio.currentTime = Number.MAX_SAFE_INTEGER
+      el.addEventListener('timeupdate', onTimeUpdate)
+      el.currentTime = Number.MAX_SAFE_INTEGER
     }
 
-    audio.addEventListener('loadedmetadata', onLoadedMetadata)
-    return () => audio.removeEventListener('loadedmetadata', onLoadedMetadata)
+    el.addEventListener('loadedmetadata', onLoadedMetadata)
+    return () => el.removeEventListener('loadedmetadata', onLoadedMetadata)
   }, [audioRef, src])
 }
