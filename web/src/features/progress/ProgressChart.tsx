@@ -14,7 +14,12 @@ interface ProgressChartProps {
 const VIEW_WIDTH = 400
 const VIEW_HEIGHT = 220
 const AXIS_LABEL_WIDTH = 28
+// The 0 and 100 gridlines sit exactly on the plot's top/bottom edge
+// (scoreToY(100) = 0, scoreToY(0) = height); without this, their axis-label
+// text and point markers get clipped by the SVG's own viewBox/border.
+const CHART_VERTICAL_PADDING = 10
 const PLOT_WIDTH = VIEW_WIDTH - AXIS_LABEL_WIDTH
+const PLOT_HEIGHT = VIEW_HEIGHT - 2 * CHART_VERTICAL_PADDING
 const GRID_SCORES = [0, 25, 50, 75, 100]
 const POINT_RADIUS = 3
 
@@ -35,7 +40,7 @@ function formatDate(iso: string): string {
  * which sessions to actually compare apples-to-apples. */
 export function ProgressChart({ points }: ProgressChartProps) {
   const t = useTranslation()
-  const layout = layoutPoints(points, PLOT_WIDTH, VIEW_HEIGHT)
+  const layout = layoutPoints(points, PLOT_WIDTH, PLOT_HEIGHT)
   const path = buildLinePath(layout)
   const first = points[0]
   const last = points[points.length - 1]
@@ -65,21 +70,21 @@ export function ProgressChart({ points }: ProgressChartProps) {
           <text
             key={score}
             x={AXIS_LABEL_WIDTH - 6}
-            y={scoreToY(score, VIEW_HEIGHT) + 4}
+            y={scoreToY(score, PLOT_HEIGHT) + CHART_VERTICAL_PADDING + 4}
             textAnchor="end"
             className="fill-ink-500 text-xs"
           >
             {score}
           </text>
         ))}
-        <g transform={`translate(${AXIS_LABEL_WIDTH}, 0)`}>
+        <g transform={`translate(${AXIS_LABEL_WIDTH}, ${CHART_VERTICAL_PADDING})`}>
           {GRID_SCORES.map((score) => (
             <line
               key={score}
               x1={0}
               x2={PLOT_WIDTH}
-              y1={scoreToY(score, VIEW_HEIGHT)}
-              y2={scoreToY(score, VIEW_HEIGHT)}
+              y1={scoreToY(score, PLOT_HEIGHT)}
+              y2={scoreToY(score, PLOT_HEIGHT)}
               className="stroke-ink-200"
               strokeWidth={1}
             />
