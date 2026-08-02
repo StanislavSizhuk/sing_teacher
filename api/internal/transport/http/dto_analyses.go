@@ -23,6 +23,20 @@ func validateAnalysisMode(raw string) (domain.AnalysisMode, error) {
 	}
 }
 
+// validateLocale parses the locale form field (ADR-0031): "en" is the
+// default when the field is absent, so every existing client that predates
+// locale selection keeps working exactly as before.
+func validateLocale(raw string) (domain.Locale, error) {
+	switch domain.Locale(raw) {
+	case "":
+		return domain.LocaleEN, nil
+	case domain.LocaleEN, domain.LocaleUK:
+		return domain.Locale(raw), nil
+	default:
+		return "", errors.New("locale must be 'en' or 'uk'")
+	}
+}
+
 // defaultAllowTransposition is spec 8.3/FR-31's mode-dependent default: off
 // in clean (nothing to transpose to when singing straight over the
 // reference in headphones), on in mixed.

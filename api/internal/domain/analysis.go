@@ -18,6 +18,17 @@ const (
 	AnalysisModeMixed AnalysisMode = "mixed"
 )
 
+// Locale is the language the FR-32 feedback report is written in
+// (ADR-0031): the caller's own choice at POST /analyses, fixed at creation
+// the same way Mode is.
+type Locale string
+
+// Valid values of Locale (ADR-0031, migration 00013).
+const (
+	LocaleEN Locale = "en"
+	LocaleUK Locale = "uk"
+)
+
 // ConfidenceLevel is how reliable an analysis's scores are (spec 6.15,
 // FR-47) -- never cosmetic: a mode or measurement that is inherently less
 // reliable must say so instead of handing back a precise-looking number.
@@ -63,6 +74,9 @@ type Analysis struct {
 	Mode               AnalysisMode
 	EffectiveMode      *AnalysisMode
 	AllowTransposition bool
+	// Locale (ADR-0031) is the language the worker writes FeedbackText in,
+	// the user's own choice at POST /analyses.
+	Locale Locale
 
 	// Confidence/AspectConfidenceJSON/WarningsJSON/UnavailableAspectsJSON
 	// are the worker's honesty model (spec 6.14, 6.15, FR-41, FR-47), all

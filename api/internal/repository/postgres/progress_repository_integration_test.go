@@ -48,9 +48,9 @@ func TestProgressRepository_ListByUser_OrdersOldestFirstAndScopesToOwner(t *test
 	song, _, err := songRepo.GetOrCreate(ctx, newTestSong(fmt.Sprintf("hash-%s", uuid.NewString())))
 	require.NoError(t, err)
 
-	older := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
-	newer := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeMixed}
-	someoneElses := &domain.Analysis{ID: uuid.New(), UserID: stranger.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean}
+	older := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean, Locale: domain.LocaleEN}
+	newer := &domain.Analysis{ID: uuid.New(), UserID: owner.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeMixed, Locale: domain.LocaleEN}
+	someoneElses := &domain.Analysis{ID: uuid.New(), UserID: stranger.ID, SongID: song.ID, Status: domain.AnalysisStatusQueued, Mode: domain.AnalysisModeClean, Locale: domain.LocaleEN}
 	require.NoError(t, analysisRepo.Create(ctx, older))
 	require.NoError(t, analysisRepo.Create(ctx, newer))
 	require.NoError(t, analysisRepo.Create(ctx, someoneElses))

@@ -152,6 +152,25 @@ func TestValidateAnalysisMode(t *testing.T) {
 	})
 }
 
+func TestValidateLocale(t *testing.T) {
+	t.Run("empty defaults to en (ADR-0031)", func(t *testing.T) {
+		got, err := validateLocale("")
+		require.NoError(t, err)
+		require.Equal(t, domain.LocaleEN, got)
+	})
+
+	t.Run("accepts en and uk", func(t *testing.T) {
+		got, err := validateLocale("uk")
+		require.NoError(t, err)
+		require.Equal(t, domain.LocaleUK, got)
+	})
+
+	t.Run("rejects anything else", func(t *testing.T) {
+		_, err := validateLocale("fr")
+		require.Error(t, err)
+	})
+}
+
 func TestParseAllowTransposition(t *testing.T) {
 	t.Run("absent field defaults per mode (FR-31)", func(t *testing.T) {
 		require.False(t, parseAllowTransposition("", domain.AnalysisModeClean))

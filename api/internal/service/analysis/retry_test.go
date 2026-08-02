@@ -17,7 +17,7 @@ func TestRetry_FailedAnalysis_Succeeds_Requeues(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 	errCode := "INTERNAL"
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
@@ -38,7 +38,7 @@ func TestRetry_ResetsQueuedAt_NotOriginalCreatedAt(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 	staleCreatedAt := time.Now().Add(-9 * time.Hour)
 	d.analyses.byID[created.ID].CreatedAt = staleCreatedAt
@@ -63,7 +63,7 @@ func TestRetry_NotFailed_ReturnsErrAnalysisNotFailed(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 
 	_, _, err = d.svc.Retry(ctx, created.ID, userID)
@@ -75,7 +75,7 @@ func TestRetry_WrongOwner_ReturnsErrNotFound(t *testing.T) {
 	d := newTestService(t, song, 360, 20)
 	ctx := context.Background()
 
-	created, _, err := d.svc.Enqueue(ctx, uuid.New(), song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, uuid.New(), song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
 
@@ -89,7 +89,7 @@ func TestRetry_QueueFull_Rejected(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
 	d.queue.length = 20
@@ -104,7 +104,7 @@ func TestRetry_SongPrepFailed_ReturnsErrReferencePrepFailed(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
 	// The song's own cold path failed after the analysis was created --
@@ -124,7 +124,7 @@ func TestRetry_SongNotReadyYet_WaitsInsteadOfQueueing(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 	require.Equal(t, domain.AnalysisStatusWaitingForReference, created.Status)
 	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
@@ -143,9 +143,9 @@ func TestRetry_MovesToBackOfQueue(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 
-	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	first, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
-	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	second, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, domain.LocaleEN, validWAVReader())
 	require.NoError(t, err)
 
 	d.analyses.byID[first.ID].Status = domain.AnalysisStatusFailed
