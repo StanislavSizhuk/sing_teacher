@@ -112,6 +112,32 @@ def test_align_recording_much_longer_than_reference_crops_and_succeeds(
     assert result.data["length_mismatch"] is True
 
 
+def test_align_reference_with_intro_finds_the_recordings_real_start(
+    tmp_path: Path, wav_writer
+) -> None:
+    """ADR-0032: a reference that opens with an instrumental intro (spec
+    2.3's `програш` example) sung over by a recording that only starts once
+    the user starts singing used to hard-fail here -- frame 0 of the
+    recording is actually frame k of the reference, not frame 0, which the
+    direct (offset 0) attempt has no way to know. A distinctly different
+    intro tone makes the mismatch stark enough that the direct attempt
+    reliably fails, so the ADR-0032 fallback search must be what finds it."""
+    intro = sine_wave(12.0, 44100, 500.0, vibrato_hz=4.0, vibrato_cents=80.0)
+    sung = sine_wave(8.0, 44100, 300.0, vibrato_hz=3.0, vibrato_cents=50.0)
+    recording = wav_writer("recording.wav", sung, 44100)
+    reference = wav_writer("reference.wav", np.concatenate([intro, sung]), 44100)
+    context = _through_separation(tmp_path, recording, reference)
+
+    result = AlignStage().run(context)
+
+    assert result.status == StageStatus.DONE
+    assert result.data["reference_start_offset_seconds"] > 0
+    # The found offset should land close to the real 12s intro, not some
+    # arbitrary other point in the reference.
+    assert 10.0 <= result.data["reference_start_offset_seconds"] <= 14.0
+    assert len(result.data["index1"]) > 0
+
+
 def test_align_length_mismatch_with_unrelated_content_still_raises_alignment_failed(
     tmp_path: Path, wav_writer
 ) -> None:

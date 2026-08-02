@@ -45,6 +45,7 @@ class ConfidenceSignals:
     alignment_cost: float  # A7
     key_shift_out_of_range: bool  # A8
     length_mismatch: bool  # A7 (ADR-0030): recording/reference cropped to a shared overlap
+    reference_start_offset_detected: bool  # A7 (ADR-0032): reference's own start was adjusted
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,9 @@ def compute_confidence(signals: ConfidenceSignals) -> ConfidenceResult:
     if signals.length_mismatch:
         overall = _step_down(overall)
         warnings.append("LENGTH_MISMATCH_PARTIAL_ANALYSIS")
+    if signals.reference_start_offset_detected:
+        overall = _step_down(overall)
+        warnings.append("REFERENCE_START_OFFSET_DETECTED")
 
     aspect_confidence: dict[str, ConfidenceLevel] = dict.fromkeys(
         MODE_ASPECTS[signals.mode], overall

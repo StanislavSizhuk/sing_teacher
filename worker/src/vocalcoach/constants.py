@@ -75,6 +75,19 @@ ALIGN_MAX_NORMALIZED_DISTANCE = 70.0
 # (near-duplicate, but each hours long) eat unbounded memory/time.
 DTW_MAX_CELLS = 50_000_000
 
+# ADR-0032: when the direct (offset 0) alignment attempt fails, the
+# fallback search only considers reference start offsets up to this many
+# seconds in -- a bound, not a calibrated figure (most song intros are
+# well under a minute), chosen specifically so the cheap unwarped scan
+# stays O(n * search_range) instead of reintroducing the O(n * m) memory
+# NFR-16/DTW_MAX_CELLS exist to avoid.
+ALIGN_MAX_START_OFFSET_SECONDS = 60.0
+# How many of the cheap scan's lowest-scoring candidate offsets get
+# verified against the real (banded, tempo-tolerant) pipeline -- more than
+# one because the unwarped scan is only an approximation of what the real
+# DTW cost will be.
+ALIGN_START_OFFSET_CANDIDATE_COUNT = 3
+
 # Stage 6 rhythm: an onset within this many milliseconds of the reference's
 # (mapped through DTW) counts as on time; the score decays linearly to 0 at
 # this offset (spec 6.3.6).

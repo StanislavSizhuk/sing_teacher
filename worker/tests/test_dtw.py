@@ -5,7 +5,7 @@ import time
 import numpy as np
 import pytest
 
-from vocalcoach.dsp.dtw import WarpingPath, banded_dtw, refine_center
+from vocalcoach.dsp.dtw import WarpingPath, banded_dtw, locate_start_offset_scores, refine_center
 from vocalcoach.errors import AlignmentFailed, AlignmentTooLarge
 
 
@@ -72,6 +72,35 @@ def test_memory_is_bounded_by_band_not_by_the_full_product() -> None:
     b = _ramp(n)
     path = banded_dtw(a, b, band=50)
     assert path.normalized_distance < 1e-3
+
+
+def test_locate_start_offset_scores_finds_the_true_offset() -> None:
+    """ADR-0032: an unrelated 'intro' segment prepended to a copy of the
+    query should score far worse than the true offset where the query's
+    own content actually begins."""
+    query = _ramp(30, dims=4)
+    unrelated_intro = np.random.default_rng(0).standard_normal((20, 4)).astype(np.float32)
+    haystack = np.concatenate([unrelated_intro, query], axis=0)
+
+    scores = locate_start_offset_scores(query, haystack, max_offset=25)
+
+    true_offset = 20
+    assert np.argmin(scores) == true_offset
+    assert scores[true_offset] < 1e-4
+    assert scores[0] > scores[true_offset] * 10
+
+
+def test_locate_start_offset_scores_marks_unreachable_offsets_as_infinite() -> None:
+    query = _ramp(10, dims=3)
+    haystack = _ramp(12, dims=3)
+
+    # Offset 12 (== the haystack's own length) leaves zero haystack frames
+    # for any query frame to compare against -- must be reported as
+    # unreachable (inf), not silently scored against nothing.
+    scores = locate_start_offset_scores(query, haystack, max_offset=12)
+
+    assert not np.isfinite(scores[12])
+    assert np.isfinite(scores[0])
 
 
 def test_refine_center_tracks_a_uniform_time_offset() -> None:

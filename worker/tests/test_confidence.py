@@ -11,6 +11,7 @@ def _signals(**overrides: object) -> ConfidenceSignals:
         "alignment_cost": 5.0,
         "key_shift_out_of_range": False,
         "length_mismatch": False,
+        "reference_start_offset_detected": False,
     }
     base.update(overrides)
     return ConfidenceSignals(**base)  # type: ignore[arg-type]
@@ -49,3 +50,10 @@ def test_weak_alignment_steps_down_confidence_and_warns() -> None:
 
     assert result.overall == "medium"
     assert result.warnings == ("WEAK_ALIGNMENT",)
+
+
+def test_reference_start_offset_steps_down_confidence_and_warns() -> None:
+    result = compute_confidence(_signals(reference_start_offset_detected=True))
+
+    assert result.overall == "medium"  # high, stepped down once
+    assert result.warnings == ("REFERENCE_START_OFFSET_DETECTED",)

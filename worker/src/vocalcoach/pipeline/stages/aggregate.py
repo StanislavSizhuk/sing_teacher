@@ -79,6 +79,10 @@ class AggregateStage(PipelineStage[AnalysisContext]):
                 alignment_cost=align_cost,
                 key_shift_out_of_range=bool(key_normalization["out_of_range"]),
                 length_mismatch=bool(align_result["length_mismatch"]),
+                reference_start_offset_detected=float(
+                    align_result["reference_start_offset_seconds"]
+                )
+                > 0,
             )
         )
         warnings = [*recording_condition["warnings"], *confidence.warnings]
