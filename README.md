@@ -140,6 +140,7 @@ uv run mypy .
 - [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) -- stages, parameters, error codes, caching
 - [docs/SECURITY.md](docs/SECURITY.md) -- threat model, secrets handling
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) -- deploy, rollback, backup restore, incidents
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) -- measured stage timings against the spec 6.17 budget, reference VPS shape (4 vCPU/8 GB)
 - [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) -- run `api/cmd/loadtest` locally against the dev stack
 - [docs/adr/](docs/adr/) -- architectural decisions
 - [CHANGELOG.md](CHANGELOG.md)

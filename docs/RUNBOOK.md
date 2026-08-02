@@ -84,6 +84,19 @@ No CD automation triggers this script; it is run by hand, matching this
 stage's CI-only scope (spec 16.1 already covers automated lint/test/
 security/build on every PR -- deploy stays a deliberate, manual action).
 
+**`python-worker` can take up to ~10 minutes to stop.** `should_stop` is
+only checked between pipeline stages (`worker/src/vocalcoach/pipeline/
+runner.py`), never during one, so `deploy/docker-compose.yml` gives it
+`stop_grace_period: 630s` -- long enough to cover the slowest single stage
+(`SEPARATE_RECORDING_TIMEOUT_SECONDS`/`SEPARATE_REFERENCE_TIMEOUT_SECONDS`,
+both 600s) plus cleanup margin. `docker compose up -d --build` only waits
+as long as the container actually takes to exit, so most deploys are
+unaffected -- only one that lands mid-Demucs runs long. Setting this too
+low brings back the exact failure mode it exists to prevent: Docker
+SIGKILLs the worker before the running stage finishes and `should_stop`
+is ever checked, losing up to ~10 minutes of work and forcing a full
+stage re-run on restart.
+
 ## Rollback (manual)
 
 If you need to roll back without re-running the full script (e.g. days

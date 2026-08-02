@@ -368,6 +368,14 @@ by ADR-0013's `web`/Caddy compose wiring, verified above.
   volume and drop from root to the `postgres` user). `no-new-privileges` is
   set on every service. Redis runs as its non-root built-in user directly
   (uid 999) since it has no volume-ownership step to perform.
+- Every production service also sets `read_only: true` on its root
+  filesystem, with `tmpfs: [/tmp]` (and, per service, whatever else it
+  writes at runtime -- Postgres's `/var/run/postgresql`, Redis's `/data`
+  since it runs with persistence off) mounted back in explicitly. Anything
+  that needs to persist across a restart goes through a named volume
+  instead (`postgres-data`, `caddy-data`/`caddy-config`, `audio-tmp`,
+  `song-stems`, `model-weights`) -- never a writable spot on the image
+  itself.
 - Caddy is the one service that still runs as root: its image's default
   user owns `/data`/`/config`, and it needs a privileged port. This is a
   deliberate, narrow exception (spec 5.3's rules are qualified "where
