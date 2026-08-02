@@ -44,6 +44,7 @@ function warningText(t: Translations, code: string): string {
     WEAK_ALIGNMENT: t.analysisReport.warningWeakAlignment,
     KEY_SHIFT_OUT_OF_RANGE: t.analysisReport.warningKeyShiftOutOfRange,
     LENGTH_MISMATCH_PARTIAL_ANALYSIS: t.analysisReport.warningLengthMismatchPartialAnalysis,
+    REFERENCE_START_OFFSET_DETECTED: t.analysisReport.warningReferenceStartOffsetDetected,
   }
   return known[code] ?? code
 }

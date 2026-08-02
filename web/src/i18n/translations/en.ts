@@ -172,6 +172,9 @@ export const en = {
     warningLengthMismatchPartialAnalysis:
       'Your recording and the reference song were significantly different lengths, so only the ' +
       'matching portion was analyzed -- these scores reflect part of the song, not all of it.',
+    warningReferenceStartOffsetDetected:
+      "The reference song starts with a section your recording didn't include (like an " +
+      'instrumental intro), so we adjusted for where your recording actually begins.',
     confidenceHigh: 'Recording conditions: good',
     confidenceMedium: 'Recording conditions: medium',
     confidenceLow: 'Recording conditions: limited',
