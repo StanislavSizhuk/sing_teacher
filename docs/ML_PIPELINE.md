@@ -350,8 +350,13 @@ checks both orderings score identically.
     computed signals, and `unavailable_aspects_for(mode)` (FR-41: the
     aspects this mode never scores, each with a machine-readable reason,
     never a bare `0`). `pipeline/report.py` builds the FR-32 text report
-    from the *same* stage data: one summary line naming the lowest-scoring
-    *available* aspect as the suggested focus, one paragraph per available
+    from the *same* stage data, in `context.locale` (ADR-0031: "en" or
+    "uk", the caller's own choice at `POST /analyses`, fixed for this
+    analysis at creation the same way `mode` is) -- which outcome applies
+    (tier, matched-pause count, ...) is decided once regardless of locale,
+    only the final phrase-template lookup differs per language: one
+    summary line naming the lowest-scoring *available* aspect as the
+    suggested focus, one paragraph per available
     aspect in spec 6.4 order, each grounded in that aspect's own numbers
     rather than generic advice, then one block per unavailable aspect
     explaining why (spec 6.19) -- never just silently missing. Feedback is

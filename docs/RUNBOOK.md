@@ -311,3 +311,74 @@ days-old client/server drift that the type checker alone missed. If a
 generated-file diff is suspiciously large, verify what actually changed
 (symbol counts, a known recently-added field) before assuming it's just
 reformatting and reverting it.
+
+### 2026-08-02 -- the fix above didn't take effect until the container was recreated
+
+**Symptom:** same session, later the same day: `npm run generate:api`
+inside the already-running `web` container silently regenerated
+`schema.gen.ts` *missing* a field (`locale`) just added to
+`openapi.yaml` minutes earlier -- and, worse, reverted several other
+already-landed fields (`webm`, `LENGTH_MISMATCH_PARTIAL_ANALYSIS`) back
+out, a ~1,234-line diff that looked like unrelated churn at a glance.
+
+**Cause:** the mount added by the fix above was real and correct in
+`deploy/docker-compose.dev.yml`, but the `web` container already running
+at the time had been created *before* that compose edit landed --
+`docker compose up` does not retroactively recreate a still-running
+container just because its `volumes:` list changed in the file on disk
+mid-session. It kept serving whatever pre-mount snapshot of
+`/api/openapi.yaml` it started with (confirmed via `md5sum` differing
+between host and container, and the container's copy missing content
+added days earlier), so every `generate:api` run since had been quietly
+regressing `schema.gen.ts` back to that snapshot instead of catching it
+up.
+
+**Action:** `docker compose -f deploy/docker-compose.dev.yml up -d
+--force-recreate web`, confirmed via `md5sum /api/openapi.yaml` matching
+the host before trusting `generate:api` again.
+
+**Prevention:** a volume/mount change in a compose file needs
+`--force-recreate` (or `down`+`up`) on the affected service to actually
+take effect on a container that predates the edit -- `up -d` alone is not
+enough, and nothing about that container's logs or health check hints
+that it's running stale mounts. Before trusting any `generate:api` output
+after touching `openapi.yaml`, verify the container's own view of the
+file matches the host (`md5sum`) rather than assuming the mount is live.
+
+### 2026-08-02 -- `go-api`'s `air` live-reload silently served a stale binary after a `git stash`
+
+**Symptom:** a new request field (`locale`, ADR-0031) was confirmed sent
+correctly by the browser (`FormData` inspected directly) and confirmed
+handled correctly by `dto_analyses.go`/`handlers_analyses.go` (code
+review, `go vet`, `go test` all clean), yet every analysis created
+through the live dev stack still landed in Postgres with the column's
+default (`locale = 'en'`) regardless of what was sent. `air`'s own logs
+showed a normal `building...` / `migrations applied` cycle completing
+successfully the last time any `.go` file changed, with no error and no
+further rebuild activity since.
+
+**Cause:** not fully isolated, but strongly correlated: earlier in the
+same session, `git stash` / `git stash pop` was run on the host to check
+whether an unrelated test failure pre-existed on a clean tree. Since
+`web`'s bind mount (`../api:/src`) means the host and container share
+the same files, that stash briefly reverted every uncommitted `.go`
+change (including the `locale` wiring) on disk and then restored it a
+few seconds later -- and `air`'s file-watcher logged no rebuild at all
+for either half of that flap, meaning whatever binary was running before
+the stash kept running through it, unverified whether that binary still
+matched the current (post-`stash pop`) file contents. A plain container
+restart (`docker compose restart go-api`) immediately fixed it, forcing
+a fresh `air` startup and rebuild from the current on-disk state.
+
+**Action:** `docker compose -f deploy/docker-compose.dev.yml restart
+go-api`; re-tested and confirmed `locale` now persisted correctly.
+
+**Prevention:** treat `air` (or any dev-loop file watcher) as
+untrustworthy after any bulk/out-of-band change to its watched
+directory -- `git stash`, `git checkout` of another branch, `git reset`,
+or anything else that rewrites many files near-simultaneously outside
+the editor's normal one-file-at-a-time save pattern. When behavior
+doesn't match code you can see on disk and there's no compiler error to
+explain it, restart the service before spending more time reading the
+code again -- a live-reload staleness check is cheaper than a second
+full code review.
