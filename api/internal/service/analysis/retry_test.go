@@ -3,6 +3,7 @@ package analysis_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,31 @@ func TestRetry_FailedAnalysis_Succeeds_Requeues(t *testing.T) {
 	require.NotNil(t, retried.QueuePosition)
 	require.Equal(t, 1, positions[created.ID])
 	require.Len(t, d.queue.enqueued, 2, "retry must publish a fresh queue entry")
+}
+
+func TestRetry_ResetsQueuedAt_NotOriginalCreatedAt(t *testing.T) {
+	song := testSong()
+	d := newTestService(t, song, 360, 20)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	created, _, err := d.svc.Enqueue(ctx, userID, song.ID, domain.AnalysisModeClean, false, validWAVReader())
+	require.NoError(t, err)
+	staleCreatedAt := time.Now().Add(-9 * time.Hour)
+	d.analyses.byID[created.ID].CreatedAt = staleCreatedAt
+	d.analyses.byID[created.ID].QueuedAt = staleCreatedAt
+	d.analyses.byID[created.ID].Status = domain.AnalysisStatusFailed
+
+	before := time.Now()
+	retried, _, err := d.svc.Retry(ctx, created.ID, userID)
+	require.NoError(t, err)
+
+	// The bug this guards: QueueStatus.tsx's live wait timer reads
+	// QueuedAt, not CreatedAt (spec 10, FR-22) -- a retry that left
+	// QueuedAt at its original, hours-old value made a fresh retry render
+	// as "waiting 9h" instead of a few seconds.
+	require.False(t, retried.QueuedAt.Before(before), "QueuedAt must be reset to the retry time")
+	require.Equal(t, staleCreatedAt, retried.CreatedAt, "CreatedAt (original submission) must stay untouched")
 }
 
 func TestRetry_NotFailed_ReturnsErrAnalysisNotFailed(t *testing.T) {

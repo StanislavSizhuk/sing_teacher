@@ -29,7 +29,7 @@ const analysisColumns = `id, user_id, song_id, status, mode, effective_mode, all
 	pitch_curve_json, stages_json, feedback_text, scoring_version, model_versions,
 	confidence, aspect_confidence_json, warnings_json, unavailable_aspects_json,
 	key_shift_semitones, accompaniment_level, voiced_ratio, alignment_cost, weights_profile,
-	created_at, completed_at, queue_seq, queue_stream_id`
+	created_at, completed_at, queue_seq, queue_stream_id, queued_at`
 
 func scanAnalysis(row pgx.Row) (*domain.Analysis, error) {
 	var a domain.Analysis
@@ -41,7 +41,7 @@ func scanAnalysis(row pgx.Row) (*domain.Analysis, error) {
 		&a.PitchCurveJSON, &a.StagesJSON, &a.FeedbackText, &a.ScoringVersion, &a.ModelVersions,
 		&a.Confidence, &a.AspectConfidenceJSON, &a.WarningsJSON, &a.UnavailableAspectsJSON,
 		&a.KeyShiftSemitones, &a.AccompanimentLevel, &a.VoicedRatio, &a.AlignmentCost, &a.WeightsProfile,
-		&a.CreatedAt, &a.CompletedAt, &a.QueueSeq, &a.QueueStreamID,
+		&a.CreatedAt, &a.CompletedAt, &a.QueueSeq, &a.QueueStreamID, &a.QueuedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -59,11 +59,11 @@ func scanAnalysis(row pgx.Row) (*domain.Analysis, error) {
 // until the worker's stage 11 completes.
 func (r *AnalysisRepository) Create(ctx context.Context, a *domain.Analysis) error {
 	const q = `
-		INSERT INTO analyses (id, user_id, song_id, status, mode, allow_transposition, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
-		RETURNING created_at, queue_seq`
+		INSERT INTO analyses (id, user_id, song_id, status, mode, allow_transposition, created_at, queued_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), now())
+		RETURNING created_at, queue_seq, queued_at`
 	if err := r.pool.QueryRow(ctx, q, a.ID, a.UserID, a.SongID, a.Status, a.Mode, a.AllowTransposition).
-		Scan(&a.CreatedAt, &a.QueueSeq); err != nil {
+		Scan(&a.CreatedAt, &a.QueueSeq, &a.QueuedAt); err != nil {
 		return fmt.Errorf("create analysis: %w", err)
 	}
 	return nil
@@ -140,7 +140,9 @@ func (r *AnalysisRepository) Cancel(ctx context.Context, id, userID uuid.UUID) (
 // Retry moves a failed analysis back to queued, at the back of the FIFO
 // order, without touching its stored recording or song reference (FR-26: no
 // re-upload). It draws a fresh queue_seq from the same sequence Create uses,
-// so it sorts after every job already waiting. It returns
+// so it sorts after every job already waiting, and resets queued_at to now
+// so the client's live wait timer (QueueStatus.tsx) measures from this
+// retry, not the row's original submission. It returns
 // domain.ErrNotFound if the id doesn't exist or isn't owned by userID, and
 // domain.ErrAnalysisNotFailed if it exists but isn't in the failed state.
 func (r *AnalysisRepository) Retry(ctx context.Context, id, userID uuid.UUID) (*domain.Analysis, error) {
@@ -154,7 +156,8 @@ func (r *AnalysisRepository) Retry(ctx context.Context, id, userID uuid.UUID) (*
 			current_stage_started_at = NULL,
 			queue_stream_id = NULL,
 			queue_position = NULL,
-			queue_seq = nextval('analyses_queue_seq_seq')
+			queue_seq = nextval('analyses_queue_seq_seq'),
+			queued_at = now()
 		WHERE id = $1 AND user_id = $2 AND status = 'failed'
 		RETURNING ` + analysisColumns
 
@@ -200,7 +203,8 @@ func (r *AnalysisRepository) RetryToWaitingForReference(ctx context.Context, id,
 			current_stage_started_at = NULL,
 			queue_stream_id = NULL,
 			queue_position = NULL,
-			queue_seq = nextval('analyses_queue_seq_seq')
+			queue_seq = nextval('analyses_queue_seq_seq'),
+			queued_at = now()
 		WHERE id = $1 AND user_id = $2 AND status = 'failed'
 		RETURNING ` + analysisColumns
 

@@ -44,6 +44,7 @@ func (f *fakeAnalysisRepository) Create(_ context.Context, a *domain.Analysis) e
 		return err
 	}
 	a.CreatedAt = time.Now()
+	a.QueuedAt = a.CreatedAt
 	f.nextSeq++
 	a.QueueSeq = f.nextSeq
 	f.byID[a.ID] = cloneAnalysis(a)
@@ -108,6 +109,7 @@ func (f *fakeAnalysisRepository) Retry(_ context.Context, id, userID uuid.UUID) 
 	a.CurrentStage = nil
 	a.QueuePosition = nil
 	a.QueueStreamID = nil
+	a.QueuedAt = time.Now()
 	f.nextSeq++
 	a.QueueSeq = f.nextSeq
 	return cloneAnalysis(a), nil
@@ -128,6 +130,7 @@ func (f *fakeAnalysisRepository) RetryToWaitingForReference(_ context.Context, i
 	a.CurrentStage = nil
 	a.QueuePosition = nil
 	a.QueueStreamID = nil
+	a.QueuedAt = time.Now()
 	f.nextSeq++
 	a.QueueSeq = f.nextSeq
 	return cloneAnalysis(a), nil

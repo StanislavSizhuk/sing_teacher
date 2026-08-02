@@ -123,6 +123,12 @@ type Analysis struct {
 
 	CreatedAt   time.Time
 	CompletedAt *time.Time
+	// QueuedAt is when the *current* queued/waiting_for_reference wait
+	// began (spec 10, FR-22's live timer) -- equal to CreatedAt for a
+	// fresh submission, reset to the retry time by Retry/
+	// RetryToWaitingForReference (FR-26), since that reuses the same row
+	// rather than creating a new one.
+	QueuedAt time.Time
 }
 
 // IsQueued reports whether the job is still waiting to be picked up.

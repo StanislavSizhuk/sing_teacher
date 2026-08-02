@@ -112,6 +112,11 @@ type analysisResponse struct {
 	PianoRoll   json.RawMessage `json:"piano_roll,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	// QueuedAt is when the *current* queued/waiting_for_reference wait
+	// began -- equal to CreatedAt for a fresh submission, reset by Retry
+	// (FR-26) so the client's live wait timer never measures from a stale
+	// original submission (spec 10, FR-22).
+	QueuedAt time.Time `json:"queued_at"`
 }
 
 func newAnalysisResponse(a *domain.Analysis) analysisResponse {
@@ -156,6 +161,7 @@ func newAnalysisResponse(a *domain.Analysis) analysisResponse {
 		PianoRoll:             json.RawMessage(a.PitchCurveJSON),
 		CreatedAt:             a.CreatedAt,
 		CompletedAt:           a.CompletedAt,
+		QueuedAt:              a.QueuedAt,
 	}
 }
 

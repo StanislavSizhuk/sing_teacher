@@ -807,7 +807,7 @@ components:
 
     Analysis:
       type: object
-      required: [id, song_id, status, mode, created_at]
+      required: [id, song_id, status, mode, created_at, queued_at]
       properties:
         id:
           type: string
@@ -936,6 +936,14 @@ components:
         created_at:
           type: string
           format: date-time
+        queued_at:
+          type: string
+          format: date-time
+          description: >-
+            When the *current* queued/waiting_for_reference wait began.
+            Equal to created_at for a fresh submission; reset to the retry
+            time by POST /analyses/{id}/retry (FR-26), so a client's live
+            wait timer never measures from a stale original submission.
         completed_at:
           type: string
           format: date-time
