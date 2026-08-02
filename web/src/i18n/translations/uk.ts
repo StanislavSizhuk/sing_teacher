@@ -171,9 +171,9 @@ export const uk: Translations = {
     warningLengthMismatchPartialAnalysis:
       'Ваш запис і референсна пісня суттєво відрізнялись за тривалістю, тож проаналізовано лише ' +
       'спільну частину — ці результати відображають частину пісні, а не всю пісню.',
-    confidenceHigh: 'Висока довіра',
-    confidenceMedium: 'Середня довіра',
-    confidenceLow: 'Низька довіра',
+    confidenceHigh: 'Умови запису: добрі',
+    confidenceMedium: 'Умови запису: середні',
+    confidenceLow: 'Умови запису: обмежені',
     confidenceExplanationHigh: 'Ці результати надійні.',
     confidenceExplanationMedium:
       'Ці результати придатні для використання, але менш точні, ніж дав би чистий сольний запис.',

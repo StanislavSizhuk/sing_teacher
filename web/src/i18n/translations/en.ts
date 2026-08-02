@@ -172,9 +172,9 @@ export const en = {
     warningLengthMismatchPartialAnalysis:
       'Your recording and the reference song were significantly different lengths, so only the ' +
       'matching portion was analyzed -- these scores reflect part of the song, not all of it.',
-    confidenceHigh: 'High confidence',
-    confidenceMedium: 'Medium confidence',
-    confidenceLow: 'Low confidence',
+    confidenceHigh: 'Recording conditions: good',
+    confidenceMedium: 'Recording conditions: medium',
+    confidenceLow: 'Recording conditions: limited',
     confidenceExplanationHigh: 'These scores are reliable.',
     confidenceExplanationMedium:
       'These scores are usable but less precise than a clean, solo recording would give.',

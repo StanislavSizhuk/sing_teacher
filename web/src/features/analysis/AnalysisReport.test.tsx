@@ -52,7 +52,7 @@ describe('AnalysisReport', () => {
   it('shows the confidence level and its explanation', () => {
     render(<AnalysisReport analysis={baseAnalysis({ confidence: 'low' })} />)
 
-    expect(screen.getByText('Low confidence')).toBeInTheDocument()
+    expect(screen.getByText('Recording conditions: limited')).toBeInTheDocument()
     expect(screen.getByText(/rough/)).toBeInTheDocument()
   })
 

@@ -26,10 +26,7 @@ function withMimeType(source: File | Blob): File | Blob {
  * render, and revokes the previous one whenever it's replaced or on
  * unmount. */
 export function useObjectUrl(source: File | Blob | null): string | null {
-  const url = useMemo(
-    () => (source ? URL.createObjectURL(withMimeType(source)) : null),
-    [source],
-  )
+  const url = useMemo(() => (source ? URL.createObjectURL(withMimeType(source)) : null), [source])
 
   useEffect(() => {
     return () => {
