@@ -66,6 +66,12 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S", "BLE"]
 # is only meaningful for asserts on the request path (api/ has no such rule
 # to mirror since Go has no assert at all).
 "tests/**" = ["S101"]
+# ADR-0031: this file's Ukrainian phrase templates are made almost entirely
+# of Cyrillic letters RUF001 considers "confusable" with a Latin lookalike
+# (а/a, е/e, і/i, о/o, р/p, с/c, у/y, х/x, ...) -- real orthography, not a
+# homoglyph slipped into otherwise-Latin text, which is what RUF001 guards
+# against elsewhere.
+"src/vocalcoach/pipeline/report.py" = ["RUF001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["vocalcoach", "tests"]

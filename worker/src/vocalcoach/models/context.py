@@ -14,6 +14,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from vocalcoach.models.audio import Lyrics, PitchCurve
+from vocalcoach.models.locale import DEFAULT_LOCALE, Locale
 from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult
 
@@ -49,6 +50,11 @@ class AnalysisContext(BaseModel):
     #: `mixed` -- that mode-dependent default is chosen by whoever builds
     #: this context (the queue handler), not by this model itself.
     allow_transposition: bool = False
+    #: ADR-0031: the language `aggregate`'s FR-32 report is written in,
+    #: fixed at analysis creation the same way mode is -- defaults to "en"
+    #: so every existing test/call site predating locale selection keeps
+    #: behaving exactly as before.
+    locale: Locale = DEFAULT_LOCALE
 
     completed: dict[str, StageResult] = Field(default_factory=dict)
 

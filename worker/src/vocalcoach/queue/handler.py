@@ -18,6 +18,7 @@ from vocalcoach.config import Settings
 from vocalcoach.errors import InternalPipelineError, PipelineError
 from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
+from vocalcoach.models.locale import Locale
 from vocalcoach.models.mode import Mode
 from vocalcoach.models.records import AnalysisRecord, SongRecord
 from vocalcoach.models.results import StageResult
@@ -170,6 +171,7 @@ class AnalysisJobHandler:
             analysis.song_id,
             mode=analysis.mode,
             allow_transposition=analysis.allow_transposition,
+            locale=analysis.locale,
         )
         progress = AnalysisProgressReporter(self._analyses, analysis_id)
 
@@ -283,7 +285,14 @@ class AnalysisJobHandler:
             )
 
     def _build_context(
-        self, analysis_id: str, user_id: str, song_id: str, *, mode: Mode, allow_transposition: bool
+        self,
+        analysis_id: str,
+        user_id: str,
+        song_id: str,
+        *,
+        mode: Mode,
+        allow_transposition: bool,
+        locale: Locale,
     ) -> AnalysisContext:
         song = self._songs.get_by_id(song_id)
         if song.vocal_stem_path is None or song.reference_pitch is None:
@@ -307,6 +316,7 @@ class AnalysisJobHandler:
             reference_lyrics=song.lyrics,
             mode=mode,
             allow_transposition=allow_transposition,
+            locale=locale,
         )
 
     def _cleanup(

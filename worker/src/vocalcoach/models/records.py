@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from vocalcoach.models.audio import Lyrics, PitchCurve
+from vocalcoach.models.locale import DEFAULT_LOCALE, Locale
 from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult
 
@@ -50,3 +51,7 @@ class AnalysisRecord(BaseModel):
     #: actual default when a request omits it (spec 8.3), this field just
     #: carries whatever was stored.
     allow_transposition: bool = False
+    #: ADR-0031: what the Go API stored from the user's own choice at
+    #: POST /analyses. Defaults to "en" so every existing test/call site
+    #: built before locale selection keeps behaving exactly as before.
+    locale: Locale = DEFAULT_LOCALE

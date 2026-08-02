@@ -178,7 +178,7 @@ class PostgresAnalysisRepository:
         with self._conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, user_id, song_id, status, stages_json, mode, allow_transposition
+                SELECT id, user_id, song_id, status, stages_json, mode, allow_transposition, locale
                 FROM analyses WHERE id = %s
                 """,
                 (analysis_id,),
@@ -187,7 +187,7 @@ class PostgresAnalysisRepository:
         self._conn.rollback()  # closes the implicit transaction a read still opens
         if row is None:
             raise LookupError(f"analysis {analysis_id} not found")
-        id_, user_id, song_id, status, stages_json, mode, allow_transposition = row
+        id_, user_id, song_id, status, stages_json, mode, allow_transposition, locale = row
         stages = (
             {name: StageResult.model_validate(value) for name, value in stages_json.items()}
             if stages_json
@@ -201,6 +201,7 @@ class PostgresAnalysisRepository:
             stages=stages,
             mode=mode,
             allow_transposition=allow_transposition,
+            locale=locale,
         )
 
     def mark_processing(

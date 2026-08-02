@@ -90,6 +90,7 @@ class AggregateStage(PipelineStage[AnalysisContext]):
             aspects=aspects,
             unavailable_aspects=unavailable_aspects,
             background_music_warning=accompaniment_in_clean,
+            locale=context.locale,
         )
 
         return StageResult(
