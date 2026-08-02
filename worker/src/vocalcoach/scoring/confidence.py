@@ -44,6 +44,7 @@ class ConfidenceSignals:
     voiced_ratio: float  # A4/A5 (whichever ran)
     alignment_cost: float  # A7
     key_shift_out_of_range: bool  # A8
+    length_mismatch: bool  # A7 (ADR-0030): recording/reference cropped to a shared overlap
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,9 @@ def compute_confidence(signals: ConfidenceSignals) -> ConfidenceResult:
     if signals.key_shift_out_of_range:
         overall = _step_down(overall)
         warnings.append("KEY_SHIFT_OUT_OF_RANGE")
+    if signals.length_mismatch:
+        overall = _step_down(overall)
+        warnings.append("LENGTH_MISMATCH_PARTIAL_ANALYSIS")
 
     aspect_confidence: dict[str, ConfidenceLevel] = dict.fromkeys(
         MODE_ASPECTS[signals.mode], overall

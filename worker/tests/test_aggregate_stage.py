@@ -57,12 +57,18 @@ def _recording_condition_result(
     )
 
 
-def _align_result(normalized_distance: float = 5.0) -> StageResult:
+def _align_result(
+    normalized_distance: float = 5.0, *, length_mismatch: bool = False
+) -> StageResult:
     return StageResult(
         stage="align",
         status=StageStatus.DONE,
         duration_ms=1,
-        data={"normalized_distance": normalized_distance, "coarse_normalized_distance": 5.0},
+        data={
+            "normalized_distance": normalized_distance,
+            "coarse_normalized_distance": 5.0,
+            "length_mismatch": length_mismatch,
+        },
     )
 
 
@@ -152,6 +158,20 @@ def test_aggregate_report_flags_accompaniment_in_clean_without_penalizing_score(
     assert result.data["overall_score"] == 77.5
     assert "doesn't look like a clean solo voice" in result.data["feedback_text"]
     assert "ACCOMPANIMENT_IN_CLEAN_MODE" in result.data["warnings"]
+    assert result.data["confidence"] == "medium"  # high, stepped down once
+
+
+def test_aggregate_flags_length_mismatch_without_penalizing_score(tmp_path: Path) -> None:
+    """ADR-0030: a cropped-overlap alignment is a confidence caveat, same
+    shape as accompaniment-in-clean above -- never a score penalty of its
+    own (whatever got scored, scored on its own merits)."""
+    context = _context_with_aspect_results(tmp_path)
+    context = context.with_result(_align_result(length_mismatch=True))
+
+    result = AggregateStage(_WEIGHTS, scoring_version="2.0").run(context)
+
+    assert result.data["overall_score"] == 77.5
+    assert "LENGTH_MISMATCH_PARTIAL_ANALYSIS" in result.data["warnings"]
     assert result.data["confidence"] == "medium"  # high, stepped down once
 
 

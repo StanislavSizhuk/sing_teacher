@@ -8,6 +8,7 @@ import pytest
 
 from tests.conftest import sine_wave
 from tests.helpers import make_context
+from vocalcoach.constants import PITCH_HOP_SECONDS
 from vocalcoach.errors import AlignmentFailed
 from vocalcoach.models.results import StageStatus
 from vocalcoach.pipeline.stages.align import AlignStage
@@ -32,6 +33,7 @@ def test_align_matching_signals_produces_low_distance(tmp_path: Path, wav_writer
     result = AlignStage().run(context)
 
     assert result.status == StageStatus.DONE
+    assert result.data["length_mismatch"] is False
     assert len(result.data["index1"]) == len(result.data["index2"])
     assert result.data["index1"][0] == 0
     assert result.data["index2"][0] == 0
@@ -55,17 +57,74 @@ def test_align_wildly_different_signals_raises_alignment_failed(tmp_path: Path, 
         AlignStage().run(context)
 
 
-def test_align_duration_beyond_window_raises_alignment_failed_not_internal(
+def test_align_recording_much_shorter_than_reference_crops_and_succeeds(
     tmp_path: Path, wav_writer
 ) -> None:
-    """dtw-python raises a bare ValueError ("No warping path found
-    compatible with the local constraints"), not one of its own error
-    types, when the two signals' length difference alone exceeds what the
-    Sakoe-Chiba window (ALIGN_WINDOW_SECONDS) can bridge -- this must
-    still classify as the non-retryable ALIGNMENT_FAILED (spec 6.8), not
-    fall through as an uncaught, retried InternalPipelineError."""
-    recording = wav_writer("recording.wav", sine_wave(2.0, 44100, 300.0), 44100)
-    reference = wav_writer("reference.wav", sine_wave(20.0, 44100, 300.0), 44100)
+    """ADR-0030: a recording cut short (or one that just never reaches the
+    reference's own length) used to hard-fail here the moment the length
+    difference alone exceeded ALIGN_WINDOW_SECONDS -- dtw-python raised a
+    bare ValueError for this exact case pre-migration, and the banded
+    kernel's own "unreachable" check does the same today. Matching content
+    on the overlap should still align and succeed, flagged as a length
+    mismatch rather than failed outright."""
+    # Vibrato, not a bare constant tone: a pure unmodulated sine produces
+    # identical MFCC frames at every time step, so *any* monotonic path
+    # costs the same as any other -- degenerate for DTW, not representative
+    # of real singing, and it makes the coarse path's tie-breaking
+    # arbitrary enough to occasionally violate the fine pass's much
+    # narrower band. Real temporal variation gives both passes an
+    # unambiguous, genuinely lowest-cost path to find.
+    recording = wav_writer(
+        "recording.wav", sine_wave(2.0, 44100, 300.0, vibrato_hz=3.0, vibrato_cents=50.0), 44100
+    )
+    reference = wav_writer(
+        "reference.wav", sine_wave(20.0, 44100, 300.0, vibrato_hz=3.0, vibrato_cents=50.0), 44100
+    )
+    context = _through_separation(tmp_path, recording, reference)
+
+    result = AlignStage().run(context)
+
+    assert result.status == StageStatus.DONE
+    assert result.data["length_mismatch"] is True
+    assert len(result.data["index1"]) > 0
+    # The 20s reference was cropped to the 2s recording's own length --
+    # nowhere near its own full length.
+    max_reference_seconds = max(result.data["index2"]) * PITCH_HOP_SECONDS
+    assert max_reference_seconds < 4.0
+
+
+def test_align_recording_much_longer_than_reference_crops_and_succeeds(
+    tmp_path: Path, wav_writer
+) -> None:
+    """Symmetric case: a recording that runs well past the reference's own
+    end (e.g. the user kept singing after the backing track stopped)."""
+    recording = wav_writer(
+        "recording.wav", sine_wave(20.0, 44100, 300.0, vibrato_hz=3.0, vibrato_cents=50.0), 44100
+    )
+    reference = wav_writer(
+        "reference.wav", sine_wave(2.0, 44100, 300.0, vibrato_hz=3.0, vibrato_cents=50.0), 44100
+    )
+    context = _through_separation(tmp_path, recording, reference)
+
+    result = AlignStage().run(context)
+
+    assert result.status == StageStatus.DONE
+    assert result.data["length_mismatch"] is True
+
+
+def test_align_length_mismatch_with_unrelated_content_still_raises_alignment_failed(
+    tmp_path: Path, wav_writer
+) -> None:
+    """Cropping to the overlap must not rescue a recording whose content
+    genuinely doesn't match, even once the lengths are compatible -- the
+    fine pass's own normalized-distance ceiling (spec 6.8) still applies
+    to whatever was cropped."""
+    recording = wav_writer("recording.wav", sine_wave(2.0, 44100, 220.0), 44100)
+    reference = wav_writer(
+        "reference.wav",
+        (0.5 * np.random.default_rng(1).standard_normal(20 * 44100)).astype("float32"),
+        44100,
+    )
     context = _through_separation(tmp_path, recording, reference)
 
     with pytest.raises(AlignmentFailed):
