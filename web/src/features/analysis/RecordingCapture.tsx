@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { AnalysisMode } from '../../api/client'
 import { Button } from '../../components/Button'
 import { SegmentedControl } from '../../components/SegmentedControl'
+import { useFixBlobAudioDuration } from '../../hooks/useFixBlobAudioDuration'
 import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { useTranslation } from '../../i18n/useTranslation'
 import type { Translations } from '../../i18n/translations/en'
@@ -34,10 +35,12 @@ export function RecordingCapture({ onReady }: RecordingCaptureProps) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const recorder = useMediaRecorder()
   const uploadedUrl = useObjectUrl(uploadedFile)
+  const previewAudioRef = useRef<HTMLAudioElement>(null)
 
   const previewUrl = source === 'record' ? recorder.audioUrl : uploadedUrl
   const ready = source === 'record' ? recorder.blob : uploadedFile
   const explanation = modeExplanations(t)[analysisMode]
+  useFixBlobAudioDuration(previewAudioRef, previewUrl)
 
   function handleSourceChange(next: 'record' | 'upload') {
     setSource(next)
@@ -121,7 +124,7 @@ export function RecordingCapture({ onReady }: RecordingCaptureProps) {
       )}
 
       {previewUrl && (
-        <audio controls src={previewUrl} className="w-full">
+        <audio ref={previewAudioRef} controls src={previewUrl} className="w-full">
           <track kind="captions" />
         </audio>
       )}
