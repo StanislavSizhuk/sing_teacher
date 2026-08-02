@@ -39,3 +39,8 @@ audio-tmp/
 .idea/
 *.swp
 .DS_Store
+
+# local-only docs, not version-controlled
+/CLAUDE.md
+/TECH.md
+/tech.md
