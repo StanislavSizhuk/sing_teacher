@@ -31,9 +31,13 @@ class SharedFeatures:
         rms_envelope: Frame-wise RMS amplitude at `FEATURES_HOP_SECONDS` --
             feeds both dynamics (6.3.8) and breath/pause detection (6.3.10).
         rms_fine: Frame-wise RMS amplitude at `PITCH_HOP_SECONDS`, matching
-            the pitch curve's own frame rate -- feeds the recording-condition
-            heuristic (6.9/2.3), which compares energy frame-for-frame
-            against pitch voicing.
+            the pitch curve's own frame rate -- gates `align`'s pitch
+            detection (`detect_gated`). Not read by `recording_condition`
+            (ADR-0034): that stage measures the raw pre-separation
+            recording via `compute_rms_envelope` directly, since in `mixed`
+            this cache's own `user` side is computed from the
+            Demucs-separated stem, not the mixture recording_condition
+            needs to classify.
         onset_times: Onset timestamps in seconds (6.3.6).
     """
 
@@ -59,6 +63,24 @@ def compute_mfcc(
     return np.asarray(mfcc.T, dtype=np.float32)
 
 
+def _rms_envelope(samples: np.ndarray, sample_rate: int, hop_seconds: float) -> np.ndarray:
+    hop_length = max(1, round(sample_rate * hop_seconds))
+    rms = librosa.feature.rms(y=samples, hop_length=hop_length)[0]
+    return np.asarray(rms, dtype=np.float32)
+
+
+def compute_rms_envelope(path: Path, hop_seconds: float) -> np.ndarray:
+    """Frame-wise RMS amplitude at an arbitrary hop, read directly off
+    `path`. `recording_condition` (ADR-0034) is the one caller outside this
+    module: it must measure the user's raw, pre-separation recording, not
+    whatever `voice_audio_path` resolves to (the Demucs-separated stem in
+    `mixed`) -- so it cannot read `rms_fine` back off the shared cache the
+    way every other RMS consumer does.
+    """
+    samples, sample_rate = read_mono(path)
+    return _rms_envelope(samples, sample_rate, hop_seconds)
+
+
 def compute_shared_features(path: Path) -> SharedFeatures:
     """Reads `path` once and derives every representation later stages need
     from that one in-memory signal (spec 6.9: "кожне представлення
@@ -70,17 +92,15 @@ def compute_shared_features(path: Path) -> SharedFeatures:
     mfcc = librosa.feature.mfcc(
         y=samples, sr=sample_rate, n_mfcc=FEATURES_MFCC_COEFFICIENTS, hop_length=hop_length
     )
-    rms_envelope = librosa.feature.rms(y=samples, hop_length=hop_length)[0]
-
-    fine_hop_length = max(1, round(sample_rate * PITCH_HOP_SECONDS))
-    rms_fine = librosa.feature.rms(y=samples, hop_length=fine_hop_length)[0]
+    rms_envelope = _rms_envelope(samples, sample_rate, FEATURES_HOP_SECONDS)
+    rms_fine = _rms_envelope(samples, sample_rate, PITCH_HOP_SECONDS)
 
     onset_times = librosa.onset.onset_detect(y=samples, sr=sample_rate, units="time")
 
     return SharedFeatures(
         mfcc=np.asarray(mfcc.T, dtype=np.float32),  # (n_frames, n_mfcc), one row per time step
-        rms_envelope=np.asarray(rms_envelope, dtype=np.float32),
-        rms_fine=np.asarray(rms_fine, dtype=np.float32),
+        rms_envelope=rms_envelope,
+        rms_fine=rms_fine,
         onset_times=np.asarray(onset_times, dtype=np.float64),
     )
 

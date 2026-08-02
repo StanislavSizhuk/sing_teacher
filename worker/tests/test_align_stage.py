@@ -7,19 +7,23 @@ import numpy as np
 import pytest
 
 from tests.conftest import sine_wave
-from tests.helpers import make_context, reference_pitch_curve_for
+from tests.helpers import FakeVocalSeparator, make_context, reference_pitch_curve_for
 from vocalcoach.constants import PITCH_HOP_SECONDS
 from vocalcoach.errors import AlignmentFailed, NoVoiceDetected
+from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageStatus
 from vocalcoach.pipeline.registry import PyinPitchDetector
 from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
+from vocalcoach.pipeline.stages.separate_recording import SeparateRecordingStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
 
 
-def _through_separation(tmp_path: Path, recording: Path, reference: Path):
+def _through_separation(
+    tmp_path: Path, recording: Path, reference: Path, *, mode: Mode = "clean"
+):
     # ADR-0033: align now aligns on pitch, so it needs a real reference
     # curve -- computed the same way the cold path would, reused here
     # rather than re-derived (spec 12.1 DRY, same helper
@@ -29,8 +33,16 @@ def _through_separation(tmp_path: Path, recording: Path, reference: Path):
         recording_path=recording,
         reference_path=reference,
         reference_pitch=reference_pitch_curve_for(tmp_path, reference),
+        mode=mode,
     )
     context = context.with_result(PreprocessStage(ffmpeg_path="ffmpeg").run(context))
+    # ADR-0034: `mixed` separates the recording before `features`/`align`
+    # ever read it -- `worker.build_stages`'s own stage order, mirrored
+    # here so this helper's name (unlike before ADR-0034) is accurate.
+    if mode == "mixed":
+        context = context.with_result(
+            SeparateRecordingStage(FakeVocalSeparator()).run(context)
+        )
     context = context.with_result(FeaturesStage().run(context))
     return context
 
@@ -209,3 +221,26 @@ def test_align_length_mismatch_with_unrelated_content_still_raises_alignment_fai
 
     with pytest.raises(AlignmentFailed):
         AlignStage(PyinPitchDetector()).run(context)
+
+
+def test_align_mixed_mode_goes_through_separation_and_succeeds(
+    tmp_path: Path, wav_writer
+) -> None:
+    """ADR-0034: `mixed` no longer branches inside `align` -- it reads
+    `SeparateRecordingStage`'s stem through `voice_audio_path` and runs the
+    exact same `detect_gated` call `clean` does. With the identity
+    `FakeVocalSeparator` (spec 15.2: stage tests never touch real Demucs)
+    the stem is just the recording itself, so this exercises the new
+    `separate_recording -> features -> align` wiring without needing to
+    prove anything about real separation quality -- that is Demucs's job,
+    not this stage's."""
+    signal = sine_wave(4.0, 44100, 300.0, vibrato_hz=5.0, vibrato_cents=40.0)
+    recording = wav_writer("recording.wav", signal, 44100)
+    reference = wav_writer("reference.wav", signal, 44100)
+    context = _through_separation(tmp_path, recording, reference, mode="mixed")
+    assert "separate_recording" in context.completed
+
+    result = AlignStage(PyinPitchDetector()).run(context)
+
+    assert result.status == StageStatus.DONE
+    assert result.data["normalized_distance"] < 0.2

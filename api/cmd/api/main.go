@@ -63,10 +63,11 @@ const audioSweepInterval = time.Minute
 // file written but never enqueued (a crash between upload and the
 // analysis row's insert), or one whose worker died before cleanup ran and
 // was never retried. QUEUE_MAX_LENGTH (20) queued jobs at a worst-case
-// per-job time (spec 6.2's stage timeouts sum to ~15 min) can leave a
-// legitimately-still-needed file waiting far longer than AUDIO_TTL_SECONDS
-// (5 min) -- reusing that value here would delete audio out from under a
-// job still waiting its turn, not just orphans.
+// per-job time (spec 6.2's stage timeouts sum to ~15 min in `clean`;
+// ADR-0034's SeparateRecordingStage pushes `mixed`'s worst case to ~24 min)
+// can leave a legitimately-still-needed file waiting far longer than
+// AUDIO_TTL_SECONDS (5 min) -- reusing that value here would delete audio
+// out from under a job still waiting its turn, not just orphans.
 const orphanedAudioMaxAge = 24 * time.Hour
 
 // ffmpegPath, ffprobePath and ytDlpPath are resolved via PATH; the runtime

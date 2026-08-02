@@ -2,13 +2,11 @@
 contains accompaniment, and reconciles that against the mode they declared.
 
 The product assumption for `clean` is a cappella singing in headphones
-(spec 2.3); for `mixed`, any accompaniment at all. Demucs never runs on the
-user's own recording either way (ADR-0003, spec 2.3's cost argument), so
-this is a cheap stand-in for real source separation, not source separation
-itself -- reusing the "pitch" stage's own voiced/unvoiced classification
-(spec 12.1 DRY: a second per-frame voice-activity pass over the same audio
-would just recompute what stage 4 already determined) plus a fresh RMS
-comparison:
+(spec 2.3); for `mixed`, any accompaniment at all. This is a cheap
+diagnostic, not source separation -- reusing the "pitch" stage's own
+voiced/unvoiced classification (spec 12.1 DRY: a second per-frame
+voice-activity pass over the same audio would just recompute what stage 4
+already determined) plus a fresh RMS comparison:
 
     accompaniment_level = median(RMS of unvoiced frames) / median(RMS of
     voiced frames)
@@ -19,9 +17,17 @@ analysis -- spec 6.16 is explicit that classification only ever adds a
 warning and, for `mixed`, a cheaper/more accurate downgrade; it does not
 block the result either way.
 
-Reads `context.result("pitch")` regardless of which mode actually ran
-(`PitchStage`/`MelodyPitchStage` both write there, spec 12.3), so this stage
-itself runs identically in both.
+ADR-0034: the RMS half of the comparison must come from the raw,
+pre-separation recording (`preprocess`'s output), never from the shared
+feature cache's `user.rms_fine` -- in `mixed`, that cache is now computed
+from `SeparateRecordingStage`'s Demucs-isolated stem, which has already had
+any real accompaniment removed. Measuring the stem here would make every
+`mixed` recording register as `accompaniment_level` near zero regardless of
+what the user actually recorded, defeating this stage's one job. Voicing
+still comes from `context.result("pitch")` (both modes write there, spec
+12.3, ADR-0034 widened `PitchStage` to cover `mixed` too) -- the stem tells
+this stage *where* the voice is, the raw mixture tells it *how loud*
+everything else is at those same moments.
 """
 
 from __future__ import annotations
@@ -32,10 +38,11 @@ from pathlib import Path
 import numpy as np
 
 from vocalcoach.constants import (
+    PITCH_HOP_SECONDS,
     RECORDING_CONDITION_MIN_UNVOICED_FRAMES,
     RECORDING_CONDITION_TIMEOUT_SECONDS,
 )
-from vocalcoach.dsp.features import load_shared_features
+from vocalcoach.dsp.features import compute_rms_envelope
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult, StageStatus
@@ -45,10 +52,11 @@ STAGE_NAME = "recording_condition"
 
 
 def _accompaniment_level(rms: np.ndarray, voiced: np.ndarray) -> float:
-    """`rms` and `voiced` are framed independently (the shared feature
-    cache's `rms_fine` vs. the pitch/melody stage's own hop) -- close enough
-    to compare index-for-index up to the shorter length, same tolerance the
-    v1 heuristic this replaces already relied on.
+    """`rms` (the raw recording, `compute_rms_envelope` at `PITCH_HOP_SECONDS`)
+    and `voiced` (the "pitch" stage's own hop, which in `mixed` reflects the
+    separated stem) are framed independently -- close enough to compare
+    index-for-index up to the shorter length, same tolerance the v1
+    heuristic this replaces already relied on.
     """
     frame_count = min(len(rms), len(voiced))
     if frame_count == 0:
@@ -92,12 +100,12 @@ class RecordingConditionStage(PipelineStage[AnalysisContext]):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        features_path = Path(context.result("features").data["features_path"])
-        features = load_shared_features(features_path)
+        recording_path = Path(context.result("preprocess").data["recording_path"])
+        raw_rms = compute_rms_envelope(recording_path, PITCH_HOP_SECONDS)
         user_hz: list[float | None] = context.result("pitch").data["user_pitch_curve"]["hz"]
         voiced = np.array([value is not None for value in user_hz], dtype=bool)
 
-        accompaniment_level = _accompaniment_level(features.user.rms_fine, voiced)
+        accompaniment_level = _accompaniment_level(raw_rms, voiced)
         detected = accompaniment_level >= self._threshold
         effective_mode, warnings = _reconcile_mode(context.mode, detected)
 

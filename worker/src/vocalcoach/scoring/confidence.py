@@ -23,10 +23,10 @@ ConfidenceLevel = Literal["high", "medium", "low"]
 _LEVELS: tuple[ConfidenceLevel, ...] = ("low", "medium", "high")
 
 #: Spec 6.15: a low-voiced-ratio signal on a `mixed` analysis specifically
-#: undermines the two aspects melody extraction (A4) itself feeds -- pitch
-#: and vibrato are read directly off its F0 curve, rhythm and dynamics are
-#: not.
-_MELODY_DEPENDENT_ASPECTS: tuple[str, ...] = ("pitch", "vibrato")
+#: undermines the two aspects the separated-then-detected F0 curve (A3/A4,
+#: ADR-0034) itself feeds -- pitch and vibrato are read directly off it,
+#: rhythm and dynamics are not.
+_SEPARATION_DEPENDENT_ASPECTS: tuple[str, ...] = ("pitch", "vibrato")
 
 
 def _step_down(level: ConfidenceLevel, steps: int = 1) -> ConfidenceLevel:
@@ -41,7 +41,7 @@ class ConfidenceSignals:
 
     mode: Mode
     accompaniment_in_clean: bool  # A3
-    voiced_ratio: float  # A4/A5 (whichever ran)
+    voiced_ratio: float  # A5 (pitch, both modes since ADR-0034)
     alignment_cost: float  # A7
     key_shift_out_of_range: bool  # A8
     length_mismatch: bool  # A7 (ADR-0030): recording/reference cropped to a shared overlap
@@ -84,7 +84,7 @@ def compute_confidence(signals: ConfidenceSignals) -> ConfidenceResult:
         MODE_ASPECTS[signals.mode], overall
     )
     if signals.mode == "mixed" and signals.voiced_ratio < CONFIDENCE_LOW_VOICED_RATIO:
-        for aspect in _MELODY_DEPENDENT_ASPECTS:
+        for aspect in _SEPARATION_DEPENDENT_ASPECTS:
             if aspect in aspect_confidence:
                 aspect_confidence[aspect] = _step_down(aspect_confidence[aspect])
 

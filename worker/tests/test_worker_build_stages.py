@@ -77,16 +77,18 @@ def test_every_warm_stage_is_picklable_and_covers_the_full_pipeline(
     # The 5 independent aspect stages count as one ParallelGroup entry by
     # default (spec 6.10), so top-level entries are fewer than the stages
     # they flatten to. separate_reference/transcribe are not here -- they
-    # moved to the cold path (build_prep_stages, M2). `PitchStage` and
-    # `MelodyPitchStage` both appear (they share the stage name "pitch",
-    # ADR-0027) -- `PipelineRunner.run(mode=...)` filters to exactly one
-    # per analysis.
+    # moved to the cold path (build_prep_stages, M2). `separate_recording`
+    # (ADR-0034, `modes={"mixed"}`) is here instead -- unlike the reference's
+    # stem, the user's own recording is unique per analysis and cannot be
+    # cached in the cold path. `PitchStage` now runs in both modes (ADR-0034
+    # deleted the separate `mixed`-only `MelodyPitchStage`, which had become
+    # byte-identical to it after ADR-0033), so `"pitch"` appears only once.
     assert _flatten_stage_names(stages) == [
         "preprocess",
+        "separate_recording",
         "features",
         "align",
-        "pitch",  # PitchStage (clean, A5)
-        "pitch",  # MelodyPitchStage (mixed, A4)
+        "pitch",
         "key_normalization",
         "rhythm",
         "vibrato",
@@ -100,7 +102,9 @@ def test_every_warm_stage_is_picklable_and_covers_the_full_pipeline(
         pickle.dumps(entry)
 
 
-def test_clean_mode_excludes_melody_and_scores_all_six_aspects(settings, tmp_path: Path) -> None:
+def test_clean_mode_excludes_separation_and_scores_all_six_aspects(
+    settings, tmp_path: Path
+) -> None:
     registry = ModelRegistry(
         demucs_model=settings.demucs_model,
         whisper_model=settings.whisper_model,
@@ -110,12 +114,15 @@ def test_clean_mode_excludes_melody_and_scores_all_six_aspects(settings, tmp_pat
 
     names = _names_for_mode(build_stages(settings, registry), "clean")
 
-    assert names.count("pitch") == 1  # PitchStage only, not MelodyPitchStage too
+    assert names.count("pitch") == 1
+    assert "separate_recording" not in names  # nothing to separate in clean
     for aspect in ("rhythm", "vibrato", "dynamics", "timbre", "breath"):
         assert aspect in names
 
 
-def test_mixed_mode_excludes_timbre_and_breath(settings, tmp_path: Path) -> None:
+def test_mixed_mode_includes_separation_excludes_timbre_and_breath(
+    settings, tmp_path: Path
+) -> None:
     registry = ModelRegistry(
         demucs_model=settings.demucs_model,
         whisper_model=settings.whisper_model,
@@ -125,7 +132,8 @@ def test_mixed_mode_excludes_timbre_and_breath(settings, tmp_path: Path) -> None
 
     names = _names_for_mode(build_stages(settings, registry), "mixed")
 
-    assert names.count("pitch") == 1  # MelodyPitchStage only, not PitchStage too
+    assert names.count("pitch") == 1
+    assert "separate_recording" in names
     assert "timbre" not in names
     assert "breath" not in names
     for aspect in ("rhythm", "vibrato", "dynamics"):

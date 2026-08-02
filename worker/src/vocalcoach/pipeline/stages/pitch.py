@@ -1,10 +1,10 @@
-"""Stage A5 (`clean` only, spec 6.5): score the user's pitch accuracy
-against the reference, note-for-note in cents. `mixed` gets its F0 curve a
-different way -- `MelodyPitchStage` (A4, `pipeline/stages/melody.py`) --
-and writes its result under the same stage name (`"pitch"`), so
-aggregate/vibrato/persistence never need to know or care which engine
-actually ran (spec 12.3: the runner picks the stage by `modes`, not an
-`if mode ==` inside one).
+"""Stage A5 (spec 6.5): score the user's pitch accuracy against the
+reference, note-for-note in cents. Runs in both modes (ADR-0034) -- it used
+to be `clean`-only, with a separate `mixed`-only `MelodyPitchStage` writing
+the same result name (`"pitch"`) from a differently-extracted curve, but
+after ADR-0033 moved F0 extraction into `align` for every mode, that
+stage's `run()` had become byte-identical to this one. Deleted rather than
+kept as a second copy; this stage alone now covers both.
 
 ADR-0033: the user's F0 curve itself is extracted by `align` (A3), not
 here -- align needs it first, to align on melody rather than MFCC, so
@@ -51,7 +51,6 @@ class PitchStage(PipelineStage[AnalysisContext]):
 
     name = STAGE_NAME
     timeout_seconds = PITCH_TIMEOUT_SECONDS
-    modes = frozenset({"clean"})
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()

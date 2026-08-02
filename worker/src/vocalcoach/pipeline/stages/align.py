@@ -10,14 +10,24 @@ align instead of failing. `dsp/pitch_embedding.py` embeds each pitch
 value as a point on the unit circle (one turn per octave), so the
 existing banded-DTW kernel's plain Euclidean distance already behaves
 the way a musical distance should, unchanged. The user's F0 curve is
-extracted here (mode-aware: `detect_gated` for `clean`, `extract_melody`
-for `mixed` -- the same extraction `PitchStage`/`MelodyPitchStage` used
-to each do themselves) and exposed as `user_pitch_curve` in this stage's
-own result, so those stages read it back instead of re-extracting it.
-The reference's F0 curve needs no extraction at all: it is cold-path
-output, already on `context.reference_pitch`. Pitch has only one natural
-hop (`PITCH_HOP_SECONDS`); the coarse pass strides through it instead of
+extracted here with `detect_gated`, the same detector `PitchStage` used
+to run itself, and exposed as `user_pitch_curve` in this stage's own
+result so `PitchStage` reads it back instead of re-extracting it. The
+reference's F0 curve needs no extraction at all: it is cold-path output,
+already on `context.reference_pitch`. Pitch has only one natural hop
+(`PITCH_HOP_SECONDS`); the coarse pass strides through it instead of
 computing a separate coarse representation the way MFCC needed one.
+
+ADR-0034: `detect_gated` reads `voice_audio_path(context)` and this
+stage's own `features` result -- both mode-agnostic now. Before this,
+`mixed` extracted pitch from the raw mixture with a DSP salience
+heuristic (`dsp/melody.py::extract_melody`), which reported confident
+"voice" through purely instrumental passages the reference's real
+Demucs-separated stem does not; the two curves' silence structure
+disagreed enough that DTW routinely failed even on the same song. Since
+`SeparateRecordingStage` now isolates the recording's vocal the same way
+the reference already is, both sides feed `detect_gated` and stay
+structurally comparable -- no per-mode branch left in this stage at all.
 
 ADR-0030: when the recording and reference differ in duration by more
 than `ALIGN_WINDOW_SECONDS` alone -- a take cut short, or one that ran
@@ -66,16 +76,16 @@ from vocalcoach.constants import (
 )
 from vocalcoach.dsp.dtw import WarpingPath, banded_dtw, locate_start_offset_scores, refine_center
 from vocalcoach.dsp.features import load_shared_features
-from vocalcoach.dsp.melody import extract_melody
 from vocalcoach.dsp.pitch_detection import detect_gated
 from vocalcoach.dsp.pitch_embedding import embed_pitch_curve
 from vocalcoach.dsp.pitch_scoring import voiced_fraction
-from vocalcoach.errors import AlignmentFailed, MelodyExtractionFailed, NoVoiceDetected
+from vocalcoach.errors import AlignmentFailed, NoVoiceDetected
 from vocalcoach.models.audio import PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
 from vocalcoach.pipeline.registry import PitchDetector
+from vocalcoach.pipeline.voice_source import voice_audio_path
 
 STAGE_NAME = "align"
 
@@ -232,10 +242,10 @@ class AlignStage(PipelineStage[AnalysisContext]):
     `coarse_normalized_distance` (level 1's own cost, kept for
     observability), `length_mismatch` (bool, ADR-0030), `reference_start_
     offset_seconds` (float, ADR-0032, 0.0 when untouched), `user_pitch_curve`
-    (ADR-0033: the user's raw F0 curve, mode-aware extraction, so
-    `PitchStage`/`MelodyPitchStage` never re-extract it). `AggregateStage`
-    turns `length_mismatch`/`reference_start_offset_seconds` into a
-    confidence step-down and a warning, not a failure.
+    (ADR-0033: the user's raw F0 curve, so `PitchStage` never re-extracts
+    it). `AggregateStage` turns `length_mismatch`/
+    `reference_start_offset_seconds` into a confidence step-down and a
+    warning, not a failure.
     """
 
     name = STAGE_NAME
@@ -246,32 +256,23 @@ class AlignStage(PipelineStage[AnalysisContext]):
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        sample_rate = int(preprocess["sample_rate_hz"])
+        sample_rate = int(context.result("preprocess").data["sample_rate_hz"])
         features = load_shared_features(Path(context.result("features").data["features_path"]))
 
         try:
-            user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
-            if context.mode == "mixed":
-                user_hz = extract_melody(user_samples, sample_rate, PITCH_HOP_SECONDS)
-            else:
-                user_hz = detect_gated(
-                    self._detector,
-                    user_samples,
-                    sample_rate,
-                    PITCH_HOP_SECONDS,
-                    features.user.rms_fine,
-                )
+            user_samples, _sr = read_mono(voice_audio_path(context))
+            user_hz = detect_gated(
+                self._detector,
+                user_samples,
+                sample_rate,
+                PITCH_HOP_SECONDS,
+                features.user.rms_fine,
+            )
         finally:
             self._detector.release()
 
         fraction = voiced_fraction(user_hz)
         if fraction < MIN_VOICED_FRACTION:
-            if context.mode == "mixed":
-                raise MelodyExtractionFailed(
-                    f"only {fraction:.1%} of the recording had a confident melody "
-                    f"estimate, below the {MIN_VOICED_FRACTION:.0%} floor"
-                )
             raise NoVoiceDetected(
                 f"only {fraction:.1%} of the recording is voiced, "
                 f"below the {MIN_VOICED_FRACTION:.0%} floor"
