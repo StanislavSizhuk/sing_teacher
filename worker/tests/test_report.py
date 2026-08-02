@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
+from vocalcoach.models.locale import Locale
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline import report
 from vocalcoach.pipeline.report import build_feedback_report
@@ -12,7 +14,10 @@ _CYRILLIC = re.compile(r"[Ѐ-ӿ]")
 # ADR-0031's own safety net for the compile-time exhaustiveness check
 # Python dict literals don't otherwise get (unlike web/'s
 # `Translations = typeof en`).
-_LOCALE_TEMPLATE_DICTS = [
+# Mapping (covariant in its value type), not dict, so mypy can type this
+# list at all: the tables mix dict[Locale, str] and dict[Locale, dict[str,
+# str]], and dict's invariant value type joins those to plain `object`.
+_LOCALE_TEMPLATE_DICTS: list[Mapping[Locale, object]] = [
     report._ASPECT_LABELS,
     report._TIMBRE_DISCLAIMER,
     report._ACCOMPANIMENT_IN_CLEAN_WARNING,
@@ -35,6 +40,7 @@ def test_every_locale_template_table_has_the_same_keys_in_both_locales() -> None
         if isinstance(first, dict):
             expected_keys = set(first.keys())
             for locale, nested in table.items():
+                assert isinstance(nested, dict)
                 assert set(nested.keys()) == expected_keys, (table, locale)
 
 
