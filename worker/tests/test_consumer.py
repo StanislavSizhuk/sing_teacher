@@ -97,6 +97,11 @@ def test_happy_path_acks(redis_client: redis.Redis) -> None:
         )
         == []
     )
+    # A terminal outcome must not just clear the PEL -- it must shrink the
+    # stream itself, or Producer.Length's XLEN-based queue-full check
+    # (spec 10, FR-24) would keep counting jobs finished long ago and
+    # eventually read as permanently full regardless of real load.
+    assert redis_client.xlen(ANALYSES_STREAM_NAME) == 0
 
 
 def test_crashed_handler_leaves_job_pending(redis_client: redis.Redis) -> None:
@@ -115,6 +120,9 @@ def test_crashed_handler_leaves_job_pending(redis_client: redis.Redis) -> None:
         ),
     )
     assert len(pending) == 1 and pending[0]["message_id"] == entry_id
+    # Not terminal yet -- must still be reclaimable, so the entry itself
+    # must survive (only a terminal outcome ever removes it).
+    assert redis_client.xlen(ANALYSES_STREAM_NAME) == 1
 
 
 def test_reclaim_stuck_job_reprocesses_it(redis_client: redis.Redis) -> None:
@@ -142,6 +150,7 @@ def test_reclaim_stuck_job_reprocesses_it(redis_client: redis.Redis) -> None:
         )
         == []
     )
+    assert redis_client.xlen(ANALYSES_STREAM_NAME) == 0
 
 
 def test_read_next_recreates_a_missing_consumer_group(redis_client: redis.Redis) -> None:
@@ -188,3 +197,29 @@ def test_reclaim_gives_up_after_max_claim_attempts(redis_client: redis.Redis) ->
         )
         == []
     )
+    assert redis_client.xlen(ANALYSES_STREAM_NAME) == 0
+
+
+def test_terminal_outcomes_do_not_leave_the_queue_permanently_reporting_full(
+    redis_client: redis.Redis,
+) -> None:
+    """Regression: XACK alone only clears a consumer group's own
+    pending-entries list, it never shrinks the stream -- so
+    Producer.Length's XLEN-based queue-full check (spec 10, FR-24) grew
+    monotonically with every job ever processed, not just ones actually
+    in flight, and eventually read as permanently full regardless of real
+    load. Processing more jobs than the queue's own cap, all to a terminal
+    outcome, must leave XLEN reflecting that none of them are still
+    queued.
+    """
+    handler = RecordingHandler(terminal=True)
+    consumer = _make_consumer(redis_client, handler, "test-consumer")
+    job_count = 25
+
+    for i in range(job_count):
+        redis_client.xadd(ANALYSES_STREAM_NAME, {"job_id": f"job-{i}"})
+        entry_id, fields = _deliver_one(redis_client, "test-consumer")
+        consumer.process_entry(entry_id, fields, lambda: False)
+
+    assert len(handler.handled) == job_count
+    assert redis_client.xlen(ANALYSES_STREAM_NAME) == 0
