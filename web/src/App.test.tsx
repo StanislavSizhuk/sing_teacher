@@ -8,7 +8,7 @@ import { setSession } from './api/sessionStore'
 import App from './App'
 import { setLanguage } from './i18n/language'
 
-const { song } = vi.hoisted(() => {
+const { failedSong, addSongMock, prepareSongMock } = vi.hoisted(() => {
   const song: Song = {
     id: 'song-1',
     sourceType: 'upload',
@@ -18,7 +18,19 @@ const { song } = vi.hoisted(() => {
     lyricsAvailable: false,
     reused: false,
   }
-  return { song }
+  const failedSong: Song = {
+    ...song,
+    id: 'song-2',
+    prepStatus: 'failed',
+    prepErrorCode: 'REFERENCE_TOO_QUIET',
+    reused: true,
+  }
+  return {
+    song,
+    failedSong,
+    addSongMock: vi.fn().mockResolvedValue(song),
+    prepareSongMock: vi.fn(),
+  }
 })
 
 vi.mock('./api/client', async (importOriginal) => {
@@ -26,7 +38,8 @@ vi.mock('./api/client', async (importOriginal) => {
   return {
     ...actual,
     restoreSession: vi.fn().mockResolvedValue(true),
-    addSong: vi.fn().mockResolvedValue(song),
+    addSong: addSongMock,
+    prepareSong: prepareSongMock,
   }
 })
 
@@ -81,5 +94,34 @@ describe('AuthenticatedApp', () => {
 
     expect(screen.getByRole('heading', { name: 'Додати пісню' })).toBeInTheDocument()
     expect(screen.getByText('Вийти')).toBeInTheDocument()
+  })
+
+  // A song whose cold path already failed (often a re-upload of the same
+  // audio as an earlier failed attempt, upload.go's own content-hash
+  // dedup) offers a restart instead of the recording flow it can never
+  // actually complete.
+  it('offers to restart preparation for a song whose reference already failed', async () => {
+    addSongMock.mockResolvedValueOnce(failedSong)
+    prepareSongMock.mockResolvedValueOnce({ ...failedSong, prepStatus: 'pending' })
+    const user = userEvent.setup()
+    renderApp()
+
+    await screen.findByRole('heading', { name: 'Add a song' })
+    await user.type(screen.getByLabelText('Title'), 'My song')
+    await user.upload(
+      screen.getByLabelText('Audio file'),
+      new File(['data'], 'song.mp3', { type: 'audio/mpeg' }),
+    )
+    const form = screen.getByRole('button', { name: 'Add song' }).closest('form')
+    if (!form) throw new Error('Add song button is not inside a form')
+    fireEvent.submit(form)
+
+    await screen.findByRole('button', { name: 'Retry song preparation' })
+    expect(screen.queryByRole('heading', { name: 'Record your take' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Retry song preparation' }))
+
+    await screen.findByRole('heading', { name: 'Record your take' })
+    expect(prepareSongMock).toHaveBeenCalledWith('song-2')
   })
 })

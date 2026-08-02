@@ -20,6 +20,7 @@ function friendlyMessages(t: Translations): Record<string, string> {
     UNSUPPORTED_AUDIO_FORMAT: t.errorAlert.unsupportedAudioFormat,
     AUDIO_TOO_LARGE: t.errorAlert.audioTooLarge,
     AUDIO_TOO_LONG: t.errorAlert.audioTooLong,
+    REFERENCE_PREP_FAILED: t.errorAlert.referencePrepFailed,
   }
 }
 

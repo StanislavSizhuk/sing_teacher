@@ -28,6 +28,7 @@ export const en = {
     unsupportedAudioFormat: 'Unsupported audio format. Use mp3, wav, m4a, flac or ogg.',
     audioTooLarge: 'That file is larger than the upload limit.',
     audioTooLong: 'That recording is longer than the allowed limit.',
+    referencePrepFailed: "This song's reference preparation failed. Try restarting it again.",
     generic: 'Something went wrong. Please try again.',
     retryAfter: (seconds: number) => ` Try again in ${seconds}s.`,
   },
@@ -77,6 +78,13 @@ export const en = {
     submit: 'Add song',
     hintUpload: 'Enter a title and choose an audio file to continue.',
     hintYoutube: 'Enter a YouTube URL to continue.',
+  },
+  songPrepFailed: {
+    body:
+      "This song's reference couldn't be prepared, so it can't be analyzed yet. This can " +
+      'happen if an earlier attempt with the same audio failed. Restarting preparation tries again.',
+    retry: 'Retry song preparation',
+    retryPending: 'Restarting…',
   },
   recordingCapture: {
     heading: 'Record your take',

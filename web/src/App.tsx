@@ -11,6 +11,7 @@ import { AuthScreen } from './features/auth/AuthScreen'
 import { useIsAuthenticated } from './features/auth/useSession'
 import { ProgressPage } from './features/progress/ProgressPage'
 import { AddSongForm } from './features/songs/AddSongForm'
+import { SongPrepFailedNotice } from './features/songs/SongPrepFailedNotice'
 import { useLanguage } from './i18n/useLanguage'
 import { useTranslation } from './i18n/useTranslation'
 
@@ -38,7 +39,14 @@ function AnalyzeFlow() {
         <AddSongForm onAdded={(song) => setStep({ kind: 'record', song })} />
       )}
 
-      {step.kind === 'record' && (
+      {step.kind === 'record' && step.song.prepStatus === 'failed' && (
+        <SongPrepFailedNotice
+          song={step.song}
+          onRetried={(song) => setStep({ kind: 'record', song })}
+        />
+      )}
+
+      {step.kind === 'record' && step.song.prepStatus !== 'failed' && (
         <>
           <RecordingCapture
             onReady={(recording, mode) => enqueue.mutate({ songId: step.song.id, recording, mode })}
