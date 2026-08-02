@@ -40,6 +40,28 @@ class SlowStage(PipelineStage[AnalysisContext]):
         )
 
 
+class LargePayloadStage(PipelineStage[AnalysisContext]):
+    """Returns almost instantly, but with a `data` payload larger than a
+    pipe's OS buffer (~64KB on Linux) -- big enough to reproduce
+    `_join_subprocess` joining the child before draining `result_queue`,
+    which deadlocked the child's `put()` against the parent's `join()`
+    until the timeout killed it (every real `prep_reference_pitch`/`pitch`
+    run: a full song's pitch curve at a 10ms hop serializes past a few
+    hundred KB). A short timeout here still passing proves the result came
+    back promptly, not through the timeout's kill path."""
+
+    name = "large_payload_stage"
+    timeout_seconds = 5
+
+    def run(self, context: AnalysisContext) -> StageResult:
+        return StageResult(
+            stage=self.name,
+            status=StageStatus.DONE,
+            duration_ms=1,
+            data={"hz": [123.456] * 100_000},
+        )
+
+
 class AlwaysFailsTransient(PipelineStage[AnalysisContext]):
     name = "always_fails"
     timeout_seconds = 5
@@ -164,6 +186,22 @@ def test_timeout_is_classified_and_retried_then_raises(tmp_path: Path) -> None:
     assert progress.progress_calls == [("ok_stage", "slow_stage", 2, 2)]
     assert progress.processing_calls == [("ok_stage", 1, 2)]
     assert events.stage_events == [("a1", "ok_stage", 1, 2), ("a1", "slow_stage", 2, 2)]
+
+
+def test_large_result_payload_does_not_deadlock_the_join(tmp_path: Path) -> None:
+    progress = RecordingProgress()
+    runner = PipelineRunner([LargePayloadStage()], RecordingEvents())
+
+    start = time.monotonic()
+    outcome = runner.run("a1", make_context(tmp_path), {}, progress)
+    elapsed = time.monotonic() - start
+
+    assert outcome == RunOutcome.COMPLETED
+    assert progress.progress_calls[0][0] == "large_payload_stage"
+    # The regression: a join-before-drain deadlock would hold this up for
+    # the full 5s timeout_seconds (then raise TIMEOUT) no matter how fast
+    # the stage itself ran.
+    assert elapsed < 5, f"should return promptly, not via the timeout path, took {elapsed}s"
 
 
 def test_transient_failure_retries_then_succeeds(tmp_path: Path) -> None:

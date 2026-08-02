@@ -255,6 +255,13 @@ export type AnalysisMode = 'clean' | 'mixed'
  * inherently less reliable says so instead of a precise-looking number. */
 export type ConfidenceLevel = 'high' | 'medium' | 'low'
 
+/** ADR-0031: the language the FR-32 feedback report is written in, fixed
+ * for this analysis at enqueue time. Deliberately the same union as
+ * `i18n/language.ts`'s `Language` (never imported from there -- `api/` has
+ * no dependency on `i18n/`) so a caller can pass its value straight
+ * through. */
+export type AnalysisLocale = 'en' | 'uk'
+
 /** FR-31 piano-roll overlay data: the user's and reference's pitch curves,
  * already resampled onto the same (the user's) time grid frame for frame,
  * plus a precomputed cents deviation and off-pitch flag per frame -- the
@@ -285,6 +292,15 @@ export interface Analysis {
   id: string
   songId: string
   status: AnalysisStatus
+  /** When the analysis was originally submitted. Immutable -- a retry
+   * (FR-26) reuses this row, so this stays fixed across retries. Not what
+   * the live wait timer should read; see queuedAt. */
+  createdAt: string
+  /** When the *current* queued/waiting_for_reference wait began -- equal
+   * to createdAt for a fresh submission, reset by retryAnalysis so the
+   * live wait timer (QueueStatus.tsx) never measures from a stale
+   * original submission (spec 10, FR-22). */
+  queuedAt: string
   /** The mode the caller chose at enqueue time (FR-27). */
   mode: AnalysisMode
   /** What the worker's stage A3 actually reconciled `mode` to once it saw
@@ -336,6 +352,8 @@ function toAnalysis(
     id: data.id,
     songId: data.song_id,
     status: data.status,
+    createdAt: data.created_at,
+    queuedAt: data.queued_at,
     mode: data.mode,
     effectiveMode: data.effective_mode,
     queuePosition: data.queue_position,
@@ -382,15 +400,18 @@ function toAnalysis(
 /** FR-27: mode defaults to 'clean' (spec 2.3's recommendation) when the
  * caller doesn't pick one explicitly. allow_transposition is left for the
  * server to default per mode (spec 8.3, FR-31) -- this client has no UI
- * control for it yet. */
+ * control for it yet. locale (ADR-0031) defaults to 'en', matching the
+ * server's own default for a caller that doesn't pass one. */
 export async function enqueueAnalysis(
   songId: string,
   recording: File | Blob,
   mode: AnalysisMode = 'clean',
+  locale: AnalysisLocale = 'en',
 ): Promise<Analysis> {
   const formData = new FormData()
   formData.set('song_id', songId)
   formData.set('mode', mode)
+  formData.set('locale', locale)
   formData.set(
     'recording',
     recording,

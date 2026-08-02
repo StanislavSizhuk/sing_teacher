@@ -11,7 +11,11 @@ from pathlib import Path
 
 from vocalcoach.audio.io import read_mono, write_mono
 from vocalcoach.audio.loudness import measure_and_normalize
-from vocalcoach.constants import SEPARATE_REFERENCE_TIMEOUT_SECONDS, TARGET_LOUDNESS_LUFS
+from vocalcoach.constants import (
+    MIN_VOCAL_LOUDNESS_LUFS,
+    SEPARATE_REFERENCE_TIMEOUT_SECONDS,
+    TARGET_LOUDNESS_LUFS,
+)
 from vocalcoach.errors import ReferenceTooQuiet
 from vocalcoach.models.context import SongPrepContext
 from vocalcoach.models.results import StageResult, StageStatus
@@ -19,10 +23,6 @@ from vocalcoach.pipeline.base import PipelineStage
 from vocalcoach.pipeline.registry import VocalSeparator
 
 STAGE_NAME = "separate_reference"
-
-# Below this integrated loudness (LUFS, ITU-R BS.1770) the isolated stem is
-# mostly separation artifacts, not an audible voice (spec 6.8 REFERENCE_TOO_QUIET).
-MIN_VOCAL_LOUDNESS_LUFS = -50.0
 
 
 class SeparateReferenceStage(PipelineStage[SongPrepContext]):

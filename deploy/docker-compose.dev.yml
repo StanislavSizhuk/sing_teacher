@@ -118,6 +118,13 @@ services:
       # platform-specific native binaries, and a glibc host's node_modules
       # cannot run against this image's musl (Alpine) node.
       - /src/node_modules
+      # `npm run generate:api` reads ../api/openapi.yaml relative to /src
+      # (spec 12.4's one-network-layer contract, generated from the API's
+      # own source of truth) -- without this mount that path resolves to
+      # nothing live inside the container, and generate:api either fails or
+      # silently regenerates from whatever got copied in by hand once and
+      # never updated again.
+      - ../api/openapi.yaml:/api/openapi.yaml:ro
     depends_on:
       go-api:
         condition: service_started

@@ -9,11 +9,14 @@ retry/work-dir interaction, a Redis Streams resilience gap) plus the spec
 cache, VAD gate, banded DTW, parallel aspect stages, explicit thread
 config), M2's cold/warm pipeline split (spec 6.2, 10): a second Redis
 Stream (`songs:prep`) and worker job kind (`SongPrepJobHandler`) move
-Demucs/Whisper/reference-pitch detection out of an analysis's own
-critical path into a job that starts the moment a song is added, so the
-first analysis of any song is no slower than the second, M3's `mixed`-mode
-pipeline stages (melody extraction, weight profiles, the confidence
-model), and M4's end-to-end wiring of both: `mode` selection at
+Whisper/reference-pitch detection, and Demucs separation of the reference,
+out of an analysis's own critical path into a job that starts the moment a
+song is added, so the first analysis of any song is no slower than the
+second, M3's `mixed`-mode pipeline stages (weight profiles, the confidence
+model), ADR-0034's later reversal of part of that Demucs-stays-cold-only
+split (`mixed` analyses run Demucs on the recording too, in the warm path
+-- see `docs/ML_PIPELINE.md`'s "Mixed mode" section for why), and M4's
+end-to-end wiring of both: `mode` selection at
 `POST /analyses` (FR-27), the worker building each analysis's pipeline
 context from it instead of a hardcoded default, confidence/warnings/
 unavailable-aspects surfaced through the API and `web/` (FR-41, FR-47),
@@ -271,12 +274,19 @@ queue/scheduler.py  →  queue/consumer.py  →  queue/handler.py       →  pip
   is that guarantee, nothing else in the codebase enforces it.
 - `queue/handler.py`: `AnalysisJobHandler` builds the per-job
   `AnalysisContext` straight from a song's already-`ready` cold-path
-  output (M2: reference decode, Demucs, reference pitch curve all ran
-  once, earlier, in the cold path -- this handler never touches Demucs/
-  Whisper or the raw reference upload, and raises loudly if handed an
-  analysis whose song somehow isn't actually ready, since that is the
-  scheduler's invariant to hold, not this handler's to route around),
-  drives the runner, and on success denormalizes each aspect stage's score
+  output (M2: reference decode, Demucs separation of the *reference*,
+  reference pitch curve all ran once, earlier, in the cold path -- this
+  handler never touches the raw reference upload or re-separates the
+  reference, and raises loudly if handed an analysis whose song somehow
+  isn't actually ready, since that is the scheduler's invariant to hold,
+  not this handler's to route around). ADR-0034 is the one exception to
+  "Demucs stays in the cold path": in `mixed`, the `PipelineRunner` this
+  handler drives runs Demucs on the *recording* too, inside the warm path
+  itself, since that audio is unique per analysis and was never a
+  cold-path candidate to begin with.
+
+  `AnalysisJobHandler` drives the runner, and on success denormalizes each
+  aspect stage's score
   out of `stages_json` into its own column (`analyses.pitch_score`, etc.),
   records a FR-35 progress snapshot alongside `save_scoring_result` (E5),
   then calls `mark_done` -- `PipelineRunner` itself stays agnostic of
@@ -363,7 +373,10 @@ queue/scheduler.py  →  queue/consumer.py  →  queue/handler.py       →  pip
    `allow_transposition` (M4 -- no more hardcoded `clean` default in
    `AnalysisJobHandler`), runs stages A1-A10 (`docs/ML_PIPELINE.md`)
    against the song's already-cached reference (never re-decoding it,
-   never re-running Demucs/Whisper), and persists progress after each one.
+   never re-running Demucs/Whisper on it), and persists progress after
+   each one. In `mixed`, one of those stages (A1b, ADR-0034) does run
+   Demucs -- on the recording, not the reference, since that audio is
+   unique to this analysis and was never cached by the cold path.
    Stage 11's confidence/warnings/unavailable-aspects output (spec 6.14,
    6.15, FR-41, FR-47) lands in dedicated `analyses` columns the same way,
    so `GET /analyses/{id}` (spec 8.4) and `GET /progress` (FR-49) can
@@ -418,6 +431,16 @@ for FR-20 (record/preview/re-record) with an upload fallback for FR-21.
 ones. E2's screen count is small enough that plain component state covers
 the whole flow (auth -> add song -> record -> queue); revisit once more
 screens need real URL routing.
+
+`web/src/i18n/` (English + Ukrainian, ADR-0029) has no dependency either --
+`language.ts` mirrors `sessionStore.ts`'s exact shape (module-level
+variable, `get`/`set`/`subscribe`, `useSyncExternalStore` hook), and
+`translations/{en,uk}.ts` are nested-object dictionaries typed against one
+canonical shape (`Translations = typeof en`), so a missing or
+wrong-signature key in either language fails `tsc`, not silently at
+runtime. Plural-sensitive strings (Ukrainian has three count categories,
+English two) go through `Intl.PluralRules` via `i18n/plural.ts`, not a
+hand-rolled `n === 1` check.
 
 E5 adds the Progress screen (`features/progress/`) as a second top-level
 view, toggled by a `SegmentedControl` nav in `App.tsx` next to the E2-E4

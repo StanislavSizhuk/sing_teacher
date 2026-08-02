@@ -213,6 +213,14 @@ def test_oldest_waiting_song_id_returns_earliest_submission(conn: psycopg.Connec
     # or fails) every row it creates -- so the table is genuinely empty of
     # them here, regardless of run order among the tests above.
     assert repo.oldest_waiting_song_id() is None
+    # Regression: this read used to leave conn `idle in transaction`
+    # (psycopg opens an implicit transaction on the first statement of a
+    # session even for a plain SELECT). Scheduler calls this before every
+    # songs:prep tick on one long-lived connection -- an empty result with
+    # nothing else ever committing on that connection left it open
+    # indefinitely, holding a lock that blocked every later `ALTER TABLE
+    # analyses`, including the API's own migrations.
+    assert conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
 
     first_song = _make_song(conn)
     _make_analysis(conn, user_id=user_id, song_id=first_song, status="waiting_for_reference")

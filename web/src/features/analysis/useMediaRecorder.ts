@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useObjectUrl } from '../../hooks/useObjectUrl'
+import { useTranslation } from '../../i18n/useTranslation'
 
 export type RecorderState = 'idle' | 'requesting' | 'recording' | 'recorded' | 'error'
 
@@ -27,6 +28,7 @@ function pickMimeType(): string | undefined {
  * re-record. The recording never leaves the browser until the caller
  * explicitly submits it. */
 export function useMediaRecorder(): UseMediaRecorderResult {
+  const t = useTranslation()
   const [state, setState] = useState<RecorderState>('idle')
   const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -61,11 +63,11 @@ export function useMediaRecorder(): UseMediaRecorderResult {
       recorder.start()
       setState('recording')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not access the microphone.')
+      setError(cause instanceof Error ? cause.message : t.mediaRecorder.micError)
       setState('error')
       releaseStream()
     }
-  }, [releaseStream])
+  }, [releaseStream, t])
 
   const stop = useCallback(() => {
     recorderRef.current?.stop()

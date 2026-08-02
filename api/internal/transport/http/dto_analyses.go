@@ -23,6 +23,20 @@ func validateAnalysisMode(raw string) (domain.AnalysisMode, error) {
 	}
 }
 
+// validateLocale parses the locale form field (ADR-0031): "en" is the
+// default when the field is absent, so every existing client that predates
+// locale selection keeps working exactly as before.
+func validateLocale(raw string) (domain.Locale, error) {
+	switch domain.Locale(raw) {
+	case "":
+		return domain.LocaleEN, nil
+	case domain.LocaleEN, domain.LocaleUK:
+		return domain.Locale(raw), nil
+	default:
+		return "", errors.New("locale must be 'en' or 'uk'")
+	}
+}
+
 // defaultAllowTransposition is spec 8.3/FR-31's mode-dependent default: off
 // in clean (nothing to transpose to when singing straight over the
 // reference in headphones), on in mixed.
@@ -112,6 +126,11 @@ type analysisResponse struct {
 	PianoRoll   json.RawMessage `json:"piano_roll,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	// QueuedAt is when the *current* queued/waiting_for_reference wait
+	// began -- equal to CreatedAt for a fresh submission, reset by Retry
+	// (FR-26) so the client's live wait timer never measures from a stale
+	// original submission (spec 10, FR-22).
+	QueuedAt time.Time `json:"queued_at"`
 }
 
 func newAnalysisResponse(a *domain.Analysis) analysisResponse {
@@ -156,6 +175,7 @@ func newAnalysisResponse(a *domain.Analysis) analysisResponse {
 		PianoRoll:             json.RawMessage(a.PitchCurveJSON),
 		CreatedAt:             a.CreatedAt,
 		CompletedAt:           a.CompletedAt,
+		QueuedAt:              a.QueuedAt,
 	}
 }
 

@@ -54,16 +54,12 @@ class ReferenceTooQuiet(LogicalPipelineError):
 
 
 class NoVoiceDetected(LogicalPipelineError):
-    """No singing voice was detected in the user's recording."""
+    """No singing voice was detected in the user's recording -- either
+    directly (too little voiced pitch), or, in `mixed` mode, because
+    `SeparateRecordingStage`'s isolated vocal stem came back too quiet to
+    trust (ADR-0034, mirroring `ReferenceTooQuiet` on the recording side)."""
 
     error_code = "NO_VOICE_DETECTED"
-
-
-class MelodyExtractionFailed(LogicalPipelineError):
-    """`mixed` mode (spec 6.6, A4): melody extraction found too little of
-    the recording confidently voiced to score against the reference."""
-
-    error_code = "MELODY_EXTRACTION_FAILED"
 
 
 class AlignmentFailed(LogicalPipelineError):

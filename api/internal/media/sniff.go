@@ -6,7 +6,8 @@
 package media
 
 // Format is a supported audio container, identified from its magic bytes --
-// never from a filename extension (spec 11.3, FR-10: mp3/wav/m4a/flac/ogg).
+// never from a filename extension (spec 11.3, FR-10: mp3/wav/m4a/flac/ogg,
+// plus webm for FR-20's in-browser recordings).
 type Format string
 
 // Supported formats.
@@ -16,6 +17,14 @@ const (
 	FormatFLAC Format = "flac"
 	FormatOGG  Format = "ogg"
 	FormatM4A  Format = "m4a"
+	// FormatWebM: what MediaRecorder actually produces in the two browser
+	// engines FR-20's "record in browser" runs in most often -- Chromium
+	// and Gecko both default to audio/webm;codecs=opus (only WebKit/Safari
+	// uses audio/mp4, already covered by FormatM4A's ftyp case below).
+	// Without this, every in-browser recording on Chrome or Firefox failed
+	// Sniff and came back UNSUPPORTED_AUDIO_FORMAT before ever reaching
+	// ffmpeg, which decodes it natively without any other change needed.
+	FormatWebM Format = "webm"
 )
 
 // Sniff identifies an audio format from its leading bytes. It reports false
@@ -28,6 +37,12 @@ func Sniff(data []byte) (Format, bool) {
 		return FormatFLAC, true
 	case len(data) >= 4 && string(data[0:4]) == "OggS":
 		return FormatOGG, true
+	// EBML header (WebM is a constrained Matroska profile; both share this
+	// signature). ffprobe still verifies an audio stream is present
+	// (Processor.Probe), same as the M4A/MP4 case below -- Sniff only
+	// gates the container, not what's inside it.
+	case len(data) >= 4 && data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3:
+		return FormatWebM, true
 	// ISO base media file format (M4A/MP4): a 4-byte box size, then the
 	// "ftyp" box type at offset 4. ffprobe still verifies an audio stream is
 	// actually present (Processor.Probe), so a video-only MP4 is rejected later.

@@ -1,9 +1,13 @@
 # ADR-0003: Vocal separation only for the reference track
 
-- Status: Accepted
+- Status: Accepted for `clean`; amended for `mixed` by ADR-0034
 - Date: 2026-07-27
 - Note: the ML pipeline is built in E3, not E1. This ADR exists now because
   spec 14.3 requires it to already be on record at stage 1.
+- 2026-08-02: ADR-0034 reverses this ADR's "separate both tracks" rejection
+  for `mixed` mode specifically. The reasoning below stays fully valid for
+  `clean` -- it was always scoped to the a cappella assumption, and `clean`
+  recordings still have no accompaniment to remove.
 
 ## Context
 

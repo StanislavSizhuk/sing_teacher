@@ -18,12 +18,14 @@ from vocalcoach.constants import (
 )
 from vocalcoach.models.audio import Lyrics, PitchCurve
 from vocalcoach.models.context import AnalysisContext, SongPrepContext
+from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.registry import PyinPitchDetector
 from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.prep_reference_pitch import PrepReferencePitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
+from vocalcoach.pipeline.stages.separate_recording import SeparateRecordingStage
 
 #: Placeholder for the many stage tests that never read
 #: `context.reference_pitch` at all (everything except `PitchStage` itself)
@@ -106,15 +108,20 @@ def make_context(
     reference_path: Path,
     reference_lyrics: Lyrics | None = None,
     reference_pitch: PitchCurve | None = None,
+    mode: Mode = "clean",
 ) -> AnalysisContext:
     """`reference_path` is canonicalized (`canonical_stem_path`) and then
     treated as if it were already the cold path's cached vocal stem (spec
     6.6, M2) -- stage tests never run real Demucs separation (spec 15.2),
-    and the pre-M2 `FakeVocalSeparator` used here was already the identity
-    function, so starting from "already separated" changes nothing these
-    tests actually exercised. `reference_pitch` defaults to
+    and the `FakeVocalSeparator` used throughout this module is already the
+    identity function, so starting from "already separated" changes nothing
+    these tests actually exercise. `reference_pitch` defaults to
     `EMPTY_REFERENCE_PITCH` -- pass a real one (`reference_pitch_curve_for`)
-    when the test exercises `PitchStage` itself.
+    when the test exercises `PitchStage` itself. `mode="mixed"` alone does
+    not run `SeparateRecordingStage` -- callers going through
+    `_through_features`/`build_context_through_align` get that for free
+    (ADR-0034); a bare `make_context` caller inspecting only `context.mode`
+    itself does not need it.
     """
     return AnalysisContext(
         analysis_id="test-analysis",
@@ -125,6 +132,7 @@ def make_context(
         reference_vocal_stem_path=canonical_stem_path(tmp_path, reference_path),
         reference_lyrics=reference_lyrics,
         reference_pitch=reference_pitch or EMPTY_REFERENCE_PITCH,
+        mode=mode,
     )
 
 
@@ -134,22 +142,35 @@ def _through_features(
     reference_path: Path,
     *,
     reference_pitch: PitchCurve | None = None,
+    mode: Mode = "clean",
 ) -> AnalysisContext:
-    """Runs preprocess -> features for real -- the shared setup every stage
-    A4+ test needs, since those stages read MFCC/RMS/onsets out of the A3
-    shared feature cache (spec 6.9) instead of computing their own. The
-    reference side needs no stage of its own here (spec 6.2, M2): it is
-    already cold-path output by the time the warm path ever runs.
+    """Runs preprocess -> [separate_recording] -> features for real -- the
+    shared setup every stage A4+ test needs, since those stages read
+    MFCC/RMS/onsets out of the A3 shared feature cache (spec 6.9) instead of
+    computing their own. The reference side needs no stage of its own here
+    (spec 6.2, M2): it is already cold-path output by the time the warm path
+    ever runs.
+
+    ADR-0034: `mode="mixed"` runs `SeparateRecordingStage` (with the same
+    identity-function `FakeVocalSeparator` used throughout this module)
+    between preprocess and features, exactly where `worker.build_stages`
+    puts it -- so `features`/`align` see the same `voice_audio_path`
+    resolution a real mixed-mode analysis would.
     """
     context = make_context(
         tmp_path,
         recording_path=recording_path,
         reference_path=reference_path,
         reference_pitch=reference_pitch,
+        mode=mode,
     )
 
     preprocess_result = PreprocessStage(ffmpeg_path="ffmpeg").run(context)
     context = context.with_result(preprocess_result)
+
+    if mode == "mixed":
+        separate_result = SeparateRecordingStage(FakeVocalSeparator()).run(context)
+        context = context.with_result(separate_result)
 
     features_result = FeaturesStage().run(context)
     return context.with_result(features_result)
@@ -161,14 +182,27 @@ def build_context_through_align(
     reference_path: Path,
     *,
     reference_pitch: PitchCurve | None = None,
+    mode: Mode = "clean",
 ) -> AnalysisContext:
-    """Runs preprocess -> features -> align for real, and returns the
-    resulting context so a stage A5+ test can start from it.
+    """Runs preprocess -> [separate_recording] -> features -> align for
+    real, and returns the resulting context so a stage A5+ test can start
+    from it.
+
+    ADR-0033: align now aligns on pitch contour, so it needs a real
+    reference curve to align against, not `EMPTY_REFERENCE_PITCH` --
+    unlike `make_context`'s own default (most tests never read
+    `context.reference_pitch` at all), a caller here that doesn't pass one
+    gets a real one computed the same way the cold path would
+    (`reference_pitch_curve_for`).
     """
     context = _through_features(
-        tmp_path, recording_path, reference_path, reference_pitch=reference_pitch
+        tmp_path,
+        recording_path,
+        reference_path,
+        reference_pitch=reference_pitch or reference_pitch_curve_for(tmp_path, reference_path),
+        mode=mode,
     )
-    align_result = AlignStage().run(context)
+    align_result = AlignStage(PyinPitchDetector()).run(context)
     return context.with_result(align_result)
 
 
@@ -199,6 +233,17 @@ def build_context_with_identity_align(
         stage="align",
         status=StageStatus.DONE,
         duration_ms=1,
-        data={"index1": identity, "index2": identity, "hop_seconds": FEATURES_HOP_SECONDS},
+        data={
+            "index1": identity,
+            "index2": identity,
+            "hop_seconds": FEATURES_HOP_SECONDS,
+            # ADR-0033: a plausible-shaped placeholder, not a real curve --
+            # no test using this identity-mapping helper reads pitch
+            # accuracy, but PitchStage's contract now expects this key to
+            # exist on any align result.
+            "user_pitch_curve": PitchCurve(
+                hop_seconds=FEATURES_HOP_SECONDS, hz=[None] * frame_count
+            ).model_dump(mode="json"),
+        },
     )
     return context.with_result(align_result)

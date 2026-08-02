@@ -29,13 +29,13 @@ from vocalcoach.pipeline.stages.breath import BreathStage
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.key_normalization import KeyNormalizationStage
-from vocalcoach.pipeline.stages.melody import MelodyPitchStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.prep_reference import PrepReferenceStage
 from vocalcoach.pipeline.stages.prep_reference_pitch import PrepReferencePitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
 from vocalcoach.pipeline.stages.recording_condition import RecordingConditionStage
 from vocalcoach.pipeline.stages.rhythm import RhythmStage
+from vocalcoach.pipeline.stages.separate_recording import SeparateRecordingStage
 from vocalcoach.pipeline.stages.separate_reference import SeparateReferenceStage
 from vocalcoach.pipeline.stages.timbre import TimbreStage
 from vocalcoach.pipeline.stages.transcribe import TranscribeStage
@@ -71,17 +71,19 @@ def build_stages(
     """Warm path A1-A10 in spec 6.5 order (A6 is the spec 6.9 shared
     feature cache), plus the spec 6.16 recording-condition/reconciliation
     check and aggregation. Only ever run once a song's cold path has
-    reached `ready` (spec 6.2, M2) -- Demucs/Whisper/reference-pitch
-    detection are not here, they ran once in the cold path
-    (`build_prep_stages`).
+    reached `ready` (spec 6.2, M2) -- Whisper/reference-pitch detection are
+    not here, they ran once in the cold path (`build_prep_stages`). Demucs
+    is the one exception (ADR-0034): `SeparateRecordingStage` (`mixed`
+    only) runs Demucs on the user's own recording here too, since that
+    recording is unique per analysis and cannot be cached the way the
+    reference's stem is.
 
-    This one static list covers *both* modes: `PitchStage` (A5,
-    `clean`-only) and `MelodyPitchStage` (A4, `mixed`-only, spec 6.6/M3)
-    both write to stage name `"pitch"`, but their disjoint `modes` mean
-    `PipelineRunner.run(mode=...)` (spec 12.3) only ever lets one of them
-    actually run per analysis -- see ADR-0027. Likewise `TimbreStage`/
-    `BreathStage` declare `modes={"clean"}` and are simply absent from a
-    `mixed` run's flattened stage list, not present-but-null.
+    `PitchStage` (A5) runs in both modes now: after ADR-0033 moved F0
+    extraction into `align`, the `mixed`-only stage that used to score it
+    separately (`MelodyPitchStage`) had become byte-identical to this one,
+    so it was deleted rather than kept as a second copy (ADR-0034). Likewise
+    `TimbreStage`/`BreathStage` declare `modes={"clean"}` and are simply
+    absent from a `mixed` run's flattened stage list, not present-but-null.
 
     The five aspect stages depend only on `align`/`pitch`'s already-finished
     output, never on each other, so they run as one `ParallelGroup` (spec
@@ -109,10 +111,10 @@ def build_stages(
 
     return [
         PreprocessStage(ffmpeg_path=FFMPEG_PATH),
+        SeparateRecordingStage(registry.vocal_separator()),
         FeaturesStage(),
-        AlignStage(),
-        PitchStage(registry.pitch_detector()),
-        MelodyPitchStage(),
+        AlignStage(registry.pitch_detector()),
+        PitchStage(),
         KeyNormalizationStage(
             min_semitones=settings.key_shift_min_semitones,
             max_iqr_semitones=settings.key_shift_max_iqr,

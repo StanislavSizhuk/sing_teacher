@@ -1,11 +1,11 @@
 """Shared pitch-vs-reference comparison logic (spec 6.3.5): scoring a user
 F0 curve against the reference through the align stage's time map. Used by
-both `PitchStage` (A5, `clean`, pyworld/CREPE/pYIN on the raw recording) and
-`MelodyPitchStage` (A4, `mixed`, melody extraction on the mixture) --
-identical math regardless of which engine produced the curve (spec 12.1 DRY:
+`PitchStage` (A5, both modes since ADR-0034 -- pyworld/CREPE/pYIN on the
+raw recording in `clean`, on the Demucs-separated stem in `mixed`) --
+identical math regardless of which audio produced the curve (spec 12.1 DRY:
 this was duplicated once already, between align and timbre's MFCC calls,
 before the shared feature cache existed; it does not get duplicated again
-for a second pitch source).
+for a second code path).
 """
 
 from __future__ import annotations

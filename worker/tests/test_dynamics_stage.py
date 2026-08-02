@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.helpers import build_context_through_align, build_context_with_identity_align
+from tests.helpers import build_context_with_identity_align
 from vocalcoach.pipeline.stages.dynamics import DynamicsStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
@@ -26,7 +26,11 @@ def _flat_loud(duration_s: float, sample_rate_hz: int, frequency_hz: float) -> n
 def test_dynamics_matching_envelope_scores_high(tmp_path: Path, wav_writer) -> None:
     recording = wav_writer("recording.wav", _crescendo(3.0, 44100, 300.0), 44100)
     reference = wav_writer("reference.wav", _crescendo(3.0, 44100, 300.0), 44100)
-    context = build_context_through_align(tmp_path, recording, reference)
+    # ADR-0033: align now aligns on pitch contour, which a constant tone
+    # (tuned for dynamics' own amplitude-envelope comparison, not pitch)
+    # is degenerate for -- not what this test is checking (that is
+    # test_align_stage.py's job).
+    context = build_context_with_identity_align(tmp_path, recording, reference)
 
     result = DynamicsStage().run(context)
 

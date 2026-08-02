@@ -11,13 +11,15 @@ moment the song is added) and a **warm path** (A1-A10: everything an
 analysis itself needs, run only once its song's cold path has reached
 `ready`, always reading the reference vocal stem/pitch curve/lyrics the
 cold path already cached instead of recomputing any of it). M3 (spec 6.6,
-6.8, 6.14-6.16): adds the `mixed` analysis mode -- melody extraction as an
-alternate pitch source, key-shift normalization, and the weight-profile/
-confidence model that make an aspect's absence in `mixed` an honest `null`
-rather than a silent `0` (FR-41). See "Mixed mode (M3)" below for the
-mode-specific stages and `docs/PERFORMANCE.md` for measured before/after
-numbers and `docs/adr/0015`, `0017`, `0021`-`0027` for the M1/M2/M3
-decisions.
+6.8, 6.14-6.16): adds the `mixed` analysis mode -- key-shift normalization,
+and the weight-profile/confidence model that make an aspect's absence in
+`mixed` an honest `null` rather than a silent `0` (FR-41). `mixed`'s pitch
+source started as melody extraction (a DSP heuristic reading the mixture
+directly) but ADR-0034 replaced that with real Demucs separation of the
+user's own recording, the same way the reference has always been separated
+-- see "Mixed mode" below for why and `docs/adr/0034`. See
+`docs/PERFORMANCE.md` for measured before/after numbers and
+`docs/adr/0015`, `0017`, `0021`-`0027`, `0034` for the M1/M2/M3 decisions.
 
 ## Where the code lives
 
@@ -26,10 +28,11 @@ decisions.
 | `worker/src/vocalcoach/pipeline/base.py` | `PipelineStage`/`ParallelGroup` contract, generic over `ContextT` (M2) so the same classes drive both paths |
 | `worker/src/vocalcoach/pipeline/runner.py` | Orchestration: order, per-stage subprocess/timeout, retries, optional-stage skipping (M2), progress persistence (ADR-0012) |
 | `worker/src/vocalcoach/pipeline/registry.py` | `ModelRegistry`: lazy Demucs/Whisper/CREPE/pYIN construction behind narrow `Protocol`s, shared by both paths |
-| `worker/src/vocalcoach/pipeline/stages/` | One file per stage: `preprocess.py`/`features.py`/`align.py`/`pitch.py`/`melody.py` (M3, `mixed` only)/`key_normalization.py` (M3)/aspect stages/`recording_condition.py`/`aggregate.py` (warm), `prep_reference.py`/`separate_reference.py`/`transcribe.py`/`prep_reference_pitch.py` (cold) |
+| `worker/src/vocalcoach/pipeline/stages/` | One file per stage: `preprocess.py`/`separate_recording.py` (ADR-0034, `mixed` only)/`features.py`/`align.py`/`pitch.py`/`key_normalization.py` (M3)/aspect stages/`recording_condition.py`/`aggregate.py` (warm), `prep_reference.py`/`separate_reference.py`/`transcribe.py`/`prep_reference_pitch.py` (cold) |
 | `worker/src/vocalcoach/pipeline/report.py` | The FR-32 per-aspect text report, built from the same stage data -- M3: only the mode's own available aspects, plus an unavailable-aspect block (FR-41) |
+| `worker/src/vocalcoach/pipeline/voice_source.py` | ADR-0034: `voice_audio_path(context)` -- the one place that resolves "the user's voice audio" to either `preprocess`'s raw recording (`clean`) or `separate_recording`'s stem (`mixed`); `features`/`align` both read through it so they never disagree on which signal they're looking at |
 | `worker/src/vocalcoach/scoring/` | M3, spec 12.3: `weights.py` (`MODE_ASPECTS`, the weighted-sum formula, `unavailable_aspects_for`), `confidence.py` (the high/medium/low model, spec 6.15) -- pure functions, no `PipelineContext` knowledge |
-| `worker/src/vocalcoach/dsp/` | Shared feature cache (`features.py`), VAD gate (`vad.py`), banded two-level DTW (`dtw.py`), VAD-gated pitch detection (`pitch_detection.py`, M2 -- shared by warm A6 and cold P4), pitch-vs-reference scoring (`pitch_scoring.py`, M3 -- shared by `pitch.py` and `melody.py`), melody extraction (`melody.py`, M3, `mixed` only, ADR-0025) |
+| `worker/src/vocalcoach/dsp/` | Shared feature cache (`features.py`, also exposes `compute_rms_envelope` for `recording_condition`'s pre-separation RMS pass), VAD gate (`vad.py`), banded two-level DTW (`dtw.py`), pitch-class unit-circle embedding for alignment (`pitch_embedding.py`, ADR-0033), VAD-gated pitch detection (`pitch_detection.py`, M2 -- shared by warm A3 and cold P4), pitch-vs-reference scoring (`pitch_scoring.py`, M3 -- shared by both modes since ADR-0034) |
 | `worker/src/vocalcoach/runtime/` | M1: explicit BLAS/torch thread configuration (`threads.py`, spec 6.11) |
 | `worker/src/vocalcoach/audio/` | Shared DSP helpers: ffmpeg wrapper (`decode_and_normalize`, M2: the one decode/normalize implementation both A1 and P1 call), loudness, WAV IO, DTW time-mapping |
 | `worker/src/vocalcoach/queue/` | `scheduler.py` (M2: the two-stream priority loop, spec 10.2), `consumer.py` (Redis Streams, one instance per stream), `handler.py`/`prep_handler.py` (per-job-kind lifecycle), `streams.py` (M2: stream/group names), `events.py` (Redis Pub/Sub event publisher, ADR-0010) |
@@ -52,12 +55,18 @@ decisions.
 | # | Stage | Technology | Timeout |
 |---|---|---|---|
 | A1 | `preprocess` | `pyloudnorm`, ffmpeg resample (recording only) | 45s |
+| A1b | `separate_recording` (ADR-0034, `mixed` only) | Demucs v4 (`htdemucs`), same `VocalSeparator` as P2 | 600s |
 | A2 | `features` (M1, spec 6.9) | `librosa` MFCC/RMS/onset, once per side | 30s |
-| A3 | `align` | own two-level banded DTW (ADR-0017) | 60s |
-| A4 | `pitch` | CREPE/pYIN, VAD-gated (ADR-0023), against the cold path's cached reference curve | 180s |
+| A3 | `align` | own two-level banded DTW over a pitch-contour embedding (ADR-0017, ADR-0033), CREPE/pYIN VAD-gated (ADR-0023) | 60s |
+| A4 | `pitch` | reads A3's extracted user pitch curve, scores against the cold path's cached reference curve | 180s |
 | A5-A9 | `rhythm`, `vibrato`, `dynamics`, `timbre`, `breath` | read A2's cache + A3's time map | 30s each |
-| A10 | `recording_condition` | A2's fine RMS + A4's pitch curve (own logic, spec 6.9) | 30s |
+| A10 | `recording_condition` | A1's raw recording (own RMS pass, ADR-0034) + A4's pitch curve (own logic, spec 6.9) | 30s |
 | A11 | `aggregate` | weighted sum + text report (own logic) | 10s |
+
+A1b is labeled out of the main A1-A11 sequence deliberately -- inserting it
+would renumber every stage after it across this whole document for a
+`mixed`-only addition; "A1b" reads as "runs right after A1, `mixed` only"
+without that churn.
 
 Every stage runs in its own spawned child process (ADR-0012) -- this is
 what makes each timeout an enforceable ceiling rather than an advisory one,
@@ -106,7 +115,14 @@ checks both orderings score identically.
 2. **`separate_reference`** (P2) -- isolates the reference's vocal stem
    with Demucs (`DEMUCS_MODEL`, default `htdemucs`). The mono signal from
    P1 is duplicated to stereo before Demucs, since its pretrained models
-   expect two channels. Writes the isolated stem to
+   expect two channels. Demucs always processes and returns audio at its
+   own native rate (44.1kHz for `htdemucs`) regardless of what sample rate
+   it's told the input is (`separate_tensor`'s own docstring: "the wave
+   will be resampled if it doesn't match the model") -- `DemucsSeparator`
+   converts the separated stem back down to `PIPELINE_SAMPLE_RATE_HZ`
+   before returning it, since every caller (`VocalSeparator`'s own
+   contract) assumes "same sample rate as the input." Writes the isolated
+   stem to
    `song-stem-<song_id>.wav` under the `song-stems` volume -- the
    scheduler never re-enqueues a song whose `prep_status` is already
    `ready` (spec 10.2), so this stage runs exactly once by construction
@@ -132,9 +148,9 @@ checks both orderings score identically.
 4. **`prep_reference_pitch`** (P4) -- tracks the reference vocal stem's
    fundamental frequency at `PITCH_HOP_SECONDS = 0.01`,
    `PITCH_FMIN_HZ..PITCH_FMAX_HZ = 65..1050` (C2 to C6), VAD-gated exactly
-   like A4 (`dsp/pitch_detection.py::detect_gated`, shared by both --
-   spec 6.6 needs the same engine on both sides of a comparison for the
-   result to be deterministic). The last cold-path stage: once it
+   like A3's own `clean`-mode extraction (`dsp/pitch_detection.py::detect_gated`,
+   shared by both -- spec 6.6 needs the same engine on both sides of a
+   comparison for the result to be deterministic). The last cold-path stage: once it
    finishes, `SongPrepJobHandler` writes `songs.vocal_stem_path`/
    `reference_pitch`/`reference_pitch_meta` (`bytea` + JSONB sidecar, spec
    7.3/ADR-0022) and flips `prep_status` to `ready` in one write (see
@@ -145,13 +161,36 @@ checks both orderings score identically.
 
 5. **`preprocess`** (A1) -- the recording-only half of what P1 also does,
    same `decode_and_normalize` call, same targets.
+
+   **A1b, `separate_recording` (`mixed` only, ADR-0034)** -- isolates the
+   user's own vocal from their recording with Demucs, the exact same
+   `VocalSeparator`/`ModelRegistry.vocal_separator()` P2 uses on the
+   reference (`pipeline/stages/separate_recording.py`). Unlike the
+   reference's stem, this one is never cached: every recording is unique
+   per analysis, so this stage pays Demucs's cost on every single `mixed`
+   run, not once per song. Writes an ephemeral stem to
+   `work_dir/recording_vocals.wav`, torn down with the rest of `work_dir`
+   on completion (spec 5). Raises `NO_VOICE_DETECTED` if the separated
+   stem's own loudness is below `MIN_VOCAL_LOUDNESS_LUFS = -50.0` (the same
+   constant, and the same floor check, `separate_reference` already used --
+   moved to `constants.py` so both stages share one number instead of two
+   copies that could drift). Replaces what M3 originally shipped here: a
+   DSP salience heuristic (`dsp/melody.py::extract_melody`, ADR-0025) that
+   extracted F0 directly from the still-mixed recording instead of removing
+   the accompaniment first -- see "Mixed mode" below for why that structural
+   difference from the reference's own (always separated) pitch source was
+   the actual root cause of a real, repeated `ALIGNMENT_FAILED` even on the
+   *same song* used as both recording and reference.
 6. **`features`** (A2, M1, spec 6.9) -- computes each shared
    representation exactly once per side (user recording, reference stem):
    `FEATURES_MFCC_COEFFICIENTS`-coefficient MFCC and an RMS envelope, both
    at `FEATURES_HOP_SECONDS = 0.05`, plus a finer RMS pass at
    `PITCH_HOP_SECONDS = 0.01` and onset timestamps -- for the reference
    side, straight from the cold path's already-cached stem file, no
-   re-decoding. Before this stage existed, `align`+`timbre` each ran their
+   re-decoding; for the user side, through `voice_audio_path` (ADR-0034):
+   `preprocess`'s raw recording in `clean`, A1b's separated stem in
+   `mixed` -- so this cache and A3's own pitch extraction always describe
+   the same signal. Before this stage existed, `align`+`timbre` each ran their
    own identical MFCC extraction and `dynamics`+`breath` each ran their
    own identical RMS extraction -- the same `librosa` call, twice, for
    four stages that only ever wanted two results. Writes both sides'
@@ -162,36 +201,116 @@ checks both orderings score identically.
    A5-A9 read this cache instead of touching `librosa` directly;
    recomputing a representation the cache already has is a review blocker
    (spec 6.20).
-7. **`align`** (A3, M1, spec 6.7, ADR-0017) -- two banded DTW passes
-   (`dsp/dtw.py`), replacing `dtw-python`: its Sakoe-Chiba window only
-   masked a full `n x m` cost matrix, so memory scaled with the *product*
-   of both sequence lengths regardless of the window (an NFR-16
+7. **`align`** (A3, M1, spec 6.7, ADR-0017, ADR-0033) -- two banded DTW
+   passes (`dsp/dtw.py`), replacing `dtw-python`: its Sakoe-Chiba window
+   only masked a full `n x m` cost matrix, so memory scaled with the
+   *product* of both sequence lengths regardless of the window (an NFR-16
    violation). This own implementation stores only the band itself
    (`O(n * band)`), as a `numba.njit` kernel (NFR-17).
 
-   **Level 1 (coarse)** runs on A2's cached MFCC (50ms hop), banded
-   around the literal diagonal, radius `ALIGN_WINDOW_SECONDS = 10.0` --
-   deliberately not scaled by the two sequences' length ratio, so a
-   length mismatch alone can still make the target unreachable (the
-   rejection spec 6.8's risk table and T9 depend on). **Level 2 (refine)**
-   projects that coarse path through a `TimeMap` onto `PITCH_HOP_SECONDS`
-   (10ms) resolution and runs a second banded pass centered on *that*
-   projection, radius `ALIGN_REFINE_WINDOW_SECONDS = 0.2` -- a small,
-   fixed-width correction, still bounded regardless of track length. Both
-   levels compute the reference side's MFCC straight from the cold path's
-   cached stem file (never the raw upload, which the warm path never
-   touches at all post-M2). The stage's final `index1`/`index2`/
-   `hop_seconds` (now 10ms, not 50ms) come from level 2;
+   **ADR-0033: aligns on pitch contour, not MFCC.** Before this ADR, both
+   DTW passes ran on A2's cached MFCC -- a timbre/spectral-envelope
+   representation, the same one `timbre` uses to judge "does this voice
+   sound similar." That made alignment sensitive to *who* is singing, not
+   just *what*, so two people singing the same melody of the same song
+   could fail to align outright if their voices differed enough (the real
+   failure that motivated this change: repeated genuine attempts against
+   a user's own reference raised a structural `ALIGNMENT_FAILED`, not a
+   cost-ceiling one). This stage now extracts the user's own F0 curve
+   itself, with `dsp/pitch_detection.py::detect_gated` reading
+   `voice_audio_path(context)` (ADR-0034: the same call in both modes now
+   -- `mixed` used `dsp/melody.py::extract_melody` on the raw mixture
+   until ADR-0034 found that DSP heuristic's voicing structure didn't
+   match the reference's real, Demucs-separated silence pattern closely
+   enough for DTW to reconcile them, even on the identical song used as
+   both recording and reference; see "Mixed mode" below) -- and reads the
+   reference's curve directly off `context.reference_pitch` (cold path
+   P4 output, already cached). Each `hz` value is embedded as a 2-D point
+   on the unit circle, one full turn per octave
+   (`dsp/pitch_embedding.py::embed_pitch_curve`,
+   `theta = 2*pi * frac(log2(hz / PITCH_FMIN_HZ))`, `(cos theta, sin
+   theta)`): octave errors and natural octave differences between voices
+   no longer look like a large distance to the DTW cost function, an
+   unvoiced frame embeds to the circle's center `(0, 0)` (constant `1.0`
+   distance to any voiced point, `0.0` between two unvoiced frames, both
+   for free from plain Euclidean distance -- no special-cased branch in
+   the kernel), and the whole distance range is a small, fixed `[0, 2]`
+   (unlike MFCC's open-ended scale). `_banded_dtw_kernel`/`banded_dtw`/
+   `refine_center`/`locate_start_offset_scores` are all dimension-agnostic
+   and needed zero changes -- only the input arrays changed shape, from
+   `(n, 13)` MFCC to `(n, 2)` pitch embeddings. Raises `NO_VOICE_DETECTED`
+   here now (moved up from `pitch`, and, since ADR-0034, the one error code
+   for both modes -- `MELODY_EXTRACTION_FAILED` no longer exists) if fewer
+   than `MIN_VOICED_FRACTION = 5%` of the recording's frames are voiced --
+   alignment on pitch is exactly as unreliable as scoring on it would have
+   been without enough voice to embed, so failing before attempting a DTW
+   pass on mostly-silence is strictly earlier and more honest than the
+   previous order.
+
+   **Level 1 (coarse)**: pitch is only ever extracted at
+   `PITCH_HOP_SECONDS` (10ms) -- there is no separate coarse extraction
+   the way MFCC had one (A2's 50ms hop). The fine embedding is downsampled
+   by striding every `round(FEATURES_HOP_SECONDS / PITCH_HOP_SECONDS)`
+   (= 5) frames instead, banded around the literal diagonal, radius
+   `ALIGN_WINDOW_SECONDS = 10.0` -- deliberately not scaled by the two
+   sequences' length ratio, so a *content* mismatch at comparable lengths
+   still makes the target unreachable (the rejection spec 6.8's risk
+   table and T9 depend on). When the two lengths themselves differ by
+   more than that same band (ADR-0030: a take cut short, or one that ran
+   past the song's own end), `_crop_to_overlap` crops whichever side is
+   longer down to *exactly* the shorter side's length first -- not
+   shorter-plus-band, since both `banded_dtw` passes always force their
+   last frame to match the other side's last frame, and cropping with the
+   extra band's worth of slack would force the shorter side to be
+   stretched unnaturally across it. Recording and reference are then
+   scored on that shared overlap instead of failing outright, and the
+   stage records `length_mismatch: true` in its own `StageResult.data` --
+   `AggregateStage` turns that into a confidence step-down and a
+   `LENGTH_MISMATCH_PARTIAL_ANALYSIS` warning (spec 6.15/6.18), same shape
+   as every other confidence signal, not a failure.
+
+   ADR-0032: `_crop_to_overlap` still assumes both signals *start*
+   together, which a reference that opens with an instrumental intro
+   (sung over by a recording that only starts once the user starts
+   singing) breaks outright. When the direct (offset 0) attempt fails
+   either way -- unreachable within the band, or reachable but over
+   `ALIGN_PITCH_MAX_NORMALIZED_DISTANCE` -- `_find_reference_start_offset`
+   retries: a cheap, unwarped scan (`dsp/dtw.py::locate_start_offset_scores`,
+   deliberately not DTW, `O(n * ALIGN_MAX_START_OFFSET_SECONDS)`, not
+   `O(n * m)`, to stay within NFR-16) proposes a few candidate reference
+   start frames, and the *same* two-level pipeline re-runs against the
+   best one that passes the same ceiling. Found offsets beyond
+   `ALIGN_MAX_START_OFFSET_SECONDS = 60.0` are not searched for at all --
+   an explicit bound, not a calibrated one. Success records
+   `reference_start_offset_seconds` in `StageResult.data` (`0.0` when
+   untouched) and, when non-zero, `AggregateStage` turns it into a
+   confidence step-down and a `REFERENCE_START_OFFSET_DETECTED` warning,
+   the same shape as `LENGTH_MISMATCH_PARTIAL_ANALYSIS`. **Level 2
+   (refine)** projects that coarse path through a `TimeMap` onto
+   `PITCH_HOP_SECONDS` (10ms) resolution -- already the fine embedding's
+   own native hop, so no extra extraction happens here either -- and runs
+   a second banded pass centered on *that* projection, radius
+   `ALIGN_REFINE_WINDOW_SECONDS = 0.2` -- a small, fixed-width correction,
+   still bounded regardless of track length. The stage's final
+   `index1`/`index2`/`hop_seconds` (10ms) come from level 2;
    `coarse_normalized_distance` (level 1's own cost) is kept in
-   `StageResult.data` for observability only.
+   `StageResult.data` for observability only. `user_pitch_curve` (the same
+   `PitchCurve`-shaped payload `pitch` used to produce itself, before this
+   move) is also written into `StageResult.data`, so extraction moving here
+   changes nothing about what that stage, or anything downstream, can read.
 
    Raises `ALIGNMENT_FAILED` if the final normalized cost exceeds
-   `ALIGN_MAX_NORMALIZED_DISTANCE = 70.0` (recalibrated for this own cost
-   function's scale, not carried over from `dtw-python`'s `symmetric2` --
-   see ADR-0017; still an empirical starting point, not yet calibrated on
-   real recordings), and also if either banded pass finds the target
-   unreachable within its band at all (length/tempo diverged too far) or
-   the upfront `DTW_MAX_CELLS` cell-count guard rejects the request
+   `ALIGN_PITCH_MAX_NORMALIZED_DISTANCE = 0.45` (bounded `[0, 2]` by the
+   embedding itself; ADR-0033's own comment in `constants.py` records
+   real measurements against synthetic fixtures -- legitimate variation
+   such as an octave shift or off-pitch singing stayed under 0.1, a
+   genuinely different melody at comparable length measured 0.55-0.81 --
+   still not calibrated against real singing, spec 19), and also if
+   either banded pass finds the (already length-compatible, post-crop)
+   target unreachable within its band at all -- once ADR-0032's offset
+   search has also failed to find a reference start frame that works,
+   meaning content genuinely diverged, not just length or start position
+   -- or the upfront `DTW_MAX_CELLS` cell-count guard rejects the request
    outright (`ALIGNMENT_TOO_LARGE`) -- all non-retryable, like any other
    alignment failure.
 
@@ -206,30 +325,20 @@ checks both orderings score identically.
    don't cover exactly the same duration, and naively clamping instead of
    extrapolating past the coarse path's own range collapsed the last
    ~40 frames of a real track onto one center value.
-8. **`pitch`** (A4) -- tracks the user recording's fundamental frequency
-   the same way P4 already tracked the reference's (`PITCH_HOP_SECONDS =
-   0.01`, same range, same `PITCH_ENGINE`, same VAD gate,
-   `dsp/pitch_detection.py::detect_gated`). Reads `context.reference_pitch`
-   directly -- the cold path's P4 output, always already populated by the
-   time an analysis's warm path can run at all -- rather than computing or
-   caching anything reference-side itself; pre-M2, this same stage also
-   computed (and, via the job handler, cached) the reference curve on a
-   song's first analysis.
+8. **`pitch`** (A4) -- ADR-0033: scoring only. The user's F0 curve is
+   extracted by `align` (A3) now, not here -- align needs it first, to
+   align on melody rather than MFCC -- so this stage just reads
+   `context.result("align").data["user_pitch_curve"]` back instead of
+   re-running the same detector a second time (`PITCH_HOP_SECONDS = 0.01`,
+   same range, same `PITCH_ENGINE`, same VAD gate as before the move). The
+   voiced-fraction floor (`NO_VOICE_DETECTED`, `MIN_VOICED_FRACTION = 5%`)
+   moved with the extraction, to A3, for the same reason -- see A3 above.
+   Reads `context.reference_pitch` directly -- the cold path's P4 output,
+   always already populated by the time an analysis's warm path can run
+   at all -- rather than computing or caching anything reference-side
+   itself; pre-M2, this same stage also computed (and, via the job
+   handler, cached) the reference curve on a song's first analysis.
 
-   **VAD-gated (M1, spec 6.5, ADR-0023).** Per-frame pitch detection was
-   the single most expensive warm-path stage measured on real audio
-   (`docs/PERFORMANCE.md`: 60% of total wall time before M1). `dsp/vad.py`
-   reuses `breath`'s relative-RMS-to-peak silence definition
-   (`BREATH_SILENCE_RELATIVE_DB`) against A2's cached fine RMS envelope to
-   build a voiced-frame mask (a silent run shorter than
-   `VAD_MIN_SILENT_RUN_SECONDS = 0.3` is folded back to voiced -- not worth
-   gating); the detector then runs once per voiced span instead of once
-   over the whole track, with every other frame filled `None` directly. An
-   interim, energy-based stand-in for spec 6.6's eventual Silero VAD --
-   see ADR-0023 for why, and what changes when that lands.
-
-   Raises `NO_VOICE_DETECTED` if fewer than `MIN_VOICED_FRACTION = 5%` of
-   the recording's frames are voiced.
    Deviation is cents (`1200 * log2(user_hz / reference_hz)`) at each user
    frame, looked up against the reference curve through A3's `TimeMap`
    (`_align_and_compare`); this stage's own 0-100 score is
@@ -296,13 +405,18 @@ checks both orderings score identically.
     `BREATH_PAUSE_MATCH_TOLERANCE_SECONDS = 0.5` of the expected time, it
     counts as matched. Score is `100 * matched / reference_pause_count`
     (100 if the reference has no pauses to match against at all).
-14. **`recording_condition`** (A10, spec 2.3, 6.16, reworked M3) -- a soft,
-    non-blocking classifier for accompaniment in the user's own recording,
-    which (per ADR-0003/spec 2.3) is never run through Demucs, so there is
-    no real source separation to lean on here. Reuses stage `"pitch"`'s
-    per-frame voiced/unvoiced classification (whichever of `PitchStage`/
-    `MelodyPitchStage` actually ran, spec 12.3 -- this stage runs
-    identically in both modes) plus A2's cached fine RMS envelope:
+14. **`recording_condition`** (A10, spec 2.3, 6.16, reworked M3, ADR-0034)
+    -- a soft, non-blocking classifier for accompaniment in the user's own
+    recording. Reuses stage `"pitch"`'s per-frame voiced/unvoiced
+    classification (a single `PitchStage` now covers both modes, spec 12.3
+    -- this stage runs identically in both) plus its own fresh RMS pass
+    (`dsp/features.py::compute_rms_envelope`) over A1's **raw,
+    pre-separation** recording -- deliberately not A2's cached RMS, which
+    in `mixed` is now computed from A1b's Demucs-separated stem (ADR-0034).
+    Reading the stem here would defeat this stage's entire purpose: it
+    exists to detect accompaniment the user actually recorded, and a stem
+    that already had real accompaniment removed would report every `mixed`
+    recording as suspiciously "clean" regardless of what was really there.
     `accompaniment_level = median(RMS of unvoiced frames) / median(RMS of
     voiced frames)` (spec 6.16). Below `RECORDING_CONDITION_MIN_UNVOICED_FRAMES
     = 10` unvoiced frames the ratio is reported as `0` rather than computed
@@ -329,8 +443,13 @@ checks both orderings score identically.
     computed signals, and `unavailable_aspects_for(mode)` (FR-41: the
     aspects this mode never scores, each with a machine-readable reason,
     never a bare `0`). `pipeline/report.py` builds the FR-32 text report
-    from the *same* stage data: one summary line naming the lowest-scoring
-    *available* aspect as the suggested focus, one paragraph per available
+    from the *same* stage data, in `context.locale` (ADR-0031: "en" or
+    "uk", the caller's own choice at `POST /analyses`, fixed for this
+    analysis at creation the same way `mode` is) -- which outcome applies
+    (tier, matched-pause count, ...) is decided once regardless of locale,
+    only the final phrase-template lookup differs per language: one
+    summary line naming the lowest-scoring *available* aspect as the
+    suggested focus, one paragraph per available
     aspect in spec 6.4 order, each grounded in that aspect's own numbers
     rather than generic advice, then one block per unavailable aspect
     explaining why (spec 6.19) -- never just silently missing. Feedback is
@@ -361,26 +480,50 @@ checks both orderings score identically.
     progress chart can tell a `clean` point from a `mixed` one without a
     second query.
 
-## Mixed mode (M3, spec 6.6, 6.8, 6.14-6.16)
+## Mixed mode (M3, spec 6.6, 6.8, 6.14-6.16; pitch source reworked by ADR-0034)
 
 `mixed` runs the same warm-path stage list as `clean`, but
 `PipelineRunner.run(mode=...)` (spec 12.3) filters out any stage whose
 `modes` excludes it *before* the run starts (`worker.py::build_stages`
-builds one static list covering both modes). Three stages differ:
+builds one static list covering both modes). Two stages differ:
 
-- **`pitch` via `MelodyPitchStage`** (`pipeline/stages/melody.py`,
-  `modes={"mixed"}`) instead of `PitchStage` (`modes={"clean"}`) -- both
-  write to the *same* stage name, so `key_normalization`, the aspect
-  stages, `aggregate`, and the job handler's score persistence never know
-  or care which one ran (ADR-0027). The F0 curve itself comes from
-  `dsp/melody.py::extract_melody`: harmonic-summation salience over the
-  mixture's own STFT, with a rolling per-candidate background subtraction
-  that tells a moving melody line apart from a held accompaniment note --
-  not the ONNX model spec 6.6 originally named (ADR-0025 has the go
-  decision and the measured accuracy, `tests/test_melody_extraction.py`,
-  T4).
+- **`separate_recording`** (A1b, `pipeline/stages/separate_recording.py`,
+  `modes={"mixed"}`) runs right after `preprocess`, isolating the user's
+  vocal with Demucs -- the same `VocalSeparator` `separate_reference` (P2)
+  already uses on the reference, just pointed at the recording instead.
+  Its stem then flows through `voice_audio_path(context)` into `features`
+  and `align`, so `pitch` (A4) needs no `mixed`-specific code at all
+  anymore: one `PitchStage` (`modes` = both) scores whatever curve `align`
+  produced, exactly the same way regardless of mode.
+
+  **Why this replaced melody extraction.** M3 originally shipped a DSP
+  heuristic here instead (`dsp/melody.py::extract_melody`, ADR-0025):
+  harmonic-summation salience read directly off the still-mixed recording,
+  cheap and measured accurate enough on synthetic fixtures to clear the
+  M3 spike's 50-cent bar. In real use it caused a genuine, repeated
+  `ALIGNMENT_FAILED` -- including on a recording sung to *the same song*
+  used as its own reference. Root cause: the heuristic reported ~87.5% of
+  a real recording as "voiced," including confidently through purely
+  instrumental sections, while the reference's real Demucs-separated
+  stem for the same song was genuinely only ~60% voiced (measured: ~63s of
+  real instrumental gaps across 6 breaks, RMS -45 to -60 dB relative to
+  peak there vs -4.6 dB during real vocal content). The two pitch curves'
+  silence structure disagreed enough that DTW's warping path saturated at
+  the band edges even with a generous ±10s band, regardless of ADR-0033's
+  pitch-contour embedding (tested, ruled out as a fix on its own -- the
+  problem was upstream of what alignment's own distance metric could
+  paper over). Separating the recording the same way the reference already
+  is removes the structural asymmetry at its source: both sides now come
+  from the same kind of processing, so their silence patterns are
+  comparable again. See `docs/adr/0034` for the full measurement and the
+  alternatives considered (tuning the heuristic instead; keeping it as a
+  fast-path fallback).
 - **`timbre`/`breath`** (`modes={"clean"}`) do not run in `mixed` at all --
-  structurally unavailable (FR-41's `null`), not merely unreliable.
+  structurally unavailable (FR-41's `null`), not merely unreliable. This
+  did not change with ADR-0034: even though `mixed`'s pitch curve now comes
+  from a real separated stem, Demucs separation artifacts (musical noise,
+  formant smearing) would make timbre/breath actively misleading if scored,
+  not merely imprecise -- `mixed_v1`'s aspect set stays four, not six.
 - **`key_normalization`** (`pipeline/stages/key_normalization.py`, spec
   6.8) runs in *both* modes, but only ever applies a shift if
   `context.mode == "mixed"` or the user opted into `allow_transposition`
@@ -475,8 +618,7 @@ recomputed.
 | `error_code` | Raised by | Retryable |
 |---|---|---|
 | `REFERENCE_TOO_QUIET` | P2 (`separate_reference`) | no |
-| `NO_VOICE_DETECTED` | A4 (`pitch`, `PitchStage`, `clean` only) | no |
-| `MELODY_EXTRACTION_FAILED` | A4 (`pitch`, `MelodyPitchStage`, `mixed` only, M3, spec 6.6) | no |
+| `NO_VOICE_DETECTED` | A1b (`separate_recording`, `mixed` only, ADR-0034: too-quiet stem) or A3 (`align`, both modes, ADR-0033: moved from A4) | no |
 | `ALIGNMENT_FAILED` | A3 (`align`) | no |
 | `ALIGNMENT_TOO_LARGE` | A3 (`align`), `DTW_MAX_CELLS` guard (M1, spec 6.7, NFR-16) | no |
 | `TIMEOUT` | the runner, on any stage exceeding its budget | yes, up to `MAX_STAGE_RETRIES = 2` |
@@ -530,7 +672,7 @@ anticipated and prescribed this same fallback for.
 ## Known limitations (not yet calibrated)
 
 Every threshold named above with "empirical"/"starting point" language
-(`ALIGN_MAX_NORMALIZED_DISTANCE`, `MIN_VOCAL_LOUDNESS_LUFS`,
+(`ALIGN_PITCH_MAX_NORMALIZED_DISTANCE`, `MIN_VOCAL_LOUDNESS_LUFS`,
 `VIBRATO_*`, `BREATH_*`, `RHYTHM_ONSET_TOLERANCE_MS`,
 `PITCH_SCORE_CENTS_FOR_ZERO`, `FEEDBACK_EXCELLENT_THRESHOLD` /
 `FEEDBACK_GOOD_THRESHOLD` / `FEEDBACK_FAIR_THRESHOLD`,
@@ -555,29 +697,30 @@ DSP heuristic, not a real classifier: it only catches accompaniment loud
 enough, relative to the vocal, to move the unvoiced/voiced RMS ratio past
 `ACCOMPANIMENT_DETECT_THRESHOLD = 0.15`. Quiet background music, or music
 that happens to share the vocal's pitch range densely enough to still read
-as "voiced" to the pitch/melody stage, will not trip it. This threshold is
+as "voiced" to the pitch stage, will not trip it. This threshold is
 exactly the kind of "starting point, not calibrated" value the rest of
-this section already flags.
+this section already flags. ADR-0034 does not change this stage's own
+detection logic, only which audio it measures (A1's raw recording, never
+A1b's stem) -- see the stage-details entry above.
 
 M3's mode reconciliation (FR-29/FR-30) is diagnostic, not stage-selecting
 (`docs/adr/0026`): a `mixed`-declared analysis A3 finds is actually a
-cappella still pays melody extraction's cost and does not unlock
-timbre/breath in the same run, only reports `effective_mode`/a warning
-suggesting a `clean` retry. Revisit if this proves common in practice
-(spec 19 already names "users always pick `mixed`" as a risk).
+cappella still pays Demucs separation's cost (A1b, ADR-0034 -- previously
+melody extraction's, before that ADR) and does not unlock timbre/breath in
+the same run, only reports `effective_mode`/a warning suggesting a `clean`
+retry. Revisit if this proves common in practice (spec 19 already names
+"users always pick `mixed`" as a risk) -- ADR-0034 makes this a more
+expensive mistake to pay for than melody extraction was, not just a
+slower one.
 
-`dsp/melody.py`'s known limitation (ADR-0025): a note held perfectly
-steady, without vibrato or portamento, for longer than
-`MELODY_BACKGROUND_WINDOW_SECONDS = 0.6` gets partly suppressed by its own
-recent history, the same as a static accompaniment note would be --
-mitigated, not eliminated, by feeding its own voicing ratio into the
-confidence model (spec 6.15) rather than reporting an unqualified score.
-
-NFR-01c (mixed warm path, <=150s) is only partially measured: `dsp/melody.py`'s
-own cost was measured directly on synthetic audio at several durations (see
-`docs/PERFORMANCE.md`), but the full mixed warm path has not yet had a real
-end-to-end run the way M1/M2's `clean`-path numbers did (no real `mixed`
-test recording -- vocal plus accompaniment -- was available this session).
-The estimate in `docs/PERFORMANCE.md` combines measured numbers from both
-milestones; treat it as a reasonable estimate; re-measure end-to-end before
-this is considered fully validated.
+NFR-01c (mixed warm path) is only partially measured, and its own budget
+changed with ADR-0034: raised from 150s to 300s to accommodate A1b's
+Demucs pass. `separate_reference`'s Demucs cost (the same model, same
+`VocalSeparator`) has been measured directly at 90.7s for a 225s track on
+a 12 vCPU dev machine (`docs/PERFORMANCE.md`) -- a reasonable stand-in
+estimate for A1b's own cost, not a direct measurement of it, since it ran
+on the reference, not a user recording, and not on the 4 vCPU target
+hardware. The full mixed warm path, including A1b, has not yet had a real
+end-to-end run the way M1/M2's `clean`-path numbers did. Re-measure and
+record real numbers in `docs/PERFORMANCE.md` before NFR-01c is considered
+validated the way NFR-01a/NFR-01b now are.

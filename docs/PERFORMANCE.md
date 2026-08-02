@@ -23,14 +23,15 @@ The 6.11 thread-pinning behavior itself is covered by
 
 Reproduced from spec 6.17 (this file tracks measurements; the spec holds
 the contract). Spec 6.17's own stage labels (A1 decode, A2 VAD, A3 input
-classification, ...) are the *budget table's* abstract stage numbering,
-which includes `mixed`-mode stages (A3 input classification, A4 melody
-extraction, A8 key normalization) not yet implemented -- M3's scope, per
-the milestone table. This codebase's actual stage names/numbers (spec
-6.4/6.5, `docs/ML_PIPELINE.md`) differ in detail (e.g. this codebase's own
-A2 is `features`, not VAD -- VAD is a gate inside `pitch`, not a separate
-stage); the budget rows below are matched to the closest real stage each
-names, not renamed to match.
+classification, ...) are the *budget table's* abstract stage numbering.
+This codebase's actual stage names/numbers (spec 6.4/6.5,
+`docs/ML_PIPELINE.md`) differ in detail (e.g. this codebase's own A2 is
+`features`, not VAD -- VAD is a gate inside `pitch`, not a separate stage);
+the budget rows below are matched to the closest real stage each names,
+not renamed to match. `mixed`'s A4 row originally named melody extraction;
+ADR-0034 replaced that with `separate_recording` (A1b in this codebase's
+own numbering, `docs/ML_PIPELINE.md`) and raised NFR-01c's ceiling from
+150s to 300s to make room for it -- see that ADR for why.
 
 **Cold path (M2, spec 6.4, asynchronous, once per song):**
 
@@ -58,20 +59,26 @@ of this path; the table below is the post-M2 shape):**
 | A10 aggregation/report | 3s |
 | **Total** | **≤ 86s** (NFR-01b: 90s) |
 
-**Warm path, `mixed` mode (M3, spec 6.17): the same path without A5, plus A4:**
+**Warm path, `mixed` mode (M3, spec 6.17; A4 row reworked by ADR-0034): the
+same path without A5, plus recording separation:**
 
 | Stage | Budget |
 |---|---|
 | A1 decode/normalize | 12s |
+| A1b `separate_recording` (Demucs, `mixed` only, ADR-0034) | 210s |
 | A2 VAD | 5s |
 | A3 input classification | 4s |
-| A4 melody extraction (mixed only, spec 6.6/M3) | 60s |
 | A6 shared feature cache | 12s |
 | A7 two-level DTW | 15s |
 | A8 key normalization | 2s |
 | A9 aspect stages (parallel, no timbre/breath) | 15s |
 | A10 aggregation/report | 3s |
-| **Total** | **≤ 128s** (NFR-01c: 150s) |
+| **Total** | **≤ 278s** (NFR-01c: 300s) |
+
+A1b's 210s budget is a safety margin derived from `separate_reference`'s
+own measured Demucs cost (see "Latest measurements" below), not a fresh
+measurement of `separate_recording` itself -- flagged in "Known gaps"
+below.
 
 ## Latest measurements
 
@@ -228,7 +235,15 @@ the pre-M2 warm path already had.
 - Not yet measured against the eventual 4 vCPU/8 GB production VPS shape
   (spec 16.3) -- neither was M1's.
 
-## M3 measurement: NFR-01c (mixed warm path) -- partial
+## M3 measurement: NFR-01c (mixed warm path) -- partial, superseded
+
+**Superseded by ADR-0034 (2026-08-02):** the stage measured throughout this
+section, `dsp/melody.py::extract_melody`, no longer exists -- `mixed` now
+separates the recording with Demucs (`separate_recording`, A1b) instead of
+extracting F0 from the raw mixture. Kept below unedited as the historical
+record of the M3 spike's own measurement; it no longer describes the
+mixed-mode pipeline's actual cost. See "M3.1 estimate" further down for the
+current (still unmeasured end-to-end) picture.
 
 **Date:** 2026-07-31
 **Commit:** M3 branch (`feat/m3-mixed-mode-spike`).
@@ -286,10 +301,52 @@ sessions' measurements rather than one real end-to-end run, the margin
 (~20s against a 150s ceiling) is wide enough that the composition method
 itself is very unlikely to be hiding a budget violation -- A4 would have
 to be roughly 6x slower than measured, on top of every other component
-being free, before this got close to 150s. Re-measure end-to-end once a
-real `mixed` test recording exists (see "Known limitations" in
-`docs/ML_PIPELINE.md`) before treating NFR-01c as fully validated the way
-NFR-01a/NFR-01b now are.
+being free, before this got close to 150s. This margin, and the ~20s
+total, no longer apply post-ADR-0034 -- see "M3.1 estimate" below.
+
+## M3.1 measurement: NFR-01c under ADR-0034 -- partial, real recording
+
+**Date:** 2026-08-02. **Machine:** same development machine as M1/M2/M3
+(12 vCPU, 31 GB RAM) -- same production-VPS caveat as every prior
+measurement here; not yet re-measured on 4 vCPU.
+
+**Methodology:** unlike M3's original melody-extraction table (synthetic
+mixtures only, no real `mixed` recording existed in that environment),
+this run used real files already on disk in the dev stack: a real
+165.168s song's Demucs-separated reference stem, and a real recording
+upload of the *same* track submitted as a `mixed`-mode analysis (the
+literal case that motivated ADR-0034 -- it had failed `ALIGNMENT_FAILED`
+against this exact reference before the fix). Each stage's `.run()` was
+called directly, in `worker.build_stages`'s own order, inside the running
+`python-worker` dev container -- real Demucs, real `crepe` pitch
+detection, not fakes. `A9`/`A10` are not included below (not run in this
+pass); carried forward from the M1 table as before (mode-independent,
+already measured, well under 50ms combined).
+
+| Stage | Measured | Prior figure (M2 `clean`/substituted) |
+|---|---:|---:|
+| A1 `preprocess` | 0.4s | 0.6s |
+| A1b `separate_recording` (Demucs, real 165s recording) | 113.1s | ~90.7s (substituted from P2, shorter track) |
+| A6 `features` | 0.8s | 1.8s |
+| A7 `align` (real `crepe` pitch extraction + two-level DTW) | 14.4s | 2.1s (`clean`-path figure; that table's A7 likely didn't carry the same full-track pitch-extraction cost `align` now does before its DTW passes) |
+| **Running total (A1+A1b+A6+A7)** | **~128.7s** | -- |
+| **Estimated total incl. A9/A10** | **~128.8s** | **≤ 278s** (NFR-01c: 300s), ~43% of budget on 12 vCPU |
+
+**Result:** `align` succeeded -- `normalized_distance = 0.0238` (ceiling
+`ALIGN_PITCH_MAX_NORMALIZED_DISTANCE = 0.45`), `length_mismatch = false`
+-- where the same song, same reference, used to raise `ALIGNMENT_FAILED`
+before this change. `PitchStage` scored 89.9/100 (expected to be high:
+recording and reference are the same underlying song, each independently
+Demucs-separated).
+
+**Still open:** this is one real run, on 12 vCPU, on a studio-quality
+source re-used as both sides -- not a genuinely noisy self-recording (mic
+bleed, inconsistent levels), and not 4 vCPU. P2's own budget line already
+allows up to 420s for the same Demucs call on a longer reference, well
+above the 113.1s measured here for 165s -- read A1b's real-world worst
+case against that range, not this one data point. Re-measure on 4 vCPU
+and on a genuinely noisy real recording before treating NFR-01c as
+validated the way NFR-01a/NFR-01b now are.
 
 ## Optimisation log
 

@@ -98,6 +98,7 @@ class DemucsSeparator:
 
     def separate_vocals(self, mixture: np.ndarray, sample_rate_hz: int) -> np.ndarray:
         import torch
+        from demucs.audio import convert_audio
 
         separator = self._loaded()
         # Demucs' pretrained models are trained on stereo mixtures; stage 1
@@ -107,7 +108,25 @@ class DemucsSeparator:
         wav = torch.from_numpy(stereo).float()
         _origin, stems = separator.separate_tensor(wav, sr=sample_rate_hz)
         vocals = stems["vocals"]
-        return np.asarray(vocals.mean(dim=0).cpu().numpy())
+        # separate_tensor's own docstring: "the wave will be resampled if it
+        # doesn't match the model" -- htdemucs' native rate is 44.1kHz, so
+        # for any other sample_rate_hz (this pipeline runs at 22050) `vocals`
+        # comes back at 44100 regardless of what was passed in, silently
+        # violating this method's own contract (VocalSeparator: "same sample
+        # rate ... as mixture"). Every caller downstream trusted the
+        # original sample_rate_hz when writing this array back out to a WAV
+        # (write_mono in separate_reference.py), so the file's declared rate
+        # didn't match its real sample count -- every reader computed
+        # exactly double the true duration from it (a 165s song's vocal stem
+        # read back as 330s), which is what made P4's reference pitch curve
+        # roughly 2x the size it should be and made every alignment against
+        # it fail outright (features.py's frame counts no longer had a
+        # remotely reachable DTW path against the recording's correct ones).
+        # Converting back to sample_rate_hz here is what the contract always
+        # promised. channels=1 also downmixes stereo to mono in the same
+        # call (demucs.audio.convert_audio_channels: wav.mean(dim=-2)).
+        mono = convert_audio(vocals, separator.samplerate, sample_rate_hz, 1)
+        return np.asarray(mono[0].cpu().numpy())
 
     def release(self) -> None:
         self._separator = None

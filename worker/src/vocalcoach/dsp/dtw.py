@@ -184,6 +184,48 @@ def banded_dtw(
     )
 
 
+@numba.njit(cache=True)
+def _start_offset_scores_kernel(a: np.ndarray, b: np.ndarray, max_offset: int) -> np.ndarray:
+    n = a.shape[0]
+    m = b.shape[0]
+    d = a.shape[1]
+    scores = np.full(max_offset + 1, np.inf, dtype=np.float64)
+    for k in range(max_offset + 1):
+        count = min(n, m - k)
+        if count <= 0:
+            continue
+        total = 0.0
+        for i in range(count):
+            dist = 0.0
+            for c in range(d):
+                diff = a[i, c] - b[k + i, c]
+                dist += diff * diff
+            total += np.sqrt(dist)
+        scores[k] = total / count
+    return scores
+
+
+def locate_start_offset_scores(
+    user_mfcc: np.ndarray, reference_mfcc: np.ndarray, max_offset: int
+) -> np.ndarray:
+    """ADR-0032 phase 1: a cheap, unwarped scan for where in `reference_mfcc`
+    `user_mfcc`'s own start plausibly corresponds to -- a reference that
+    opens with an instrumental intro the recording didn't include, so
+    frame 0 of the recording is actually frame `k` of the reference, not
+    frame 0. `scores[k]` is the mean (unwarped, no DTW) frame-by-frame
+    Euclidean distance between `user_mfcc` and `reference_mfcc[k : k + n]`
+    for every candidate `k` in `[0, max_offset]` -- lower is a better
+    candidate, `inf` where fewer than one reference frame remains from `k`
+    onward. Deliberately not DTW: `O(n * max_offset)`, independent of the
+    reference's own total length, cheap enough to try many candidates
+    before handing the best few to the real (banded, tempo-tolerant)
+    pipeline to verify.
+    """
+    if max_offset < 0:
+        return np.zeros(0, dtype=np.float64)
+    return _start_offset_scores_kernel(user_mfcc, reference_mfcc, max_offset)
+
+
 def refine_center(
     coarse: WarpingPath,
     coarse_hop_seconds: float,

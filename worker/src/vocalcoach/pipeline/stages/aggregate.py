@@ -68,7 +68,8 @@ class AggregateStage(PipelineStage[AnalysisContext]):
             recording_condition["accompaniment_detected"]
         )
         pitch_result = context.result("pitch").data
-        align_cost = float(context.result("align").data["normalized_distance"])
+        align_result = context.result("align").data
+        align_cost = float(align_result["normalized_distance"])
 
         confidence = compute_confidence(
             ConfidenceSignals(
@@ -77,6 +78,11 @@ class AggregateStage(PipelineStage[AnalysisContext]):
                 voiced_ratio=float(pitch_result["voiced_fraction"]),
                 alignment_cost=align_cost,
                 key_shift_out_of_range=bool(key_normalization["out_of_range"]),
+                length_mismatch=bool(align_result["length_mismatch"]),
+                reference_start_offset_detected=float(
+                    align_result["reference_start_offset_seconds"]
+                )
+                > 0,
             )
         )
         warnings = [*recording_condition["warnings"], *confidence.warnings]
@@ -88,6 +94,7 @@ class AggregateStage(PipelineStage[AnalysisContext]):
             aspects=aspects,
             unavailable_aspects=unavailable_aspects,
             background_music_warning=accompaniment_in_clean,
+            locale=context.locale,
         )
 
         return StageResult(

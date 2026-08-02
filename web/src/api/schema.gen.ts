@@ -402,7 +402,7 @@ export interface components {
       artist?: string
       /**
        * Format: binary
-       * @description Required for source_type=upload. mp3/wav/m4a/flac/ogg, checked by magic bytes.
+       * @description Required for source_type=upload. mp3/wav/m4a/flac/ogg/webm, checked by magic bytes.
        */
       file?: string
       /** @description Required for source_type=youtube. Must be a youtube.com/youtu.be link. */
@@ -450,8 +450,14 @@ export interface components {
       /** @description Whether the user may have sung in a different key (FR-31, spec 6.8). Defaults to `false` for `clean` and `true` for `mixed` when omitted. */
       allow_transposition?: boolean
       /**
+       * @description Language the FR-32 feedback report is written in (ADR-0031). Fixed for this analysis at creation time; a later UI language switch never retroactively re-renders it. Defaults to `en` when omitted.
+       * @default en
+       * @enum {string}
+       */
+      locale: 'en' | 'uk'
+      /**
        * Format: binary
-       * @description The user's recording. mp3/wav/m4a/flac/ogg, checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
+       * @description The user's recording. mp3/wav/m4a/flac/ogg/webm (the last is what MediaRecorder produces in-browser on Chrome/Firefox, FR-20), checked by magic bytes, ≤ MAX_AUDIO_SECONDS.
        */
       recording: string
     }
@@ -516,7 +522,7 @@ export interface components {
       aspect_confidence?: {
         [key: string]: 'high' | 'medium' | 'low'
       }
-      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`. The client localizes these to a human-readable message rather than showing the code (FR-47). */
+      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`, `LENGTH_MISMATCH_PARTIAL_ANALYSIS` (ADR-0030: the recording and reference were cropped to a shared overlap before aligning), `REFERENCE_START_OFFSET_DETECTED` (ADR-0032: the reference's own start was adjusted to where the recording actually begins, e.g. an instrumental intro the recording didn't include). The client localizes these to a human-readable message rather than showing the code (FR-47). */
       warnings?: string[]
       /** @description Every aspect this mode does not score, mapped to a machine-readable reason (FR-41) -- e.g. `breath`/`timbre` under `NOT_MEASURABLE_WITH_ACCOMPANIMENT` in `mixed`. An aspect listed here is never also present as a `0` in its `*_score` field: it is simply absent there. */
       unavailable_aspects?: {
@@ -527,6 +533,11 @@ export interface components {
       piano_roll?: components['schemas']['PianoRoll']
       /** Format: date-time */
       created_at: string
+      /**
+       * Format: date-time
+       * @description When the *current* queued/waiting_for_reference wait began. Equal to created_at for a fresh submission; reset to the retry time by POST /analyses/{id}/retry (FR-26), so a client's live wait timer never measures from a stale original submission.
+       */
+      queued_at: string
       /** Format: date-time */
       completed_at?: string
     }
@@ -1121,7 +1132,7 @@ export interface operations {
     }
     requestBody?: never
     responses: {
-      /** @description Re-queued. Position updates follow over the WebSocket channel. */
+      /** @description Re-queued, or back to waiting_for_reference if the song's cold path still hasn't reached ready (spec 6.2, 10.3, FR-16) -- same duality as enqueueAnalysis. Position updates follow over the WebSocket channel. */
       202: {
         headers: {
           [name: string]: unknown
@@ -1140,7 +1151,7 @@ export interface operations {
           'application/problem+json': components['schemas']['Problem']
         }
       }
-      /** @description The analysis is not in the failed state (`ANALYSIS_NOT_FAILED`). */
+      /** @description Either the analysis is not in the failed state (`ANALYSIS_NOT_FAILED`), or its song's cold path itself failed (`REFERENCE_PREP_FAILED`, FR-17) -- restart the song's prep (POST /songs/{id}/prepare) before retrying this analysis again. */
       409: {
         headers: {
           [name: string]: unknown

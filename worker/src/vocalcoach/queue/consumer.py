@@ -125,7 +125,7 @@ class Consumer:
                 "stream entry missing job_id, dropping",
                 extra={"stream": self._stream_name, "entry_id": entry_id},
             )
-            self._client.xack(self._stream_name, self._group_name, entry_id)
+            self._ack_and_remove(entry_id)
             return
 
         logger.info(
@@ -141,7 +141,7 @@ class Consumer:
             )
             return
         if terminal:
-            self._client.xack(self._stream_name, self._group_name, entry_id)
+            self._ack_and_remove(entry_id)
 
     def claim_new_entries(self) -> None:
         """Delivers every currently-undelivered entry to this consumer's
@@ -240,4 +240,18 @@ class Consumer:
                     extra={"stream": self._stream_name, "job_id": job_id},
                 )
                 self._handler.mark_permanently_failed(job_id)
+        self._ack_and_remove(entry_id)
+
+    def _ack_and_remove(self, entry_id: str) -> None:
+        """A stream entry an outcome was already recorded for (spec 10.1:
+        Postgres's status column is the source of truth) must not keep
+        counting against `Producer.Length`'s `XLEN`-based queue-full check
+        (spec 10, FR-24) forever -- `XACK` alone only clears this consumer
+        group's pending-entries list, it does not shrink the stream, so
+        without this the queue would eventually read as permanently full
+        regardless of how many jobs are actually in flight. Best-effort,
+        same as `Producer.Remove`'s own `XDEL`: Postgres already has the
+        real outcome by the time this runs.
+        """
         self._client.xack(self._stream_name, self._group_name, entry_id)
+        self._client.xdel(self._stream_name, entry_id)

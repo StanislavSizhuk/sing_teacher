@@ -49,7 +49,7 @@ def harmonic_tone(
     """A harmonic-rich tone tracking `f0_curve` (one Hz value per sample),
     each successive harmonic quieter than the last -- closer to a sung voice
     than `sine_wave`'s single partial, which matters for anything exercising
-    harmonic structure (spec 6.6 melody extraction, T4)."""
+    harmonic structure (e.g. pitch detection on a real vocal timbre)."""
     phase = 2 * np.pi * np.cumsum(f0_curve) / sample_rate_hz
     signal = np.zeros(len(f0_curve), dtype=np.float64)
     for harmonic in range(1, n_harmonics + 1):

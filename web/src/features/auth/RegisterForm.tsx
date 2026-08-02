@@ -5,6 +5,7 @@ import { register } from '../../api/client'
 import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { TextField } from '../../components/TextField'
+import { useTranslation } from '../../i18n/useTranslation'
 
 interface RegisterFormProps {
   onRegistered: (email: string) => void
@@ -12,6 +13,7 @@ interface RegisterFormProps {
 }
 
 export function RegisterForm({ onRegistered, onHaveAccount }: RegisterFormProps) {
+  const t = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -28,9 +30,9 @@ export function RegisterForm({ onRegistered, onHaveAccount }: RegisterFormProps)
 
   return (
     <form onSubmit={handleSubmit} className="flex w-full max-w-sm flex-col gap-4">
-      <h1 className="text-ink-950 text-lg font-semibold">Create an account</h1>
+      <h1 className="text-ink-950 text-lg font-semibold">{t.register.heading}</h1>
       <TextField
-        label="Display name"
+        label={t.register.displayName}
         value={displayName}
         onChange={(e) => setDisplayName(e.target.value)}
         required
@@ -38,7 +40,7 @@ export function RegisterForm({ onRegistered, onHaveAccount }: RegisterFormProps)
         autoComplete="name"
       />
       <TextField
-        label="Email"
+        label={t.register.email}
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -47,7 +49,7 @@ export function RegisterForm({ onRegistered, onHaveAccount }: RegisterFormProps)
         autoComplete="email"
       />
       <TextField
-        label="Password"
+        label={t.register.password}
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
@@ -58,14 +60,14 @@ export function RegisterForm({ onRegistered, onHaveAccount }: RegisterFormProps)
         aria-describedby="password-hint"
       />
       <p id="password-hint" className="text-ink-500 text-xs">
-        At least 10 characters. Avoid common passwords.
+        {t.register.passwordHint}
       </p>
       <ErrorAlert error={mutation.error} />
       <Button type="submit" disabled={mutation.isPending}>
-        {mutation.isPending ? 'Creating account…' : 'Create account'}
+        {mutation.isPending ? t.register.submitPending : t.register.submit}
       </Button>
       <button type="button" onClick={onHaveAccount} className="text-ink-700 text-sm underline">
-        Already have an account? Log in
+        {t.register.haveAccount}
       </button>
     </form>
   )

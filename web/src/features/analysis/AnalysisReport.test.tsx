@@ -9,6 +9,8 @@ function baseAnalysis(overrides: Partial<Analysis> = {}): Analysis {
     id: 'a1',
     songId: 's1',
     status: 'done',
+    createdAt: '2026-01-01T00:00:00Z',
+    queuedAt: '2026-01-01T00:00:00Z',
     mode: 'clean',
     aspectScores: { pitch: 80, rhythm: 70, breath: 60, dynamics: 90, vibrato: 50, timbre: 40 },
     overallScore: 65,
@@ -50,7 +52,7 @@ describe('AnalysisReport', () => {
   it('shows the confidence level and its explanation', () => {
     render(<AnalysisReport analysis={baseAnalysis({ confidence: 'low' })} />)
 
-    expect(screen.getByText('Low confidence')).toBeInTheDocument()
+    expect(screen.getByText('Recording conditions: limited')).toBeInTheDocument()
     expect(screen.getByText(/rough/)).toBeInTheDocument()
   })
 

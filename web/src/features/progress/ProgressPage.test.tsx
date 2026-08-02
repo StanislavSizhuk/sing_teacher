@@ -1,15 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ProgressPoint } from '../../api/client'
+import type { Analysis, ProgressPoint } from '../../api/client'
 import { ProgressPage } from './ProgressPage'
 
-const { getProgressMock } = vi.hoisted(() => ({ getProgressMock: vi.fn() }))
+const { getProgressMock, getAnalysisMock } = vi.hoisted(() => ({
+  getProgressMock: vi.fn(),
+  getAnalysisMock: vi.fn(),
+}))
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>()
-  return { ...actual, getProgress: getProgressMock }
+  return { ...actual, getProgress: getProgressMock, getAnalysis: getAnalysisMock }
 })
 
 function renderPage() {
@@ -46,5 +50,40 @@ describe('ProgressPage', () => {
     await screen.findByText(/aren't directly comparable/)
     expect(screen.getByRole('cell', { name: 'A cappella' })).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: 'With music' })).toBeInTheDocument()
+  })
+
+  it('opens a past session in full detail and back again to the table', async () => {
+    const points: ProgressPoint[] = [
+      { analysisId: '1', overallScore: 72, createdAt: '2026-01-01T00:00:00Z', mode: 'clean' },
+    ]
+    getProgressMock.mockResolvedValueOnce(points)
+    const analysis: Analysis = {
+      id: '1',
+      songId: 's1',
+      status: 'done',
+      createdAt: '2026-01-01T00:00:00Z',
+      queuedAt: '2026-01-01T00:00:00Z',
+      mode: 'clean',
+      aspectScores: { pitch: 90 },
+      overallScore: 72,
+      pianoRoll: {
+        hopSeconds: 0.01,
+        userHz: [],
+        referenceHz: [],
+        deviationCents: [],
+        offPitch: [],
+      },
+    }
+    getAnalysisMock.mockResolvedValueOnce(analysis)
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: 'View' }))
+
+    await screen.findByRole('button', { name: 'Back to history' })
+    expect(getAnalysisMock).toHaveBeenCalledWith('1')
+
+    await user.click(screen.getByRole('button', { name: 'Back to history' }))
+    await screen.findByRole('button', { name: 'View' })
   })
 })

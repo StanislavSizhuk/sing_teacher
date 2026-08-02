@@ -2,6 +2,15 @@
 
 - Status: Accepted
 - Date: 2026-07-31
+- 2026-08-02: ADR-0034 deletes `MelodyPitchStage` -- after ADR-0033 moved F0
+  extraction into `align`, its `run()` was already byte-identical to
+  `PitchStage`'s, so `PitchStage` now simply runs in both modes
+  (`modes` widened to `ALL_MODES`) and still writes result name `"pitch"`.
+  The "shared stage name, disjoint `modes`" mechanism this ADR designed
+  (Decision, question 1) is exactly what made that deletion a non-event for
+  `VibratoStage`, `AggregateStage`, and score persistence -- none of them
+  needed to change. `MODE_ASPECTS` and both weight profiles are unaffected;
+  `mixed_v1` still scores four aspects, `timbre`/`breath` still `null`.
 
 ## Context
 

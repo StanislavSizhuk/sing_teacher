@@ -1,42 +1,39 @@
-"""Stage A5 (`clean` only, spec 6.5): track pitch for the user's recording
-directly (pyworld/CREPE/pYIN) and score its accuracy against the reference,
-note-for-note in cents. `mixed` gets its F0 curve a different way --
-`MelodyPitchStage` (A4, `pipeline/stages/melody.py`) -- and writes its
-result under the same stage name (`"pitch"`), so aggregate/vibrato/
-persistence never need to know or care which engine actually ran (spec
-12.3: the runner picks the stage by `modes`, not an `if mode ==` inside one).
+"""Stage A5 (spec 6.5): score the user's pitch accuracy against the
+reference, note-for-note in cents. Runs in both modes (ADR-0034) -- it used
+to be `clean`-only, with a separate `mixed`-only `MelodyPitchStage` writing
+the same result name (`"pitch"`) from a differently-extracted curve, but
+after ADR-0033 moved F0 extraction into `align` for every mode, that
+stage's `run()` had become byte-identical to this one. Deleted rather than
+kept as a second copy; this stage alone now covers both.
 
-The reference curve itself is cold-path output (spec 6.4 P4, M2) -- already
-cached on the song and detected exactly once, ever, before this stage's song
-ever reaches `ready`; this stage only ever reads it, never (re)computes it.
+ADR-0033: the user's F0 curve itself is extracted by `align` (A3), not
+here -- align needs it first, to align on melody rather than MFCC, so
+this stage just reads `context.result("align").data["user_pitch_curve"]`
+back instead of re-running the same detector a second time. The reference
+curve is cold-path output (spec 6.4 P4, M2) -- already cached on the
+song and detected exactly once, ever, before this stage's song ever
+reaches `ready`; this stage only ever reads it, never (re)computes it.
 """
 
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
-from vocalcoach.audio.io import read_mono
 from vocalcoach.audio.timemap import TimeMap
 from vocalcoach.constants import (
-    MIN_VOICED_FRACTION,
     PIANO_ROLL_OFF_PITCH_CENTS,
     PITCH_HOP_SECONDS,
     PITCH_TIMEOUT_SECONDS,
 )
-from vocalcoach.dsp.features import load_shared_features
-from vocalcoach.dsp.pitch_detection import detect_gated
 from vocalcoach.dsp.pitch_scoring import (
     align_and_compare,
     score_from_mean_abs_cents,
     voiced_fraction,
 )
-from vocalcoach.errors import NoVoiceDetected
 from vocalcoach.models.audio import PianoRollData, PitchCurve
 from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.base import PipelineStage
-from vocalcoach.pipeline.registry import PitchDetector
 
 STAGE_NAME = "pitch"
 
@@ -54,33 +51,14 @@ class PitchStage(PipelineStage[AnalysisContext]):
 
     name = STAGE_NAME
     timeout_seconds = PITCH_TIMEOUT_SECONDS
-    modes = frozenset({"clean"})
-
-    def __init__(self, detector: PitchDetector) -> None:
-        self._detector = detector
 
     def run(self, context: AnalysisContext) -> StageResult:
         start = time.monotonic()
-        preprocess = context.result("preprocess").data
-        sample_rate = int(preprocess["sample_rate_hz"])
-
-        features = load_shared_features(Path(context.result("features").data["features_path"]))
-        try:
-            user_samples, _sr = read_mono(Path(preprocess["recording_path"]))
-            user_hz = detect_gated(
-                self._detector, user_samples, sample_rate, PITCH_HOP_SECONDS, features.user.rms_fine
-            )
-        finally:
-            self._detector.release()
-
+        align_result = context.result("align").data
+        user_hz: list[float | None] = align_result["user_pitch_curve"]["hz"]
         fraction = voiced_fraction(user_hz)
-        if fraction < MIN_VOICED_FRACTION:
-            raise NoVoiceDetected(
-                f"only {fraction:.1%} of the recording is voiced, "
-                f"below the {MIN_VOICED_FRACTION:.0%} floor"
-            )
 
-        time_map = TimeMap.from_align_stage_data(context.result("align").data)
+        time_map = TimeMap.from_align_stage_data(align_result)
         aligned_reference_hz, deviations_cents = align_and_compare(
             user_hz, context.reference_pitch.hz, time_map, PITCH_HOP_SECONDS
         )

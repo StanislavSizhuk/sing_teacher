@@ -15,8 +15,10 @@ via `docker compose up`.
 
 Stack: Go (API) + Python (ML worker) + React/TS (web) + PostgreSQL + Redis + Caddy.
 
-Key assumption: the user sings a cappella, in headphones. Only the reference
-track goes through source separation (spec 2.3).
+Key assumption: the user sings a cappella, in headphones, OR over
+accompaniment (`mixed` mode). The reference track always goes through
+source separation; the user's own recording does too, but only in `mixed`
+mode -- `clean` has no accompaniment to remove (spec 2.3, ADR-0034).
 
 ---
 

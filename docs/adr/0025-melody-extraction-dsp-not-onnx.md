@@ -1,7 +1,13 @@
 # ADR-0025: Harmonic-salience DSP melody extraction, not an ONNX model; go decision for M3
 
-- Status: Accepted
+- Status: Superseded by ADR-0034
 - Date: 2026-07-31
+- 2026-08-02: `extract_melody` and `dsp/melody.py` are deleted by ADR-0034 --
+  `mixed` mode now separates the recording with Demucs, the same as the
+  reference, instead of extracting F0 from the raw mixture. The DSP-vs-ONNX
+  question this ADR answered no longer applies to A4; kept here unedited as
+  the historical record of that decision and the spike that justified M3's
+  go call.
 
 ## Context
 

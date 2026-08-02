@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.helpers import build_context_through_align, build_context_with_identity_align
+from tests.helpers import build_context_with_identity_align
 from vocalcoach.pipeline.stages.timbre import TimbreStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
@@ -25,7 +25,11 @@ def _tone_with_harmonics(
 def test_timbre_identical_spectra_score_near_perfect(tmp_path: Path, wav_writer) -> None:
     recording = wav_writer("recording.wav", _tone_with_harmonics(3.0, 44100, 220.0), 44100)
     reference = wav_writer("reference.wav", _tone_with_harmonics(3.0, 44100, 220.0), 44100)
-    context = build_context_through_align(tmp_path, recording, reference)
+    # ADR-0033: align now aligns on pitch contour, which a constant tone
+    # (tuned for timbre's own spectral comparison, not pitch) is
+    # degenerate for -- not what this test is checking (that is
+    # test_align_stage.py's job).
+    context = build_context_with_identity_align(tmp_path, recording, reference)
 
     result = TimbreStage().run(context)
 
