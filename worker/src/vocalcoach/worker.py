@@ -110,8 +110,8 @@ def build_stages(
     return [
         PreprocessStage(ffmpeg_path=FFMPEG_PATH),
         FeaturesStage(),
-        AlignStage(),
-        PitchStage(registry.pitch_detector()),
+        AlignStage(registry.pitch_detector()),
+        PitchStage(),
         MelodyPitchStage(),
         KeyNormalizationStage(
             min_semitones=settings.key_shift_min_semitones,

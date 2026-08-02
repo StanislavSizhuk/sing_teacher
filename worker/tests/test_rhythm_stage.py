@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.helpers import build_context_through_align
+from tests.helpers import build_context_with_identity_align
 from vocalcoach.pipeline.stages.rhythm import RhythmStage
 
 pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
@@ -31,7 +31,12 @@ def test_rhythm_matching_onsets_score_high(tmp_path: Path, wav_writer) -> None:
     onsets = [0.5, 1.0, 1.5, 2.0, 2.5]
     recording = wav_writer("recording.wav", _percussive_pulses(3.0, 44100, onsets), 44100)
     reference = wav_writer("reference.wav", _percussive_pulses(3.0, 44100, onsets), 44100)
-    context = build_context_through_align(tmp_path, recording, reference)
+    # ADR-0033: align now aligns on pitch contour, and these percussive
+    # clicks (chosen because a continuous tone is a poor onset-detection
+    # fixture) are almost entirely unvoiced -- not a real pitch-tracking
+    # scenario, and not what this test is checking (that is
+    # test_align_stage.py's job).
+    context = build_context_with_identity_align(tmp_path, recording, reference)
 
     result = RhythmStage().run(context)
 
@@ -51,7 +56,12 @@ def test_rhythm_jittered_onsets_score_lower(tmp_path: Path, wav_writer) -> None:
     jittered_onsets = [t + j for t, j in zip(reference_onsets, jitter, strict=True)]
     recording = wav_writer("recording.wav", _percussive_pulses(3.0, 44100, jittered_onsets), 44100)
     reference = wav_writer("reference.wav", _percussive_pulses(3.0, 44100, reference_onsets), 44100)
-    context = build_context_through_align(tmp_path, recording, reference)
+    # ADR-0033: align now aligns on pitch contour, and these percussive
+    # clicks (chosen because a continuous tone is a poor onset-detection
+    # fixture) are almost entirely unvoiced -- not a real pitch-tracking
+    # scenario, and not what this test is checking (that is
+    # test_align_stage.py's job).
+    context = build_context_with_identity_align(tmp_path, recording, reference)
 
     result = RhythmStage().run(context)
 

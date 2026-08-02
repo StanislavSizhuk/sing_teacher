@@ -85,8 +85,8 @@ def _build_stages(*, parallel: bool):
     return [
         PreprocessStage(ffmpeg_path="ffmpeg"),
         FeaturesStage(),
-        AlignStage(),
-        PitchStage(PyinPitchDetector()),
+        AlignStage(PyinPitchDetector()),
+        PitchStage(),
         KeyNormalizationStage(
             _KEY_SHIFT_MIN_SEMITONES, _KEY_SHIFT_MAX_IQR, _MAX_KEY_SHIFT_SEMITONES
         ),

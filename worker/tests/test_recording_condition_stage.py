@@ -14,6 +14,7 @@ from vocalcoach.models.context import AnalysisContext
 from vocalcoach.models.mode import Mode
 from vocalcoach.models.results import StageResult, StageStatus
 from vocalcoach.pipeline.registry import PyinPitchDetector
+from vocalcoach.pipeline.stages.align import AlignStage
 from vocalcoach.pipeline.stages.features import FeaturesStage
 from vocalcoach.pipeline.stages.pitch import PitchStage
 from vocalcoach.pipeline.stages.preprocess import PreprocessStage
@@ -107,26 +108,24 @@ def test_does_not_flag_loud_voiced_recording(tmp_path: Path, wav_writer) -> None
 
 def test_real_pitch_stage_on_clean_tone_does_not_flag(tmp_path: Path, wav_writer) -> None:
     """End-to-end with the real (non-faked) pitch detector, not just a
-    hand-built curve: a clean sustained tone must not trip the heuristic."""
-    recording = wav_writer("recording.wav", sine_wave(3.0, 44100, 300.0), 44100)
-    reference = wav_writer("reference.wav", sine_wave(3.0, 44100, 300.0), 44100)
+    hand-built curve: a clean sustained tone must not trip the heuristic.
+
+    ADR-0033: extraction now happens in `align`, so exercising the real
+    detector means running the real `AlignStage`, not hand-building its
+    result -- vibrato, not a bare tone, since align now aligns on pitch
+    contour (see test_align_stage.py's own fixtures for why a constant
+    tone is degenerate for that).
+    """
+    signal = sine_wave(3.0, 44100, 300.0, vibrato_hz=5.0, vibrato_cents=40.0)
+    recording = wav_writer("recording.wav", signal, 44100)
+    reference = wav_writer("reference.wav", signal, 44100)
     reference_pitch = reference_pitch_curve_for(tmp_path, reference)
     context = _context_through_features(
         tmp_path, recording, reference, reference_pitch=reference_pitch
     )
-    context = context.with_result(
-        StageResult(
-            stage="align",
-            status=StageStatus.DONE,
-            duration_ms=1,
-            data={
-                "index1": list(range(200)),
-                "index2": list(range(200)),
-                "hop_seconds": 0.05,
-            },
-        )
-    )
-    pitch_result = PitchStage(PyinPitchDetector()).run(context)
+    align_result = AlignStage(PyinPitchDetector()).run(context)
+    context = context.with_result(align_result)
+    pitch_result = PitchStage().run(context)
     context = context.with_result(pitch_result)
 
     result = RecordingConditionStage(_THRESHOLD).run(context)

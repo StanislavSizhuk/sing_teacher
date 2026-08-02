@@ -164,11 +164,21 @@ def build_context_through_align(
 ) -> AnalysisContext:
     """Runs preprocess -> features -> align for real, and returns the
     resulting context so a stage A5+ test can start from it.
+
+    ADR-0033: align now aligns on pitch contour, so it needs a real
+    reference curve to align against, not `EMPTY_REFERENCE_PITCH` --
+    unlike `make_context`'s own default (most tests never read
+    `context.reference_pitch` at all), a caller here that doesn't pass one
+    gets a real one computed the same way the cold path would
+    (`reference_pitch_curve_for`).
     """
     context = _through_features(
-        tmp_path, recording_path, reference_path, reference_pitch=reference_pitch
+        tmp_path,
+        recording_path,
+        reference_path,
+        reference_pitch=reference_pitch or reference_pitch_curve_for(tmp_path, reference_path),
     )
-    align_result = AlignStage().run(context)
+    align_result = AlignStage(PyinPitchDetector()).run(context)
     return context.with_result(align_result)
 
 
@@ -199,6 +209,17 @@ def build_context_with_identity_align(
         stage="align",
         status=StageStatus.DONE,
         duration_ms=1,
-        data={"index1": identity, "index2": identity, "hop_seconds": FEATURES_HOP_SECONDS},
+        data={
+            "index1": identity,
+            "index2": identity,
+            "hop_seconds": FEATURES_HOP_SECONDS,
+            # ADR-0033: a plausible-shaped placeholder, not a real curve --
+            # no test using this identity-mapping helper reads pitch
+            # accuracy, but PitchStage/MelodyPitchStage's contract now
+            # expects this key to exist on any align result.
+            "user_pitch_curve": PitchCurve(
+                hop_seconds=FEATURES_HOP_SECONDS, hz=[None] * frame_count
+            ).model_dump(mode="json"),
+        },
     )
     return context.with_result(align_result)

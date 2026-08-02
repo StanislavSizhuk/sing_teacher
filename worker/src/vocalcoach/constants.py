@@ -63,13 +63,19 @@ FEATURES_MFCC_COEFFICIENTS = 13
 # 1's own path, at a finer hop (PITCH_HOP_SECONDS).
 ALIGN_WINDOW_SECONDS = 10.0
 ALIGN_REFINE_WINDOW_SECONDS = 0.2
-# Empirical starting point for the banded DTW's per-step normalized cost on
-# FEATURES_MFCC_COEFFICIENTS-dimensional MFCC frames at PITCH_HOP_SECONDS
-# (level 2's own hop, since that is the pass this ceiling is checked
-# against); recalibrate once golden fixtures exist (spec 19). Calibrated
-# against this test suite's synthetic fixtures: legitimate-but-different
-# takes measured 2-43, unrelated signals measured 120-1050.
-ALIGN_MAX_NORMALIZED_DISTANCE = 70.0
+# ADR-0033: empirical starting point for the banded DTW's per-step
+# normalized cost on the pitch-class unit-circle embedding
+# (dsp/pitch_embedding.py, PITCH_HOP_SECONDS, level 2's own hop, since
+# that is the pass this ceiling is checked against) -- bounded [0, 2] by
+# the embedding itself, unlike MFCC's open-ended scale. Recalibrate once
+# golden fixtures exist (spec 19). Measured directly (banded_dtw on real
+# pyin extractions of synthetic melodies, not just asserted): identical
+# takes 0.00, the same melody an octave up 0.0017 / down 0.0041, ~40 cents
+# flat throughout 0.0995, a different vibrato style 0.056 -- all comfortably
+# under 0.2. A genuinely different melody at comparable length/range
+# measured 0.55, and a wide-range mismatch 0.81. 0.45 sits in the gap with
+# margin on both sides.
+ALIGN_PITCH_MAX_NORMALIZED_DISTANCE = 0.45
 # Upfront size guard (spec 6.7, NFR-16): refuses to even start a DTW whose
 # banded cell count would exceed this, rather than let a pathological input
 # (near-duplicate, but each hours long) eat unbounded memory/time.

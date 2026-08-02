@@ -187,9 +187,9 @@ def test_T9_incompatible_six_minute_recordings_fail_honestly() -> None:
        structural check (a path through the band always exists when both
        sides are the same length) -- `banded_dtw` returns a real path with
        a real cost instead of raising, and it is `align.py`'s
-       `ALIGN_MAX_NORMALIZED_DISTANCE` ceiling that turns "aligned, but at
-       absurd cost" into `ALIGNMENT_FAILED` (exercised end-to-end, on real
-       audio/MFCC, by `test_align_wildly_different_signals_raises_alignment_failed`
+       `ALIGN_PITCH_MAX_NORMALIZED_DISTANCE` ceiling that turns "aligned, but
+       at absurd cost" into `ALIGNMENT_FAILED` (exercised end-to-end, on real
+       audio/pitch, by `test_align_different_melodies_raises_alignment_failed`
        in `test_align_stage.py`). What this level can honestly assert with
        synthetic feature vectors is the *relative* separation the ceiling
        check depends on existing at all: unrelated content costs
