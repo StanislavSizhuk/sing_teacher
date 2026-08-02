@@ -139,15 +139,31 @@ None yet -- stage E1 has not been operated in production.
 
 **Symptom:** a song's cold-path prep and every analysis waiting on it sat on
 "waiting for song to be ready" for several minutes, then flipped to
-`failed` / `TIMEOUT`.
+`failed` / `TIMEOUT` -- reproducibly, on every retry, regardless of which
+pitch engine or how generous the timeout.
 
 **Cause:** two independent issues in the dev compose stack:
 
-1. `prep_reference_pitch` (CREPE, CPU) kept exceeding its 120s timeout
-   (`PREP_REFERENCE_PITCH_TIMEOUT_SECONDS`) on CPU-only dev hardware.
-   `PipelineRunner` retried it 3 times before failing the job -- that retry
-   sequence is what produced the multi-minute wait before the terminal
-   `failed` state.
+1. `prep_reference_pitch` kept "exceeding" its `PREP_REFERENCE_PITCH_TIMEOUT_SECONDS`
+   budget -- at 120s, then still at 180s and 300s once those were tried as
+   a fix. The real bug was in `PipelineRunner._join_subprocess`
+   (`worker/src/vocalcoach/pipeline/runner.py`): it called
+   `process.join(timeout)` *before* draining `result_queue`. A
+   `multiprocessing.Queue` feeds pickled data into a fixed-size OS pipe
+   (~64KB on Linux) from a background thread in the child; this stage's
+   result is a full song's pitch curve at a 10ms hop, easily 300-400KB
+   JSON-encoded. The child's `put()` blocked on the full pipe, the parent
+   was blocked in `join()` waiting for an exit that could never happen
+   before that `put()` returned -- a textbook multiprocessing deadlock,
+   released only by the timeout's `terminate()`/`kill()`, which is why
+   every attempt "timed out" at exactly its configured budget no matter
+   the value: nothing was ever slow, the pipe was just never read. Switching
+   `PITCH_ENGINE` to `pyin` and raising the timeout to 180s/300s were both
+   dead ends chased before finding this -- reverted once the real fix
+   landed. Fixed by reading the queue first
+   (`result_queue.get(timeout=...)`), which drains the pipe as data
+   arrives, then joining (now unbounded, but safe -- the child exits
+   promptly once its write unblocks).
 2. `transcribe` was separately crashing with `ModuleNotFoundError: No
    module named 'faster_whisper'` (optional stage, skipped, not the
    blocker): the `python-worker` image had been built before the commit
@@ -156,15 +172,60 @@ None yet -- stage E1 has not been operated in production.
    the old venv forward across a plain `up --build` unless anonymous
    volumes are explicitly renewed.
 
-**Action:** rebuilt the worker image with
-`docker compose -f deploy/docker-compose.dev.yml up -d --build --renew-anon-volumes python-worker`;
-set `PITCH_ENGINE=pyin` in the local (gitignored) `.env` for this CPU-only
-machine. Verified against the stem that had timed out: pyin processed a
-330s reference track in 76s, crepe never finished inside 120s.
+**Action:** fixed `_join_subprocess`'s read-then-join order (the actual
+fix); rebuilt the worker image with
+`docker compose -f deploy/docker-compose.dev.yml up -d --build --renew-anon-volumes python-worker`
+to pick up `faster-whisper`. `PITCH_ENGINE` and the pitch timeouts are
+back at their original values (`crepe`, 120s/180s) -- they were never the
+problem.
 
 **Prevention:** after any change to `worker/pyproject.toml` /
 `worker/uv.lock`, rebuild with `--renew-anon-volumes` -- a plain `--build`
 alone reuses the old anonymous `.venv` volume and silently keeps stale
-dependencies. Keep `PITCH_ENGINE=crepe` only on dev hardware that can
-actually clear a multi-minute song inside
-`PREP_REFERENCE_PITCH_TIMEOUT_SECONDS`; default to `pyin` otherwise.
+dependencies. When a subprocess-isolated stage "times out" at exactly its
+configured budget across multiple different budget values, suspect a
+join-before-drain deadlock before suspecting real compute time --
+especially for any stage whose result carries a dense array (pitch curves,
+piano-roll data) rather than a few scalars.
+
+### 2026-08-02 -- retry showed an hours-long wait; a migration hung for 6 minutes
+
+**Symptom (1):** retrying a failed analysis rendered "Waiting 525m 52s" in
+`QueueStatus.tsx`'s new live wait timer, seconds after clicking Retry.
+
+**Cause (1):** the timer read `analysis.createdAt`, but Retry (FR-26)
+reuses the same row rather than creating a new one, so `created_at` stays
+at the *original* submission -- hours earlier, in this case. Fixed by
+adding `analyses.queued_at` (migration `00012_analyses_queued_at.sql`):
+equal to `created_at` for a fresh Enqueue, reset to `now()` by
+`Retry`/`RetryToWaitingForReference`. The client now reads `queued_at`.
+
+**Symptom (2):** applying that migration hung for 6 minutes --
+`docker compose exec postgres psql ...` calls unrelated to the `analyses`
+table (even `SELECT 1`) returned instantly, but anything touching
+`analyses` hung too, and `go-api`'s own log sat at "running..." with no
+"migrations applied" line.
+
+**Cause (2):** `pg_stat_activity` showed one connection `idle in
+transaction` for hours, running
+`SELECT song_id FROM analyses WHERE status = 'waiting_for_reference' ...`
+-- `PostgresAnalysisRepository.oldest_waiting_song_id` (and both
+`get_by_id` methods), `worker/src/vocalcoach/repositories/postgres.py`.
+psycopg opens an implicit transaction on the first statement of a session
+even for a plain read; none of these three methods ever called `commit()`
+or `rollback()`. `Scheduler` calls `oldest_waiting_song_id` before every
+`songs:prep` tick on one long-lived connection -- the very first tick with
+nothing waiting left that connection `idle in transaction` indefinitely,
+holding a lock that blocked every later `ALTER TABLE analyses`, including
+this migration and its own predecessors (`pg_stat_activity` had ten-plus
+queued `ALTER TABLE` attempts piled up behind it from `air`'s repeated
+hot-reload retries). Unblocked with `SELECT pg_terminate_backend(<pid>)`;
+fixed by adding `self._conn.rollback()` after each of the three reads.
+
+**Prevention:** every method on these repositories must end its
+transaction, reads included -- `commit()` for a write, `rollback()` for a
+read (nothing to persist, and `rollback()` reads more honestly than
+`commit()` for a statement that changed nothing). If a `docker compose
+exec postgres psql` hangs on one table but `SELECT 1` doesn't, check
+`pg_stat_activity` for `idle in transaction` before assuming the query
+itself is slow.
