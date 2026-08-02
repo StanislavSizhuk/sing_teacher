@@ -16,9 +16,7 @@ import { useLanguage } from './i18n/useLanguage'
 import { useTranslation } from './i18n/useTranslation'
 
 type Step =
-  | { kind: 'song' }
-  | { kind: 'record'; song: Song }
-  | { kind: 'queue'; analysisId: string }
+  { kind: 'song' } | { kind: 'record'; song: Song } | { kind: 'queue'; analysisId: string }
 
 type View = 'analyze' | 'progress'
 
