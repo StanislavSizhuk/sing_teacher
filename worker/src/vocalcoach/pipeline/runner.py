@@ -113,30 +113,40 @@ def _join_subprocess(
     result or the error it failed with -- never raises, so a caller
     collecting several of these (a `ParallelGroup`) can gather every
     member's outcome before deciding what to do about any of them.
+
+    Reads the queue *before* joining the process, deliberately -- a
+    `multiprocessing.Queue` feeds pickled data into an OS pipe from a
+    background thread in the child, and that pipe has a small fixed buffer
+    (~64KB on Linux). `StageResult.data` for a full song's pitch curve at a
+    10ms hop easily serializes past a few hundred KB, so a child that
+    `put()`s one and then exits blocks on the write once the pipe fills,
+    and never actually exits. `process.join(timeout)` called first -- as
+    this used to do -- waits for exactly that exit, so parent and child
+    deadlock until the timeout fires and kills the child: every run looked
+    like it "exceeded" its budget at precisely the configured number of
+    seconds regardless of the value, because nothing was ever slow, the
+    pipe was just never drained. `Queue.get(timeout=...)` actively drains
+    it, so the child's write unblocks and it exits promptly right after.
     """
-    process.join(stage.timeout_seconds)
-
-    if process.is_alive():
-        process.terminate()
-        process.join(5)
-        if process.is_alive():
-            process.kill()
-            process.join()
-        return TransientPipelineError(
-            f"stage '{stage.name}' exceeded its {stage.timeout_seconds}s timeout",
-            error_code="TIMEOUT",
-        )
-
     try:
-        kind, payload = result_queue.get_nowait()
+        _kind, payload = result_queue.get(timeout=stage.timeout_seconds)
     except queue_module.Empty:
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+            if process.is_alive():
+                process.kill()
+                process.join()
+            return TransientPipelineError(
+                f"stage '{stage.name}' exceeded its {stage.timeout_seconds}s timeout",
+                error_code="TIMEOUT",
+            )
         exit_code = process.exitcode
         return InternalPipelineError(
             f"stage '{stage.name}' produced no result (exit code {exit_code})"
         )
 
-    if kind == "error":
-        return payload  # type: ignore[no-any-return]
+    process.join()
     return payload  # type: ignore[no-any-return]
 
 
