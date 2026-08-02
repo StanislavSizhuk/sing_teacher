@@ -522,7 +522,7 @@ export interface components {
       aspect_confidence?: {
         [key: string]: 'high' | 'medium' | 'low'
       }
-      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`, `LENGTH_MISMATCH_PARTIAL_ANALYSIS` (ADR-0030: the recording and reference were cropped to a shared overlap before aligning). The client localizes these to a human-readable message rather than showing the code (FR-47). */
+      /** @description Machine-readable warning codes (spec 6.18), e.g. `ACCOMPANIMENT_IN_CLEAN_MODE`, `MODE_DOWNGRADED_TO_CLEAN`, `LITTLE_VOICE_DETECTED`, `WEAK_ALIGNMENT`, `KEY_SHIFT_OUT_OF_RANGE`, `LENGTH_MISMATCH_PARTIAL_ANALYSIS` (ADR-0030: the recording and reference were cropped to a shared overlap before aligning), `REFERENCE_START_OFFSET_DETECTED` (ADR-0032: the reference's own start was adjusted to where the recording actually begins, e.g. an instrumental intro the recording didn't include). The client localizes these to a human-readable message rather than showing the code (FR-47). */
       warnings?: string[]
       /** @description Every aspect this mode does not score, mapped to a machine-readable reason (FR-41) -- e.g. `breath`/`timbre` under `NOT_MEASURABLE_WITH_ACCOMPANIMENT` in `mixed`. An aspect listed here is never also present as a `0` in its `*_score` field: it is simply absent there. */
       unavailable_aspects?: {
