@@ -5,6 +5,7 @@ import { resendVerification, verifyEmail } from '../../api/client'
 import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { TextField } from '../../components/TextField'
+import { useTranslation } from '../../i18n/useTranslation'
 
 interface VerifyFormProps {
   email: string
@@ -12,6 +13,7 @@ interface VerifyFormProps {
 }
 
 export function VerifyForm({ email, onVerified }: VerifyFormProps) {
+  const t = useTranslation()
   const [code, setCode] = useState('')
 
   const verify = useMutation({
@@ -27,12 +29,10 @@ export function VerifyForm({ email, onVerified }: VerifyFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="flex w-full max-w-sm flex-col gap-4">
-      <h1 className="text-ink-950 text-lg font-semibold">Check your email</h1>
-      <p className="text-ink-700 text-sm">
-        We sent a 6-digit code to {email}. It expires in 24 hours.
-      </p>
+      <h1 className="text-ink-950 text-lg font-semibold">{t.verify.heading}</h1>
+      <p className="text-ink-700 text-sm">{t.verify.sentCode(email)}</p>
       <TextField
-        label="Verification code"
+        label={t.verify.codeLabel}
         inputMode="numeric"
         pattern="[0-9]{6}"
         maxLength={6}
@@ -43,7 +43,7 @@ export function VerifyForm({ email, onVerified }: VerifyFormProps) {
       />
       <ErrorAlert error={verify.error} />
       <Button type="submit" disabled={verify.isPending || code.length !== 6}>
-        {verify.isPending ? 'Verifying…' : 'Verify email'}
+        {verify.isPending ? t.verify.submitPending : t.verify.submit}
       </Button>
       <button
         type="button"
@@ -51,11 +51,9 @@ export function VerifyForm({ email, onVerified }: VerifyFormProps) {
         disabled={resend.isPending}
         className="text-ink-700 text-sm underline disabled:no-underline"
       >
-        {resend.isPending ? 'Sending…' : 'Resend code'}
+        {resend.isPending ? t.verify.resendPending : t.verify.resend}
       </button>
-      {resend.isSuccess && (
-        <p className="text-ink-500 text-xs">A new code was sent, if the account exists.</p>
-      )}
+      {resend.isSuccess && <p className="text-ink-500 text-xs">{t.verify.resent}</p>}
       <ErrorAlert error={resend.error} />
     </form>
   )

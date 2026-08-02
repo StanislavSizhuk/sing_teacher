@@ -5,12 +5,14 @@ import { login } from '../../api/client'
 import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { TextField } from '../../components/TextField'
+import { useTranslation } from '../../i18n/useTranslation'
 
 interface LoginFormProps {
   onNeedRegister: () => void
 }
 
 export function LoginForm({ onNeedRegister }: LoginFormProps) {
+  const t = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
@@ -25,9 +27,9 @@ export function LoginForm({ onNeedRegister }: LoginFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="flex w-full max-w-sm flex-col gap-4">
-      <h1 className="text-ink-950 text-lg font-semibold">Log in</h1>
+      <h1 className="text-ink-950 text-lg font-semibold">{t.login.heading}</h1>
       <TextField
-        label="Email"
+        label={t.login.email}
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -35,7 +37,7 @@ export function LoginForm({ onNeedRegister }: LoginFormProps) {
         autoComplete="email"
       />
       <TextField
-        label="Password"
+        label={t.login.password}
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
@@ -44,10 +46,10 @@ export function LoginForm({ onNeedRegister }: LoginFormProps) {
       />
       <ErrorAlert error={mutation.error} />
       <Button type="submit" disabled={mutation.isPending}>
-        {mutation.isPending ? 'Logging in…' : 'Log in'}
+        {mutation.isPending ? t.login.submitPending : t.login.submit}
       </Button>
       <button type="button" onClick={onNeedRegister} className="text-ink-700 text-sm underline">
-        Need an account? Register
+        {t.login.needAccount}
       </button>
     </form>
   )

@@ -1,0 +1,233 @@
+import type { Translations } from './en'
+import { pluralize } from '../plural'
+
+export const uk: Translations = {
+  app: {
+    title: 'AI Вокальний Тренер',
+    logout: 'Вийти',
+    languageLabel: 'Мова',
+    sectionLabel: 'Розділ',
+    navAnalyze: 'Аналіз',
+    navProgress: 'Прогрес',
+    analyzeAnotherSong: 'Проаналізувати іншу пісню',
+    submitting: 'Надсилання…',
+    skipToContent: 'Перейти до вмісту',
+    loading: 'Завантаження…',
+  },
+  errorAlert: {
+    queueFull: 'Черга аналізів зараз заповнена. Спробуйте, будь ласка, за кілька хвилин.',
+    analysisRateLimited: 'Ви досягли годинного ліміту аналізів. Спробуйте пізніше.',
+    analysisNotQueued: 'Цей аналіз більше не можна скасувати.',
+    analysisNotFailed: 'Повторити можна лише невдалий аналіз.',
+    youtubeImportDisabled: 'Імпорт з YouTube наразі вимкнено.',
+    invalidYoutubeUrl: 'Це не схоже на дійсне посилання YouTube.',
+    youtubeVideoTooLong: 'Це відео довше за дозволений ліміт.',
+    unsupportedAudioFormat:
+      'Непідтримуваний формат аудіо. Використовуйте mp3, wav, m4a, flac або ogg.',
+    audioTooLarge: 'Цей файл більший за ліміт завантаження.',
+    audioTooLong: 'Цей запис довший за дозволений ліміт.',
+    generic: 'Щось пішло не так. Спробуйте, будь ласка, ще раз.',
+    retryAfter: (seconds: number) => ` Спробуйте ще раз через ${seconds}с.`,
+  },
+  login: {
+    heading: 'Увійти',
+    email: 'Електронна пошта',
+    password: 'Пароль',
+    submitPending: 'Вхід…',
+    submit: 'Увійти',
+    needAccount: 'Немає акаунту? Зареєструватися',
+  },
+  register: {
+    heading: 'Створити акаунт',
+    displayName: "Ім'я",
+    email: 'Електронна пошта',
+    password: 'Пароль',
+    passwordHint: 'Щонайменше 10 символів. Уникайте поширених паролів.',
+    submitPending: 'Створення акаунту…',
+    submit: 'Створити акаунт',
+    haveAccount: 'Вже маєте акаунт? Увійти',
+  },
+  verify: {
+    heading: 'Перевірте пошту',
+    sentCode: (email: string) => `Ми надіслали 6-значний код на ${email}. Він дійсний 24 години.`,
+    codeLabel: 'Код підтвердження',
+    submitPending: 'Перевірка…',
+    submit: 'Підтвердити пошту',
+    resendPending: 'Надсилання…',
+    resend: 'Надіслати код повторно',
+    resent: 'Якщо такий акаунт існує, новий код надіслано.',
+  },
+  addSong: {
+    heading: 'Додати пісню',
+    sourceLabel: 'Джерело пісні',
+    sourceUpload: 'Завантажити файл',
+    sourceYoutube: 'Посилання YouTube',
+    title: 'Назва',
+    artist: "Виконавець (необов'язково)",
+    audioFile: 'Аудіофайл',
+    audioFileHint: 'mp3, wav, m4a, flac або ogg. До 15 МБ / 6 хвилин.',
+    youtubeDisclaimer:
+      'Лише для особистого некомерційного використання. Завантаження аудіо з YouTube може ' +
+      'суперечити його Умовам використання та правам власника пісні.',
+    youtubeUrl: 'URL YouTube',
+    youtubeUrlPlaceholder: 'https://www.youtube.com/watch?v=...',
+    titleOverride: "Змінити назву (необов'язково)",
+    submitPending: 'Додавання пісні…',
+    submit: 'Додати пісню',
+    hintUpload: 'Введіть назву та оберіть аудіофайл, щоб продовжити.',
+    hintYoutube: 'Введіть URL YouTube, щоб продовжити.',
+  },
+  recordingCapture: {
+    heading: 'Запишіть свою спробу',
+    modeLabel: 'Режим аналізу',
+    modeClean: 'А капела',
+    modeMixed: 'З музикою',
+    cleanTitle: 'Рекомендовано: співайте а капела',
+    cleanBody:
+      'Без інструментів, без бек-треку, без музики в кімнаті — лише ваш голос, у навушниках. ' +
+      'Це вимірює всі 6 аспектів (висота тону, ритм, дихання, динаміку, вібрато й тембр) із ' +
+      'найвищою точністю.',
+    mixedTitle: 'Спів під музику',
+    mixedBody:
+      'Записуєте себе під гітару, піаніно, гурт чи бек-трек? Оберіть це. Точно вимірюються лише ' +
+      'висота тону й ритм; динаміка та вібрато теж оцінюються, але менш точно, а дихання й тембр ' +
+      'взагалі не можна виміряти за наявності стороннього звуку — у звіті ці два аспекти буде ' +
+      'позначено як невиміряні, а не як поганий результат.',
+    sourceLabel: 'Джерело запису',
+    sourceRecord: 'Записати в браузері',
+    sourceUpload: 'Завантажити файл',
+    stateIdle: 'Готово до запису.',
+    stateRequesting: 'Запит доступу до мікрофона…',
+    stateRecording: 'Йде запис…',
+    stateRecorded: 'Запис завершено. Прослухайте нижче або перезапишіть.',
+    reRecord: 'Перезаписати',
+    startRecording: 'Почати запис',
+    stop: 'Зупинити',
+    fileLabel: 'Файл запису',
+    fileHint: 'mp3, wav, m4a, flac або ogg. До 6 хвилин.',
+    useThisRecording: 'Використати цей запис',
+  },
+  mediaRecorder: {
+    micError: 'Не вдалося отримати доступ до мікрофона.',
+  },
+  queueStatus: {
+    heading: 'Статус аналізу',
+    loadingStatus: 'Завантаження статусу…',
+    statusWaitingForReference: 'Очікування готовності пісні',
+    statusQueued: 'У черзі',
+    statusProcessing: 'Обробка',
+    statusDone: 'Готово',
+    statusFailed: 'Помилка',
+    statusCanceled: 'Скасовано',
+    numberInQueue: (position: number) => `Ви номер ${position} у черзі.`,
+    waitingForReferenceBody:
+      'Ця пісня ще готується. Ваш аналіз почнеться автоматично, щойно вона буде готова.',
+    waiting: (duration: string) =>
+      `Очікування: ${duration} — ця сторінка оновлюється сама, перезавантажувати не потрібно.`,
+    stageStatus: (
+      stage: string,
+      index: number | undefined,
+      total: number | undefined,
+      elapsed: string | undefined,
+    ) => {
+      let s = 'Етап'
+      if (index !== undefined && total !== undefined) s += ` ${index} з ${total}`
+      s += `: ${stage}`
+      if (elapsed !== undefined) s += ` — виконується ${elapsed}`
+      return s
+    },
+    stageDuration: (name: string, duration: string) => `${name} — ${duration}`,
+    error: (code: string) => `Помилка: ${code}`,
+    cancelPending: 'Скасування…',
+    cancel: 'Скасувати',
+    retryPending: 'Повторення…',
+    retry: 'Повторити',
+  },
+  analysisReport: {
+    aspectPitch: 'Висота тону',
+    aspectRhythm: 'Ритм',
+    aspectBreath: 'Дихання',
+    aspectDynamics: 'Динаміка',
+    aspectVibrato: 'Вібрато',
+    aspectTimbre: 'Тембр',
+    overall: 'Загалом',
+    modeClean: 'а капела',
+    modeMixed: 'з музикою',
+    unavailableAccompaniment: 'у записі був присутній сторонній звук',
+    notMeasured: 'Не виміряно',
+    notMeasuredTitle: (reason: string) => `Не виміряно: ${reason}`,
+    warningAccompanimentInCleanMode:
+      'Це проаналізовано як а капела, але ми виявили звук, що не схожий на сольний голос, тож ' +
+      'результати можуть бути менш точними, ніж зазвичай. Якщо ви співали під музику, повторіть ' +
+      'цей аналіз у режимі «з музикою».',
+    warningModeDowngradedToClean:
+      'Супроводу не виявлено, тому аналіз пройшов у режимі а капела замість «з музикою» — це ' +
+      'дає точніший результат, а не є помилкою.',
+    warningLittleVoiceDetected:
+      'У цьому записі виявлено дуже мало голосу, що знижує довіру до результатів.',
+    warningWeakAlignment:
+      'Ваш запис погано збігся з референсним треком, що знижує довіру до результатів.',
+    warningKeyShiftOutOfRange:
+      'Виявлено зміщення тональності, але воно було занадто великим для впевненої корекції.',
+    confidenceHigh: 'Висока довіра',
+    confidenceMedium: 'Середня довіра',
+    confidenceLow: 'Низька довіра',
+    confidenceExplanationHigh: 'Ці результати надійні.',
+    confidenceExplanationMedium:
+      'Ці результати придатні для використання, але менш точні, ніж дав би чистий сольний запис.',
+    confidenceExplanationLow:
+      'Ці результати приблизні — сприймайте їх як загальний напрямок, а не точний вимір.',
+    youSelectedPrefix: 'Ви обрали ',
+    youSelectedMiddle: ', але цей аналіз фактично пройшов як ',
+    youSelectedSuffix: ' — виходячи з того, що ми почули в записі.',
+    keyShift: (semitones: number, direction: 'above' | 'below') =>
+      `Ваш запис був на ${semitones} ${pluralize('uk', semitones, { one: 'півтон', few: 'півтони', many: 'півтонів', other: 'півтона' })} ` +
+      `${direction === 'above' ? 'вище' : 'нижче'} за тональність референсу; результати вище вже це враховують.`,
+  },
+  pianoRoll: {
+    summary: (offPitchCount: number) =>
+      'Піано-рол: ваша крива висоти тону поверх референсної кривої, ' +
+      `${offPitchCount} ${pluralize('uk', offPitchCount, { one: 'фальшива нота', few: 'фальшиві ноти', many: 'фальшивих нот', other: 'фальшивої ноти' })} позначено червоним`,
+  },
+  progressChart: {
+    noSessions: 'Ще немає сесій.',
+    summary: (
+      sessionCount: number,
+      firstScore: number,
+      firstDate: string,
+      lastScore: number,
+      lastDate: string,
+      mixedModes: boolean,
+    ) =>
+      `Лінійний графік вашого загального результату за ${sessionCount} ` +
+      `${pluralize('uk', sessionCount, { one: 'сесію', few: 'сесії', many: 'сесій', other: 'сесії' })}, ` +
+      `від ${firstScore} (${firstDate}) до ${lastScore} (${lastDate}).` +
+      (mixedModes
+        ? ' Включає сесії а капела та з музикою, позначені окремо — їхні результати не можна напряму порівнювати.'
+        : ''),
+    legendClean: 'А капела',
+    legendMixed: 'З музикою',
+  },
+  progressPage: {
+    heading: 'Ваш прогрес',
+    loading: 'Завантаження прогресу…',
+    empty: 'Завершіть свій перший аналіз, щоб почати відстежувати прогрес.',
+    noChange: 'Без змін',
+    up: (amount: number) => `+${amount}`,
+    down: (amount: number) => `-${amount}`,
+    latest: 'Останній',
+    best: 'Найкращий',
+    average: 'Середній',
+    vsFirstSession: 'Порівняно з першою сесією',
+    mixedModesNote:
+      'Ця історія поєднує сесії а капела та з музикою (позначені нижче). Вони оцінюються за ' +
+      'різними аспектами, тож результати не можна напряму порівнювати між режимами — порівнюйте ' +
+      'лише сесії одного режиму між собою.',
+    tableCaption: 'Ваші аналізи, від найновішого',
+    columnDate: 'Дата',
+    columnMode: 'Режим',
+    columnOverallScore: 'Загальний результат',
+    modeClean: 'А капела',
+    modeMixed: 'З музикою',
+  },
+}

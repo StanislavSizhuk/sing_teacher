@@ -419,6 +419,16 @@ ones. E2's screen count is small enough that plain component state covers
 the whole flow (auth -> add song -> record -> queue); revisit once more
 screens need real URL routing.
 
+`web/src/i18n/` (English + Ukrainian, ADR-0029) has no dependency either --
+`language.ts` mirrors `sessionStore.ts`'s exact shape (module-level
+variable, `get`/`set`/`subscribe`, `useSyncExternalStore` hook), and
+`translations/{en,uk}.ts` are nested-object dictionaries typed against one
+canonical shape (`Translations = typeof en`), so a missing or
+wrong-signature key in either language fails `tsc`, not silently at
+runtime. Plural-sensitive strings (Ukrainian has three count categories,
+English two) go through `Intl.PluralRules` via `i18n/plural.ts`, not a
+hand-rolled `n === 1` check.
+
 E5 adds the Progress screen (`features/progress/`) as a second top-level
 view, toggled by a `SegmentedControl` nav in `App.tsx` next to the E2-E4
 analyze flow -- still no router, since a view toggle is not the same need

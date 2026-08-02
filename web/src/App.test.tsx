@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Song } from './api/client'
 import { setSession } from './api/sessionStore'
 import App from './App'
+import { setLanguage } from './i18n/language'
 
 const { song } = vi.hoisted(() => {
   const song: Song = {
@@ -42,6 +43,7 @@ describe('AuthenticatedApp', () => {
   beforeEach(() => {
     setSession({ accessToken: 'test-token', expiresAt: Date.now() + 60_000 })
   })
+  afterEach(() => setLanguage('en'))
 
   it('keeps the in-progress analyze step after switching to Progress and back', async () => {
     const user = userEvent.setup()
@@ -68,5 +70,16 @@ describe('AuthenticatedApp', () => {
     await user.click(screen.getByRole('radio', { name: 'Analyze' }))
 
     expect(screen.getByRole('heading', { name: 'Record your take' })).toBeInTheDocument()
+  })
+
+  it('switches every screen to Ukrainian when the language switcher is used', async () => {
+    const user = userEvent.setup()
+    renderApp()
+
+    await screen.findByRole('heading', { name: 'Add a song' })
+    await user.click(screen.getByRole('radio', { name: 'UK' }))
+
+    expect(screen.getByRole('heading', { name: 'Додати пісню' })).toBeInTheDocument()
+    expect(screen.getByText('Вийти')).toBeInTheDocument()
   })
 })

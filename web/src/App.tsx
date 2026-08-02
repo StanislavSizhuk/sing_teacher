@@ -11,6 +11,8 @@ import { AuthScreen } from './features/auth/AuthScreen'
 import { useIsAuthenticated } from './features/auth/useSession'
 import { ProgressPage } from './features/progress/ProgressPage'
 import { AddSongForm } from './features/songs/AddSongForm'
+import { useLanguage } from './i18n/useLanguage'
+import { useTranslation } from './i18n/useTranslation'
 
 type Step =
   | { kind: 'song' }
@@ -20,6 +22,7 @@ type Step =
 type View = 'analyze' | 'progress'
 
 function AnalyzeFlow() {
+  const t = useTranslation()
   const [step, setStep] = useState<Step>({ kind: 'song' })
   const enqueue = useMutation({
     mutationFn: (input: { songId: string; recording: File | Blob; mode: AnalysisMode }) =>
@@ -39,7 +42,7 @@ function AnalyzeFlow() {
           <RecordingCapture
             onReady={(recording, mode) => enqueue.mutate({ songId: step.song.id, recording, mode })}
           />
-          {enqueue.isPending && <p className="text-ink-700 text-sm">Submitting…</p>}
+          {enqueue.isPending && <p className="text-ink-700 text-sm">{t.app.submitting}</p>}
           <ErrorAlert error={enqueue.error} />
         </>
       )}
@@ -48,7 +51,7 @@ function AnalyzeFlow() {
         <>
           <QueueStatus analysisId={step.analysisId} recording={step.recording} />
           <Button variant="secondary" onClick={() => setStep({ kind: 'song' })}>
-            Analyze another song
+            {t.app.analyzeAnotherSong}
           </Button>
         </>
       )}
@@ -57,28 +60,41 @@ function AnalyzeFlow() {
 }
 
 function AuthenticatedApp() {
+  const t = useTranslation()
   const [view, setView] = useState<View>('analyze')
+  const [language, setLanguage] = useLanguage()
 
   return (
     <main id="main-content" className="flex min-h-svh flex-col items-center gap-8 px-4 py-10">
       <header className="flex w-full max-w-md flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <span className="text-ink-950 font-semibold">AI Vocal Coach</span>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="focus-visible:outline-ink-950 text-ink-700 rounded text-sm underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Log out
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-ink-950 font-semibold">{t.app.title}</span>
+          <div className="flex items-center gap-3">
+            <SegmentedControl
+              label={t.app.languageLabel}
+              value={language}
+              onChange={setLanguage}
+              options={[
+                { value: 'en', label: 'EN' },
+                { value: 'uk', label: 'UK' },
+              ]}
+            />
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="focus-visible:outline-ink-950 text-ink-700 rounded text-sm whitespace-nowrap underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              {t.app.logout}
+            </button>
+          </div>
         </div>
         <SegmentedControl
-          label="Section"
+          label={t.app.sectionLabel}
           value={view}
           onChange={setView}
           options={[
-            { value: 'analyze', label: 'Analyze' },
-            { value: 'progress', label: 'Progress' },
+            { value: 'analyze', label: t.app.navAnalyze },
+            { value: 'progress', label: t.app.navProgress },
           ]}
         />
       </header>
@@ -97,6 +113,7 @@ function AuthenticatedApp() {
 }
 
 function App() {
+  const t = useTranslation()
   const isAuthenticated = useIsAuthenticated()
   const [restoring, setRestoring] = useState(true)
 
@@ -110,11 +127,11 @@ function App() {
         href="#main-content"
         className="focus:bg-ink-950 focus:text-ink-0 sr-only rounded px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:top-2 focus:left-2"
       >
-        Skip to content
+        {t.app.skipToContent}
       </a>
       {restoring && (
         <main id="main-content" className="flex min-h-svh items-center justify-center">
-          <p className="text-ink-700 text-sm">Loading…</p>
+          <p className="text-ink-700 text-sm">{t.app.loading}</p>
         </main>
       )}
       {!restoring && !isAuthenticated && (

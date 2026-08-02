@@ -6,6 +6,7 @@ import { Button } from '../../components/Button'
 import { ErrorAlert } from '../../components/ErrorAlert'
 import { SegmentedControl } from '../../components/SegmentedControl'
 import { TextField } from '../../components/TextField'
+import { useTranslation } from '../../i18n/useTranslation'
 
 interface AddSongFormProps {
   onAdded: (song: Song) => void
@@ -14,6 +15,7 @@ interface AddSongFormProps {
 const ACCEPTED_AUDIO = '.mp3,.wav,.m4a,.flac,.ogg,audio/*'
 
 export function AddSongForm({ onAdded }: AddSongFormProps) {
+  const t = useTranslation()
   const [sourceType, setSourceType] = useState<'upload' | 'youtube'>('upload')
   const [title, setTitle] = useState('')
   const [artist, setArtist] = useState('')
@@ -40,36 +42,36 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="flex w-full max-w-md flex-col gap-4">
-      <h1 className="text-ink-950 text-lg font-semibold">Add a song</h1>
+      <h1 className="text-ink-950 text-lg font-semibold">{t.addSong.heading}</h1>
 
       <SegmentedControl
-        label="Song source"
+        label={t.addSong.sourceLabel}
         value={sourceType}
         onChange={setSourceType}
         options={[
-          { value: 'upload', label: 'Upload file' },
-          { value: 'youtube', label: 'YouTube link' },
+          { value: 'upload', label: t.addSong.sourceUpload },
+          { value: 'youtube', label: t.addSong.sourceYoutube },
         ]}
       />
 
       {sourceType === 'upload' ? (
         <>
           <TextField
-            label="Title"
+            label={t.addSong.title}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             required
             maxLength={200}
           />
           <TextField
-            label="Artist (optional)"
+            label={t.addSong.artist}
             value={artist}
             onChange={(e) => setArtist(e.target.value)}
             maxLength={200}
           />
           <div className="flex flex-col gap-1">
             <label htmlFor="song-file" className="text-ink-700 text-sm font-medium">
-              Audio file
+              {t.addSong.audioFile}
             </label>
             <input
               id="song-file"
@@ -79,28 +81,25 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
               required
               className="text-ink-700 text-sm file:mr-3 file:cursor-pointer file:rounded file:border file:border-ink-950 file:bg-ink-950 file:px-4 file:py-2 file:text-sm file:font-medium file:text-ink-0 file:transition-colors hover:file:bg-ink-700 hover:file:border-ink-700"
             />
-            <p className="text-ink-500 text-xs">
-              mp3, wav, m4a, flac or ogg. Up to 15 MB / 6 minutes.
-            </p>
+            <p className="text-ink-500 text-xs">{t.addSong.audioFileHint}</p>
           </div>
         </>
       ) : (
         <>
           <p className="border-ink-300 bg-ink-100 text-ink-700 rounded border px-3 py-2 text-xs">
-            For personal, non-commercial use only. Downloading audio from YouTube may conflict with
-            its Terms of Service and the rights of the song's owner.
+            {t.addSong.youtubeDisclaimer}
           </p>
           <TextField
-            label="YouTube URL"
+            label={t.addSong.youtubeUrl}
             type="url"
             value={youtubeUrl}
             onChange={(e) => setYoutubeUrl(e.target.value)}
             required
             maxLength={2048}
-            placeholder="https://www.youtube.com/watch?v=..."
+            placeholder={t.addSong.youtubeUrlPlaceholder}
           />
           <TextField
-            label="Title override (optional)"
+            label={t.addSong.titleOverride}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             maxLength={200}
@@ -110,13 +109,11 @@ export function AddSongForm({ onAdded }: AddSongFormProps) {
 
       <ErrorAlert error={mutation.error} />
       <Button type="submit" disabled={!canSubmit || mutation.isPending}>
-        {mutation.isPending ? 'Adding song…' : 'Add song'}
+        {mutation.isPending ? t.addSong.submitPending : t.addSong.submit}
       </Button>
       {!canSubmit && (
         <p className="text-ink-500 text-xs">
-          {sourceType === 'upload'
-            ? 'Enter a title and choose an audio file to continue.'
-            : 'Enter a YouTube URL to continue.'}
+          {sourceType === 'upload' ? t.addSong.hintUpload : t.addSong.hintYoutube}
         </p>
       )}
     </form>

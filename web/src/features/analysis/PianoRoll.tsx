@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from 'react'
 
 import type { PianoRoll as PianoRollData } from '../../api/client'
+import { useTranslation } from '../../i18n/useTranslation'
 import { computePitchRange, frameToX, hzToY, timeToFrame, type PitchRange } from './pianoRollMath'
 
 interface PianoRollProps {
@@ -86,6 +87,7 @@ function drawStaticLayer(data: PianoRollData, width: number): HTMLCanvasElement 
  * 6.3.4/6.3.5), so this component only draws -- it never re-derives DTW
  * alignment or the off-pitch threshold. */
 export function PianoRoll({ data, audioRef }: PianoRollProps) {
+  const t = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const staticLayerRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -159,10 +161,7 @@ export function PianoRoll({ data, audioRef }: PianoRollProps) {
     <canvas
       ref={canvasRef}
       role="img"
-      aria-label={
-        `Piano roll: your pitch curve over the reference pitch curve, ` +
-        `${offPitchCount} off-pitch note${offPitchCount === 1 ? '' : 's'} highlighted in red`
-      }
+      aria-label={t.pianoRoll.summary(offPitchCount)}
       className="border-ink-300 bg-ink-0 w-full rounded border"
       style={{ height: CANVAS_HEIGHT }}
     />
