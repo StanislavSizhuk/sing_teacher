@@ -34,6 +34,9 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
   const elapsedSeconds = useElapsedSeconds(
     analysis?.currentStage ? analysis.currentStageStartedAt : undefined,
   )
+  const isWaiting =
+    analysis?.status === 'queued' || analysis?.status === 'waiting_for_reference'
+  const waitingSeconds = useElapsedSeconds(isWaiting ? analysis?.queuedAt : undefined)
   const completedStages = Object.entries(analysis?.stages ?? {})
 
   const cancel = useMutation({
@@ -65,6 +68,12 @@ export function QueueStatus({ analysisId, recording }: QueueStatusProps) {
             <p className="text-ink-700">
               This song is still being prepared. Your analysis will start automatically once it's
               ready.
+            </p>
+          )}
+          {isWaiting && waitingSeconds !== undefined && (
+            <p className="text-ink-500 text-xs">
+              Waiting {formatDurationSeconds(waitingSeconds)} -- this page updates itself, no need
+              to reload.
             </p>
           )}
           {analysis.currentStage && (

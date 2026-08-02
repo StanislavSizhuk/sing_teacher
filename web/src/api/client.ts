@@ -285,6 +285,15 @@ export interface Analysis {
   id: string
   songId: string
   status: AnalysisStatus
+  /** When the analysis was originally submitted. Immutable -- a retry
+   * (FR-26) reuses this row, so this stays fixed across retries. Not what
+   * the live wait timer should read; see queuedAt. */
+  createdAt: string
+  /** When the *current* queued/waiting_for_reference wait began -- equal
+   * to createdAt for a fresh submission, reset by retryAnalysis so the
+   * live wait timer (QueueStatus.tsx) never measures from a stale
+   * original submission (spec 10, FR-22). */
+  queuedAt: string
   /** The mode the caller chose at enqueue time (FR-27). */
   mode: AnalysisMode
   /** What the worker's stage A3 actually reconciled `mode` to once it saw
@@ -336,6 +345,8 @@ function toAnalysis(
     id: data.id,
     songId: data.song_id,
     status: data.status,
+    createdAt: data.created_at,
+    queuedAt: data.queued_at,
     mode: data.mode,
     effectiveMode: data.effective_mode,
     queuePosition: data.queue_position,
