@@ -527,6 +527,11 @@ export interface components {
       piano_roll?: components['schemas']['PianoRoll']
       /** Format: date-time */
       created_at: string
+      /**
+       * Format: date-time
+       * @description When the *current* queued/waiting_for_reference wait began. Equal to created_at for a fresh submission; reset to the retry time by POST /analyses/{id}/retry (FR-26), so a client's live wait timer never measures from a stale original submission.
+       */
+      queued_at: string
       /** Format: date-time */
       completed_at?: string
     }
@@ -1121,7 +1126,7 @@ export interface operations {
     }
     requestBody?: never
     responses: {
-      /** @description Re-queued. Position updates follow over the WebSocket channel. */
+      /** @description Re-queued, or back to waiting_for_reference if the song's cold path still hasn't reached ready (spec 6.2, 10.3, FR-16) -- same duality as enqueueAnalysis. Position updates follow over the WebSocket channel. */
       202: {
         headers: {
           [name: string]: unknown
@@ -1140,7 +1145,7 @@ export interface operations {
           'application/problem+json': components['schemas']['Problem']
         }
       }
-      /** @description The analysis is not in the failed state (`ANALYSIS_NOT_FAILED`). */
+      /** @description Either the analysis is not in the failed state (`ANALYSIS_NOT_FAILED`), or its song's cold path itself failed (`REFERENCE_PREP_FAILED`, FR-17) -- restart the song's prep (POST /songs/{id}/prepare) before retrying this analysis again. */
       409: {
         headers: {
           [name: string]: unknown

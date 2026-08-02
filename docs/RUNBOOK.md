@@ -273,3 +273,41 @@ resample" one side of a call, check whether it resamples back before
 returning -- and prefer asserting the *contract* (same rate/length as the
 input) in a test with a fake standing in for the real dependency, not
 just the happy path.
+
+### 2026-08-02 -- `web`'s `npm run generate:api` had been regenerating from a stale copy for days
+
+**Symptom:** `npm run lint` failed with
+`Unsafe assignment of an error typed value` on `queued_at` -- a field
+`api/openapi.yaml` has had since migration `00012`. `tsc --noEmit` had
+passed on the same line minutes earlier.
+
+**Cause:** `deploy/docker-compose.dev.yml`'s `web` service never mounted
+`../api` at all. `npm run generate:api` runs `openapi-typescript
+../api/openapi.yaml -o src/api/schema.gen.ts` relative to `/src` inside
+the container, so `../api/openapi.yaml` resolved to `/api/openapi.yaml` --
+a file that existed only because someone had `docker cp`'d it in by hand
+at some earlier point (dated 2026-07-30 in the container's writable
+layer) as a one-off workaround, then never updated again. Every
+`generate:api` run since silently "succeeded" against that stale copy,
+so `schema.gen.ts` had been drifting further behind `openapi.yaml` for
+days -- missing `mode`, `confidence`, `warnings`, `weights_profile`,
+`waiting_for_reference`, and more, none of it caught because CI's own
+drift check presumably runs `generate:api` inside the same broken
+container image family (untested against the live host file either).
+`tsc --noEmit` didn't catch the missing `queued_at` field because
+whatever looseness `openapi-typescript`'s older generated shape had let
+`data.queued_at` resolve to an implicit `any` rather than a hard
+property-does-not-exist error; only eslint's `no-unsafe-assignment` rule
+(assigning that `any` to a `string`-typed field) surfaced it.
+
+**Action:** added `../api/openapi.yaml:/api/openapi.yaml:ro` to `web`'s
+volumes in `deploy/docker-compose.dev.yml`; regenerated
+`schema.gen.ts` for real (a ~2,300-line diff, all of it the file catching
+up to the real spec -- not reformatting).
+
+**Prevention:** `npm run lint` (not just `tsc --noEmit`) needs to be part
+of the routine check after any API contract change -- it caught a real,
+days-old client/server drift that the type checker alone missed. If a
+generated-file diff is suspiciously large, verify what actually changed
+(symbol counts, a known recently-added field) before assuming it's just
+reformatting and reverting it.
