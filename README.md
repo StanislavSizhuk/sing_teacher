@@ -1,22 +1,7 @@
 # AI Vocal Coach
 
-A web app that compares a user's singing to the original vocal of a song and
-reports pitch, rhythm, vibrato, breathing, dynamics and timbre. Analysis runs
-offline, not in real time.
-
-**Status:** stages E1-E6 (auth, DB schema, song upload/YouTube import, the
-analysis job queue with live WebSocket status updates, the Python ML
-pipeline -- Demucs separation, Whisper transcription, DTW alignment,
-pitch/rhythm/vibrato/dynamics/timbre/breath scoring, weighted score
-aggregation and a text report -- a web UI covering all of that, including a
-synced piano-roll and a progress-over-time chart, and a completed spec
-section 11 security review with a local load-test tool and a deploy script
-with automatic rollback), plus a post-E6 fix that wires the web UI into
-`docker compose` behind Caddy (ADR-0013) so the whole stack -- frontend
-included -- comes up with one command. A paginated analysis history
-endpoint (FR-34) is still open -- see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-[docs/ML_PIPELINE.md](docs/ML_PIPELINE.md).
+An AI vocal coach: sing along to a song, and it scores your pitch, rhythm,
+vibrato, breathing, dynamics and timbre against the original vocal.
 
 ## Quick start
 
@@ -140,7 +125,7 @@ uv run mypy .
 - [docs/ML_PIPELINE.md](docs/ML_PIPELINE.md) -- stages, parameters, error codes, caching
 - [docs/SECURITY.md](docs/SECURITY.md) -- threat model, secrets handling
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) -- deploy, rollback, backup restore, incidents
-- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) -- measured stage timings against the spec 6.17 budget, reference VPS shape (4 vCPU/8 GB)
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) -- measured stage timings against the spec 6.17 budget
 - [docs/LOAD_TESTING.md](docs/LOAD_TESTING.md) -- run `api/cmd/loadtest` locally against the dev stack
 - [docs/adr/](docs/adr/) -- architectural decisions
 - [CHANGELOG.md](CHANGELOG.md)
