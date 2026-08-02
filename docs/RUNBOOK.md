@@ -382,3 +382,52 @@ doesn't match code you can see on disk and there's no compiler error to
 explain it, restart the service before spending more time reading the
 code again -- a live-reload staleness check is cheaper than a second
 full code review.
+
+### 2026-08-02 -- `mixed`-mode analyses repeatedly failed `ALIGNMENT_FAILED`, even against the identical song as reference
+
+**Symptom:** a `mixed`-mode analysis raised `ALIGNMENT_FAILED` on a real
+165s recording, repeatedly, including the degenerate case of using the
+exact same track as both the reference and the "recording" -- a case that
+should align almost perfectly.
+
+**Cause:** `mixed`'s only pitch source for the user's own recording was
+`dsp/melody.py::extract_melody` (ADR-0025), a DSP salience heuristic
+reading F0 directly off the still-mixed audio -- the recording never went
+through Demucs (ADR-0003 kept it reference-only). Measured directly:
+`extract_melody` reported 87.5% of this recording "voiced," including
+confidently through purely instrumental sections, while the reference's
+real Demucs-separated vocal stem for the same song was genuinely only
+~60% voiced (~63s of real instrumental gaps across 6 breaks, RMS -45 to
+-60 dB relative to peak there vs -4.6 dB during real vocal content --
+confirmed as genuine gaps, not a detection artifact). The two pitch
+curves' silence structure disagreed enough that DTW's warping path
+saturated at the band edges with high variance even at a generous ±10s
+band, regardless of ADR-0033's pitch-contour embedding (tested, ruled out
+as a fix on its own -- the mismatch was upstream of what alignment's
+distance metric could paper over).
+
+**Action:** ADR-0034: `mixed` now separates the recording with Demucs too
+(`SeparateRecordingStage`, the same `VocalSeparator` the reference already
+used), through one resolver (`pipeline/voice_source.py::voice_audio_path`)
+so `features`/`align` always agree on which audio they're reading.
+`dsp/melody.py`/`MelodyPitchStage` deleted outright -- after ADR-0033
+moved F0 extraction into `align`, the `mixed`-only scoring stage had
+already become byte-identical to `PitchStage`, which now covers both
+modes. `recording_condition` was fixed to keep reading the *raw*
+pre-separation recording (a stem would defeat its own accompaniment
+check). Verified directly against the real recording/reference pair that
+produced this incident: `align` now succeeds with `normalized_distance =
+0.0238` (ceiling `0.45`), `length_mismatch = false`, where it previously
+raised `ALIGNMENT_FAILED` every time.
+
+**Prevention:** when two sides of a comparison are meant to be
+structurally comparable (here: two pitch curves, one feeding DTW against
+the other), check that both are produced by the *same kind* of processing
+before tuning the comparison's own thresholds -- ADR-0033's pitch-contour
+change was a real improvement but couldn't fix a mismatch that started
+one stage earlier, in what produced each curve to begin with. Also: `docs/
+PERFORMANCE.md`'s NFR-01c estimate rested on `extract_melody` staying
+cheap because it skipped separation entirely; a decision made purely for
+latency, without validating the accuracy trade-off against real
+recordings, cost more (a real, repeated production-shaped failure) than
+the latency it saved.
