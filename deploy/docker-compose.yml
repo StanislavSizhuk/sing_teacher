@@ -104,9 +104,16 @@ services:
           cpus: "4"
           memory: 6G
     # Graceful shutdown finishes the current stage and saves progress
-    # before exiting (spec 10.1); 120s covers the slowest single stage
-    # (separate_reference, 300s timeout) with margin for a typical case.
-    stop_grace_period: 120s
+    # before exiting (spec 10.1) -- should_stop is only checked between
+    # stages (pipeline/runner.py), never during one, so the grace period
+    # has to cover the slowest single stage outright, not just a typical
+    # case. SEPARATE_RECORDING_TIMEOUT_SECONDS and
+    # SEPARATE_REFERENCE_TIMEOUT_SECONDS (worker/src/vocalcoach/
+    # constants.py) are both 600s; +30s covers _join_subprocess's own
+    # terminate/kill cleanup if that ceiling is hit. This is a ceiling, not
+    # a fixed delay -- compose only waits as long as the container actually
+    # takes to exit, so a deploy only runs long if it lands mid-Demucs.
+    stop_grace_period: 630s
     tmpfs:
       - /tmp
     volumes:
