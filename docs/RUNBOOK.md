@@ -512,3 +512,43 @@ Any consumer-side "give up on this job" path must treat recording that
 give-up as best-effort: if a job cannot even be marked failed, it must
 still be removed from the queue rather than left to block forever or
 crash-loop the whole worker.
+
+### 2026-08-12 -- YouTube import failed for every link, no visible cause
+
+**Symptom:** `POST /songs` with `source_type=youtube` returned a generic
+`500 INTERNAL` ("Something went wrong. Please try again.") for ordinary,
+public YouTube links -- nothing in the response pointed at why, by design
+(`transport/http/problem.go`'s `classify` never leaks internal error text
+to the client).
+
+**Cause:** `api/Dockerfile`'s runtime stage pinned `yt-dlp=2025.03.31-r0`
+via `apk` (ADR-0007). YouTube changes its extraction internals (player
+signature, format list) often enough that yt-dlp ships fixes on a similar
+cadence; a yt-dlp that old could no longer parse the current format list at
+all. Reproduced directly: the exact same `yt-dlp --dump-single-json
+--skip-download` call against the same public video failed with `ERROR:
+Requested format is not available` on a yt-dlp from that era and succeeded
+unmodified on a current upstream release. The failure happened inside
+`youtube.Client.Metadata` (`api/internal/youtube/client.go`), on the very
+first network call `AddFromYouTube` makes -- before any download, cache
+check, or DB write -- so every submission failed identically regardless of
+the link.
+
+**Action:** switched `yt-dlp`'s install source from `apk` to `pip`, pinned
+to an exact upstream version (`yt-dlp==2026.07.04`), documented in
+ADR-0035. `python3`/`py3-pip` are pinned via `apk` the same way `ffmpeg`
+already was; `py3-pip` is removed again in the same layer right after
+install. Verified end to end inside the production base image
+(`alpine:3.21@sha256:48b03...`): a metadata fetch and a real video download
+both succeeded with no compiler or extra packages needed (`yt-dlp`'s wheel
+is pure Python).
+
+**Prevention:** `yt-dlp`'s pinned version needs to move far more often than
+any other pinned dependency in this repo -- the failure mode is external
+and adversarial (YouTube changing on its own schedule), so nothing in this
+repo's own CI will catch it ahead of time. Treat a burst of YouTube-import
+failures (or a user report that a plainly valid link fails) as a signal to
+re-run the reproduction above with the current pin before looking anywhere
+else; bump `api/Dockerfile`'s `yt-dlp==` pin to a current release the same
+way this incident did, and re-verify against a real video before shipping
+the bump.

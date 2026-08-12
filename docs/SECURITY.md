@@ -387,10 +387,14 @@ by ADR-0013's `web`/Caddy compose wiring, verified above.
 
 - Go module versions are locked via `go.sum`; `web/` dependencies via
   `package-lock.json`; `worker/` dependencies via `uv.lock` (ADR-0011).
-- `ffmpeg`/`yt-dlp` are pinned to exact `apk` package versions in the
-  production `go-api` runtime image, not just an unpinned `apk add`
-  (ADR-0007); `worker/`'s Dockerfile pins the same way with the Debian
-  `apt` equivalent.
+- `ffmpeg` is pinned to an exact `apk` package version in the production
+  `go-api` runtime image, not just an unpinned `apk add` (ADR-0007);
+  `worker/`'s Dockerfile pins the same way with the Debian `apt` equivalent.
+  `yt-dlp` is pinned to an exact `pip` version instead (ADR-0035): it
+  tracks YouTube's own frequently-changing extraction internals, and
+  `apk`'s community repo lags upstream releases by enough to break YouTube
+  import outright, so it needs to be bumped far more often than any other
+  pinned dependency in this repo (`docs/RUNBOOK.md`'s 2026-08-12 incident).
 - CI runs `govulncheck`, `gosec`, and a Trivy image scan on the API,
   `npm audit --audit-level=high` on `web/`, and `pip-audit` plus a Trivy
   image scan on `worker/`, on every PR (`.github/workflows/ci.yml`);
