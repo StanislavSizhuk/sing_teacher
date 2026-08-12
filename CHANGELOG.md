@@ -274,3 +274,15 @@ tagged yet.
   (`web/`'s YouTube tab) and the exact-match host allowlist
   (`internal/youtube/url.go`) are unchanged and remain the real controls;
   `docs/SECURITY.md`'s 11.4 checklist is updated to match.
+
+## [Unreleased] -- yt-dlp stale pin
+
+### Fixed
+
+- YouTube import (FR-11) failed for every link with a generic `500
+  INTERNAL`: `api/Dockerfile`'s `yt-dlp` came from an `apk` package pinned
+  to a version old enough that it could no longer parse YouTube's current
+  format list. `yt-dlp` now installs via `pip`, pinned to an exact upstream
+  version instead (ADR-0035) -- `apk`'s community repo lags upstream
+  releases by more than this fast-moving, adversarial dependency can
+  tolerate. See `docs/RUNBOOK.md`'s 2026-08-12 incident.

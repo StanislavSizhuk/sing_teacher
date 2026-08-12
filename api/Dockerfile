@@ -32,7 +32,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./c
 # cannot host. Versions are pinned for the same reason images are pinned by
 # digest below: reproducible, auditable builds.
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
-RUN apk add --no-cache ffmpeg=6.1.2-r1 yt-dlp=2025.03.31-r0 \
+# yt-dlp comes from pip, not apk (see ADR-0035): it tracks YouTube's
+# frequently-changing extraction internals, and apk's community repo lags
+# upstream releases by months -- long enough that YouTube import breaks
+# outright. pip installs a pure-Python wheel (no compiler needed) pinned to
+# an exact upstream version; py3-pip itself is removed again afterward so it
+# never ships in the final image, only the python3 interpreter yt-dlp needs
+# to run and the yt-dlp package pip placed in its site-packages.
+RUN apk add --no-cache ffmpeg=6.1.2-r1 python3=3.12.13-r0 py3-pip=24.3.1-r0 \
+    && pip install --break-system-packages --no-cache-dir yt-dlp==2026.07.04 \
+    && apk del py3-pip \
     && addgroup -S vocalcoach && adduser -S -G vocalcoach vocalcoach \
     && mkdir -p /data/audio-tmp && chown vocalcoach:vocalcoach /data/audio-tmp
 COPY --from=builder /out/api /api
