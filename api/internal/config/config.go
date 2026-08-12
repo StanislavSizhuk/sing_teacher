@@ -43,6 +43,12 @@ type Limits struct {
 // Features gates functionality that is off by default in production (spec 11.4).
 type Features struct {
 	YouTubeImport bool
+	// YouTubePotProviderURL is the bgutil PO Token provider sidecar's base URL
+	// (ADR-0037), passed to yt-dlp via --extractor-args whenever YouTubeImport
+	// is enabled. Defaults to the compose service name/port so no deployment
+	// needs to set it explicitly; only an operator running the sidecar
+	// somewhere else needs to override it.
+	YouTubePotProviderURL string
 }
 
 // Postgres holds connection settings for the primary database.
@@ -233,7 +239,8 @@ func Load() (*Config, error) {
 			AudioTTLSeconds:     posInt("AUDIO_TTL_SECONDS", 300),
 		},
 		Features: Features{
-			YouTubeImport: optBool("FEATURE_YOUTUBE_IMPORT", false),
+			YouTubeImport:         optBool("FEATURE_YOUTUBE_IMPORT", false),
+			YouTubePotProviderURL: optString("YOUTUBE_POT_PROVIDER_URL", "http://pot-provider:4416"),
 		},
 	}
 

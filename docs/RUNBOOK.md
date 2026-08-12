@@ -587,6 +587,41 @@ careful to stay inside of.
 
 **Prevention:** none applicable -- there is nothing in this repo's control
 loop that predicts or prevents YouTube's own anti-bot enforcement changing.
+
+### 2026-08-12 -- PO Token provider sidecar added, ADR-0036 superseded
+
+**Symptom:** the previous incident's accepted limitation proved worse in
+practice than expected -- retry-and-hope was not an acceptable experience
+for FR-11.
+
+**Action:** added `pot-provider`, a `bgutil-ytdlp-pot-provider` sidecar
+(ADR-0037, supersedes ADR-0036), to both compose files. `internal/
+youtube.Client` now passes every yt-dlp call `--extractor-args
+"youtubepot-bgutilhttp:base_url=<pot-provider URL>"`, and `api/Dockerfile`'s
+runtime stage installs the matching yt-dlp plugin via `pip`
+(`bgutil-ytdlp-pot-provider==1.3.1`), the same pinned-exact-version pattern
+ADR-0035 already established for `yt-dlp` itself. Verified directly before
+shipping: the sidecar's `/ping` and `/get_pot` work under the same
+hardening (`read_only`, `cap_drop: ALL`, `no-new-privileges`) applied in
+compose; a real metadata fetch against a real, ordinary public video
+succeeded through the plugin end to end. Also confirmed this is not a full
+fix -- the same video ADR-0036's repro used (`Wx7vo__48oE`) still failed
+with the sidecar wired in, hitting `HTTP Error 429` before a PO token is
+even relevant, while a high-traffic video (`dQw4w9WgXcQ`) succeeded
+reliably. YouTube's IP-reputation layer sits in front of the token check
+and isn't overridden by having a valid token -- ADR-0037 has the full
+verification detail.
+
+**Prevention:** `pot-provider`'s image tag and the `bgutil-ytdlp-pot-
+provider` pip plugin version need to move together, on the same kind of
+unpredictable, adversarial cadence ADR-0035's prevention note already
+established for `yt-dlp` itself -- YouTube's BotGuard changes are what
+drives both. Treat a return of frequent `Sign in to confirm you're not a
+bot` failures as a signal to check `bgutil-ytdlp-pot-provider`'s upstream
+releases for a newer version before assuming the sidecar itself is broken;
+bump `deploy/docker-compose.yml`'s image pin and `api/Dockerfile`'s pip pin
+together, and re-verify with the same real-video check ADR-0037 used
+before shipping the bump.
 If a future report describes this as the *dominant* failure mode rather
 than an occasional one, that is the signal to reopen ADR-0036 and
 reconsider the PO-Token-provider option, not to treat it as a regression

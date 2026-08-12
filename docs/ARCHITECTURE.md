@@ -21,7 +21,10 @@ end-to-end wiring of both: `mode` selection at
 context from it instead of a hardcoded default, confidence/warnings/
 unavailable-aspects surfaced through the API and `web/` (FR-41, FR-47),
 mode explained before recording (FR-28), and the FR-49 progress chart
-distinguishing `clean` from `mixed` points. Components and flows still
+distinguishing `clean` from `mixed` points, plus ADR-0037's `pot-provider`
+sidecar (`bgutil-ytdlp-pot-provider`): `go-api` is now the only service with
+a new runtime dependency, reached over the compose network to fetch a PO
+Token for every `yt-dlp` call FR-11 makes. Components and flows still
 planned for later stages (Google sign-in UI, a paginated analysis history
 endpoint) are noted as such, not described as if they existed.
 
@@ -143,6 +146,10 @@ transport/http, transport/ws  →  service/{auth,song,analysis}  →  repository
   probe, canonical-WAV re-encode) -- the spec 11.3 sanitization step, shared
   by both upload and YouTube ingestion.
 - `youtube`: yt-dlp metadata/download, host-allowlisted to youtube.com/youtu.be.
+  Every call carries `--extractor-args` pointing at the `pot-provider`
+  sidecar (ADR-0037) so requests present a PO Token to YouTube's bot-check;
+  the base URL comes from `config.Features.YouTubePotProviderURL`, empty
+  only in tests.
 - `storage`: audio files under one shared directory (the `audio-tmp` Docker
   volume in compose), named from a server-generated id
   (`song-<id>.wav`/`analysis-<id>.wav`), never a user filename.

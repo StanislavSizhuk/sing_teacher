@@ -32,7 +32,7 @@ func (f *fakeRunner) Run(_ context.Context, name string, args []string) ([]byte,
 
 func TestClient_Metadata_ParsesDurationBeforeDownload(t *testing.T) {
 	runner := &fakeRunner{stdout: []byte(`{"id":"dQw4w9WgXcQ","title":"Test Song","duration":212.5}`)}
-	c := youtube.NewClient(runner, "yt-dlp")
+	c := youtube.NewClient(runner, "yt-dlp", "")
 
 	info, err := c.Metadata(context.Background(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestClient_Metadata_ParsesDurationBeforeDownload(t *testing.T) {
 
 func TestClient_Metadata_MissingID_Errors(t *testing.T) {
 	runner := &fakeRunner{stdout: []byte(`{"title":"No ID Here","duration":10}`)}
-	c := youtube.NewClient(runner, "yt-dlp")
+	c := youtube.NewClient(runner, "yt-dlp", "")
 
 	_, err := c.Metadata(context.Background(), "https://youtu.be/x")
 	require.Error(t, err)
@@ -54,7 +54,7 @@ func TestClient_Metadata_MissingID_Errors(t *testing.T) {
 
 func TestClient_Metadata_RunnerError_Wrapped(t *testing.T) {
 	runner := &fakeRunner{stderr: []byte("Video unavailable"), err: errors.New("exit status 1")}
-	c := youtube.NewClient(runner, "yt-dlp")
+	c := youtube.NewClient(runner, "yt-dlp", "")
 
 	_, err := c.Metadata(context.Background(), "https://youtu.be/gone")
 	require.Error(t, err)
@@ -65,7 +65,7 @@ func TestClient_Download_ReturnsFixedFilename(t *testing.T) {
 	dir := t.TempDir()
 	want := filepath.Join(dir, "audio.wav")
 	runner := &fakeRunner{writeOnRun: want}
-	c := youtube.NewClient(runner, "yt-dlp")
+	c := youtube.NewClient(runner, "yt-dlp", "")
 
 	path, err := c.Download(context.Background(), "https://youtu.be/x", dir)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestClient_Download_ReturnsFixedFilename(t *testing.T) {
 func TestClient_Download_MissingOutputFile_Errors(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{} // succeeds but never writes the expected file
-	c := youtube.NewClient(runner, "yt-dlp")
+	c := youtube.NewClient(runner, "yt-dlp", "")
 
 	_, err := c.Download(context.Background(), "https://youtu.be/x", dir)
 	require.Error(t, err)
@@ -86,7 +86,7 @@ func TestClient_Download_MissingOutputFile_Errors(t *testing.T) {
 func TestClient_Download_RunnerError_Wrapped(t *testing.T) {
 	dir := t.TempDir()
 	runner := &fakeRunner{stderr: []byte("network error"), err: errors.New("exit status 1")}
-	c := youtube.NewClient(runner, "yt-dlp")
+	c := youtube.NewClient(runner, "yt-dlp", "")
 
 	_, err := c.Download(context.Background(), "https://youtu.be/x", dir)
 	require.Error(t, err)
@@ -95,4 +95,34 @@ func TestClient_Download_RunnerError_Wrapped(t *testing.T) {
 
 func TestCheckBinary_MissingBinary_Error(t *testing.T) {
 	require.Error(t, youtube.CheckBinary("definitely-not-yt-dlp-xyz"))
+}
+
+func TestClient_Metadata_PotProviderConfigured_PassesExtractorArgs(t *testing.T) {
+	runner := &fakeRunner{stdout: []byte(`{"id":"dQw4w9WgXcQ","title":"Test Song","duration":212.5}`)}
+	c := youtube.NewClient(runner, "yt-dlp", "http://pot-provider:4416")
+
+	_, err := c.Metadata(context.Background(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+	require.NoError(t, err)
+	require.Contains(t, runner.gotArgs, "--extractor-args")
+	require.Contains(t, runner.gotArgs, "youtubepot-bgutilhttp:base_url=http://pot-provider:4416")
+}
+
+func TestClient_Download_PotProviderConfigured_PassesExtractorArgs(t *testing.T) {
+	dir := t.TempDir()
+	runner := &fakeRunner{writeOnRun: filepath.Join(dir, "audio.wav")}
+	c := youtube.NewClient(runner, "yt-dlp", "http://pot-provider:4416")
+
+	_, err := c.Download(context.Background(), "https://youtu.be/x", dir)
+	require.NoError(t, err)
+	require.Contains(t, runner.gotArgs, "--extractor-args")
+	require.Contains(t, runner.gotArgs, "youtubepot-bgutilhttp:base_url=http://pot-provider:4416")
+}
+
+func TestClient_Metadata_PotProviderUnset_OmitsExtractorArgs(t *testing.T) {
+	runner := &fakeRunner{stdout: []byte(`{"id":"dQw4w9WgXcQ","title":"Test Song","duration":212.5}`)}
+	c := youtube.NewClient(runner, "yt-dlp", "")
+
+	_, err := c.Metadata(context.Background(), "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+	require.NoError(t, err)
+	require.NotContains(t, runner.gotArgs, "--extractor-args")
 }

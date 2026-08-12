@@ -34,13 +34,27 @@ type VideoInfo struct {
 
 // Client wraps yt-dlp.
 type Client struct {
-	runner    sysproc.Runner
-	ytDlpPath string
+	runner             sysproc.Runner
+	ytDlpPath          string
+	potProviderBaseURL string
 }
 
-// NewClient builds a Client bound to the given yt-dlp binary.
-func NewClient(runner sysproc.Runner, ytDlpPath string) *Client {
-	return &Client{runner: runner, ytDlpPath: ytDlpPath}
+// NewClient builds a Client bound to the given yt-dlp binary. potProviderBaseURL
+// points at the bgutil PO Token provider sidecar (ADR-0037); every call passes
+// it to yt-dlp via --extractor-args so requests carry a valid PO Token instead
+// of relying on YouTube's bot-check treating them leniently. Empty disables it,
+// which is only expected in tests -- production config always sets a default.
+func NewClient(runner sysproc.Runner, ytDlpPath, potProviderBaseURL string) *Client {
+	return &Client{runner: runner, ytDlpPath: ytDlpPath, potProviderBaseURL: potProviderBaseURL}
+}
+
+// potProviderArgs returns the yt-dlp extractor-args pair pointing at the PO
+// Token provider, or nil when none is configured.
+func (c *Client) potProviderArgs() []string {
+	if c.potProviderBaseURL == "" {
+		return nil
+	}
+	return []string{"--extractor-args", "youtubepot-bgutilhttp:base_url=" + c.potProviderBaseURL}
 }
 
 // CheckBinary fails fast if yt-dlp is not on PATH (spec 12.1: fail fast),
@@ -62,13 +76,15 @@ func (c *Client) Metadata(ctx context.Context, videoURL string) (VideoInfo, erro
 	ctx, cancel := context.WithTimeout(ctx, metadataTimeout)
 	defer cancel()
 
-	out, stderr, err := c.runner.Run(ctx, c.ytDlpPath, []string{
+	args := append([]string{
 		"--dump-single-json",
 		"--no-playlist",
 		"--no-warnings",
 		"--skip-download",
-		videoURL,
-	})
+	}, c.potProviderArgs()...)
+	args = append(args, videoURL)
+
+	out, stderr, err := c.runner.Run(ctx, c.ytDlpPath, args)
 	if err != nil {
 		return VideoInfo{}, fmt.Errorf("fetch youtube metadata (%s): %w", strings.TrimSpace(string(stderr)), err)
 	}
@@ -92,13 +108,15 @@ func (c *Client) Download(ctx context.Context, videoURL, destDir string) (string
 	defer cancel()
 
 	outputPath := filepath.Join(destDir, downloadFilename)
-	_, stderr, err := c.runner.Run(ctx, c.ytDlpPath, []string{
+	args := append([]string{
 		"-x", "--audio-format", "wav",
 		"--no-playlist",
 		"--no-warnings",
 		"-o", outputPath,
-		videoURL,
-	})
+	}, c.potProviderArgs()...)
+	args = append(args, videoURL)
+
+	_, stderr, err := c.runner.Run(ctx, c.ytDlpPath, args)
 	if err != nil {
 		return "", fmt.Errorf("download youtube audio (%s): %w", strings.TrimSpace(string(stderr)), err)
 	}
