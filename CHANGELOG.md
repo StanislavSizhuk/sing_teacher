@@ -297,4 +297,23 @@ tagged yet.
   cookies server-side both go a step past the personal/non-commercial
   posture ADR-0028 already committed to for this feature. A user who hits
   this is expected to retry the same link or try a different one. See
-  `docs/RUNBOOK.md`'s second 2026-08-12 incident.
+  `docs/RUNBOOK.md`'s second 2026-08-12 incident. Superseded the same day
+  -- see the next section.
+
+## [Unreleased] -- YouTube PO Token provider sidecar
+
+### Added
+
+- `pot-provider` (`bgutil-ytdlp-pot-provider`), a new sidecar service in
+  both compose files, generates the PO Token YouTube's bot-check expects
+  (ADR-0037, supersedes ADR-0036). `internal/youtube.Client` passes it to
+  every yt-dlp call via `--extractor-args`; `api/Dockerfile`'s runtime
+  stage installs the matching yt-dlp plugin the same pinned-via-pip way
+  ADR-0035 already installs `yt-dlp` itself. Hardened like `go-api` (pinned
+  image, no published port, `read_only`, `cap_drop: ALL`,
+  `no-new-privileges`); `go-api` waits on its healthcheck before starting.
+  Verified end to end against the real service, not just wired up on
+  faith -- see ADR-0037 for what was and wasn't confirmed (an ordinary
+  video can still fail; a high-traffic one reliably does not, since
+  YouTube's IP-reputation layer sits in front of the token check). See
+  `docs/RUNBOOK.md`'s 2026-08-12 follow-up entry.

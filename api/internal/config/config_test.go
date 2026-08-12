@@ -66,6 +66,23 @@ func TestLoad_FeatureYouTubeImport_ParsesTrue(t *testing.T) {
 	require.True(t, cfg.Features.YouTubeImport)
 }
 
+func TestLoad_YouTubePotProviderURL_DefaultsToComposeServiceName(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "http://pot-provider:4416", cfg.Features.YouTubePotProviderURL)
+}
+
+func TestLoad_YouTubePotProviderURL_Overridable(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("YOUTUBE_POT_PROVIDER_URL", "http://pot-provider.internal:9000")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	require.Equal(t, "http://pot-provider.internal:9000", cfg.Features.YouTubePotProviderURL)
+}
+
 func TestLoad_InvalidFeatureFlag_Rejected(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("FEATURE_YOUTUBE_IMPORT", "maybe")

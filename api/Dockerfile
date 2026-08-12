@@ -6,6 +6,11 @@ WORKDIR /src
 # whatever Alpine release golang:1.26-alpine itself is built on, which the
 # runtime stage's alpine:3.21 pin does not match. Acceptable for dev -- this
 # stage never faces the internet (deploy/docker-compose.dev.yml).
+# No bgutil-ytdlp-pot-provider plugin here (unlike the runtime stage,
+# ADR-0037): apk's yt-dlp has no pip/site-packages to install it into. Dev's
+# go-api still passes --extractor-args pointing at the dev pot-provider
+# service; apk's yt-dlp just ignores the unrecognized key (a warning, not a
+# failure), same best-effort behavior ADR-0036 already accepted.
 RUN apk add --no-cache ffmpeg yt-dlp
 RUN go install github.com/air-verse/air@v1.61.7
 COPY go.mod go.sum ./
@@ -38,9 +43,15 @@ FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d650
 # outright. pip installs a pure-Python wheel (no compiler needed) pinned to
 # an exact upstream version; py3-pip itself is removed again afterward so it
 # never ships in the final image, only the python3 interpreter yt-dlp needs
-# to run and the yt-dlp package pip placed in its site-packages.
+# to run and the yt-dlp/bgutil-ytdlp-pot-provider packages pip placed in its
+# site-packages. bgutil-ytdlp-pot-provider is yt-dlp's PO Token plugin
+# (ADR-0037): it calls the pot-provider sidecar (deploy/docker-compose.yml)
+# over HTTP, no extra native deps, so it installs the same way as yt-dlp
+# itself.
 RUN apk add --no-cache ffmpeg=6.1.2-r1 python3=3.12.13-r0 py3-pip=24.3.1-r0 \
-    && pip install --break-system-packages --no-cache-dir yt-dlp==2026.07.04 \
+    && pip install --break-system-packages --no-cache-dir \
+         yt-dlp==2026.07.04 \
+         bgutil-ytdlp-pot-provider==1.3.1 \
     && apk del py3-pip \
     && addgroup -S vocalcoach && adduser -S -G vocalcoach vocalcoach \
     && mkdir -p /data/audio-tmp && chown vocalcoach:vocalcoach /data/audio-tmp

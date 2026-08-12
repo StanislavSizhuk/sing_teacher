@@ -290,7 +290,7 @@ func buildSongAndAnalysisServices(
 ) (*song.Service, *analysis.Service) {
 	runner := sysproc.NewExecRunner()
 	processor := media.NewProcessor(runner, ffmpegPath, ffprobePath)
-	ytClient := youtube.NewClient(runner, ytDlpPath)
+	ytClient := youtube.NewClient(runner, ytDlpPath, cfg.Features.YouTubePotProviderURL)
 
 	songRepo := postgres.NewSongRepository(pool)
 	songSvc := song.NewService(songRepo, processor, files, ytClient, songsPrepQueue,

@@ -1,7 +1,11 @@
 # ADR-0036: accept YouTube's bot-check as a known limitation, don't fight it
 
-- Status: Accepted
+- Status: Superseded by ADR-0037
 - Date: 2026-08-12
+- 2026-08-12: superseded the same day -- the PO-Token-provider sidecar
+  rejected below as disproportionate is now accepted, ADR-0037. The
+  reasoning below (the mechanism, the failure's cause, ADR-0028's ToS
+  posture) is unchanged and not re-litigated there.
 
 ## Context
 

@@ -86,14 +86,23 @@ stands, not just cross-referenced against the threat-model prose below.
   (`web/src/features/songs/AddSongForm.tsx`).
 - [x] Host allowlist (`internal/youtube/url.go`) is an exact match, not a
   suffix match -- `youtube.com.evil.example` is rejected.
-- [x] No infrastructure is built to defeat YouTube's own anti-bot
-  enforcement (PO Tokens, IP-based rate limiting): imports fail
-  intermittently with a generic, retriable error when YouTube's side
-  decides to challenge the request, and that is accepted, not worked
-  around (ADR-0036). A PO-Token-provider sidecar or real-account session
-  cookies would both add standing infrastructure whose only job is
-  circumventing that enforcement -- a step past the personal/non-commercial
-  posture this whole feature already sits on (ADR-0028).
+- [x] A `pot-provider` sidecar (`bgutil-ytdlp-pot-provider`, ADR-0037,
+  supersedes ADR-0036) generates the PO Token YouTube's bot-check expects,
+  so `yt-dlp` requests stop looking like an unauthenticated, non-browser
+  client for most videos. Not a full fix: YouTube's IP-reputation/
+  traffic-pattern layer in front of the token check is unaffected by
+  having a valid token, verified directly (ADR-0037) -- an ordinary video
+  can still fail, a high-traffic one reliably does not. `AddFromYouTube`'s
+  existing generic, retriable error path is unchanged for whatever still
+  gets through. This does reopen the ToS-exposure question ADR-0028/0036
+  both flagged -- standing infrastructure whose only job is passing an
+  anti-bot check -- accepted as part of ADR-0037's decision, not a new gap.
+  Real-account session cookies remain rejected: the most reliable option,
+  but the leak-blast-radius is an actual account, not just this
+  deployment, unlike a sidecar that never holds anyone's credentials.
+- [x] `pot-provider` is hardened the same as `go-api`: pinned image (tag +
+  digest), no published port (only `go-api` reaches it over the compose
+  network), `read_only`, `cap_drop: [ALL]`, `no-new-privileges`.
 
 ### 11.5 Data and secrets
 
