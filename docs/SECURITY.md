@@ -86,6 +86,14 @@ stands, not just cross-referenced against the threat-model prose below.
   (`web/src/features/songs/AddSongForm.tsx`).
 - [x] Host allowlist (`internal/youtube/url.go`) is an exact match, not a
   suffix match -- `youtube.com.evil.example` is rejected.
+- [x] No infrastructure is built to defeat YouTube's own anti-bot
+  enforcement (PO Tokens, IP-based rate limiting): imports fail
+  intermittently with a generic, retriable error when YouTube's side
+  decides to challenge the request, and that is accepted, not worked
+  around (ADR-0036). A PO-Token-provider sidecar or real-account session
+  cookies would both add standing infrastructure whose only job is
+  circumventing that enforcement -- a step past the personal/non-commercial
+  posture this whole feature already sits on (ADR-0028).
 
 ### 11.5 Data and secrets
 

@@ -552,3 +552,42 @@ re-run the reproduction above with the current pin before looking anywhere
 else; bump `api/Dockerfile`'s `yt-dlp==` pin to a current release the same
 way this incident did, and re-verify against a real video before shipping
 the bump.
+
+### 2026-08-12 -- YouTube import still fails intermittently after the yt-dlp pin fix
+
+**Symptom:** with `yt-dlp` current (the incident above already fixed) and
+`deno` (a JS runtime `yt-dlp` needs for YouTube's challenge JS) present in
+the image, `POST /songs` with `source_type=youtube` still returns the
+generic `500 INTERNAL` for some links, inconsistently -- the same URL can
+succeed, then fail twice in a row on the next two attempts.
+
+**Cause:** not a bug. `yt-dlp -v` against a real link
+(`https://www.youtube.com/watch?v=Wx7vo__48oE`), run repeatedly from inside
+the actual `go-api` container, showed `HTTP Error 429: Too Many Requests`
+and `Unable to fetch GVS PO Token for web_safari client: Missing required
+Visitor Data`, then `Sign in to confirm you're not a bot`. This is
+YouTube's PO Token (proof-of-origin token) anti-bot check: an adversarial,
+per-request, continuously evolving check on YouTube's side, not a version
+or config problem on this one. It targets exactly this feature's traffic
+shape (server-side, unauthenticated, no real browser) and is stricter for
+an "ordinary" video than for extremely high-traffic ones (`dQw4w9WgXcQ`,
+`jNQXAC9IVRw` succeeded far more reliably than the reported link in the
+same testing session).
+
+**Action:** none -- documented as an accepted limitation in ADR-0036 rather
+than fixed. `AddFromYouTube`'s existing generic, retriable error is left
+as-is; a user who hits this is expected to retry. Two real fixes (a
+PO-Token-provider sidecar service, or cookies from a real logged-in
+account) were evaluated and rejected in ADR-0036 as disproportionate to
+this being a personal, non-commercial, single-VPS project (the same
+posture ADR-0028 already committed to for this feature) -- both add a
+standing secret or service whose only job is defeating YouTube's bot
+detection, which is a step past the "tolerated personal use" ADR-0028 was
+careful to stay inside of.
+
+**Prevention:** none applicable -- there is nothing in this repo's control
+loop that predicts or prevents YouTube's own anti-bot enforcement changing.
+If a future report describes this as the *dominant* failure mode rather
+than an occasional one, that is the signal to reopen ADR-0036 and
+reconsider the PO-Token-provider option, not to treat it as a regression
+in this codebase.

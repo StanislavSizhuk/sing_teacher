@@ -286,3 +286,15 @@ tagged yet.
   version instead (ADR-0035) -- `apk`'s community repo lags upstream
   releases by more than this fast-moving, adversarial dependency can
   tolerate. See `docs/RUNBOOK.md`'s 2026-08-12 incident.
+
+### Known limitations
+
+- YouTube import (FR-11) still fails intermittently even with a current
+  `yt-dlp`, with the same generic `500 INTERNAL` -- YouTube's PO Token
+  anti-bot check, not this codebase, decides per-request whether an
+  unauthenticated `yt-dlp` client passes. Accepted, not fixed (ADR-0036):
+  building a PO-Token-provider sidecar or holding a real account's session
+  cookies server-side both go a step past the personal/non-commercial
+  posture ADR-0028 already committed to for this feature. A user who hits
+  this is expected to retry the same link or try a different one. See
+  `docs/RUNBOOK.md`'s second 2026-08-12 incident.
