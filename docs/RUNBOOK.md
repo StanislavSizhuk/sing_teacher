@@ -444,3 +444,71 @@ cheap because it skipped separation entirely; a decision made purely for
 latency, without validating the accuracy trade-off against real
 recordings, cost more (a real, repeated production-shaped failure) than
 the latency it saved.
+
+### 2026-08-12 -- `python-worker` crash-looped every restart, filling worker and Postgres logs (dev environment)
+
+**Symptom:** `deploy-python-worker-1` restarted roughly once a minute,
+printing a full traceback each time; its own log and `deploy-postgres-1`'s
+grew to 6.3G and 3.4G respectively from the resulting flood of fresh
+connections and failed queries.
+
+**Cause:** a stray Redis Streams entry on `analyses:run` (`job_id =
+"job-resume"`) sat in the `analyses:workers` consumer group's pending list
+past `PENDING_CLAIM_MIN_IDLE` with `times_delivered` already over
+`MAX_CLAIM_ATTEMPTS` -- each container restart's own startup
+`reclaim_stuck_jobs()` counted as another delivery, so it kept crossing the
+threshold again immediately. The producer never writes anything but a real
+`uuid.UUID.String()` (`api/internal/queue/producer.go:87,108`); this entry
+most likely came from manual `redis-cli XADD` testing of the reclaim path,
+left behind afterwards. `Consumer.reclaim_stuck_jobs`
+(`worker/src/vocalcoach/queue/consumer.py`) correctly picked it for
+give-up and called `_give_up`, which called `AnalysisJobHandler.
+mark_permanently_failed` -> `PostgresAnalysisRepository.mark_failed`,
+which failed with `psycopg.errors.InvalidTextRepresentation: invalid
+input syntax for type uuid: "job-resume"` (`analyses.id` is a `uuid`
+column). `_give_up` had no exception handling around that call, so the
+error propagated out of `reclaim_stuck_jobs`, out of `run_forever`
+(called at startup, before the main loop even begins), and crashed the
+whole process -- restart policy relaunched the container immediately,
+which hit the same still-pending entry in its own startup reclaim sweep
+within seconds, repeating forever.
+
+Fixing that alone surfaced a second, related bug: no method on
+`PostgresAnalysisRepository`/`PostgresSongRepository` (`worker/src/
+vocalcoach/repositories/postgres.py`) wrapped its `cur.execute()` +
+`self._conn.commit()` in a `try`/`except` -- when `execute()` itself
+raised, `commit()` was skipped, leaving that call's implicit transaction
+aborted on the worker's one long-lived, per-process connection. The very
+next query on that connection (`oldest_waiting_song_id`, called every
+scheduler tick) then failed too, with `psycopg.errors.
+InFailedSqlTransaction`, uncaught, crashing the process a second time per
+restart. The two `get_by_id` reads had the same gap: their
+`self._conn.rollback()` calls (added for the 2026-08-02 "migration hung
+for 6 minutes" incident above) sat *after* the cursor block, so they were
+skipped too whenever `execute()` itself raised, not just on the success
+path they were written for.
+
+**Action:** `Consumer._give_up` now catches any exception from
+`mark_permanently_failed`, logs it, and still removes the stream entry
+(`XACK`+`XDEL`) -- a job that cannot even be recorded as failed must not
+block cleanup, or it retries forever, exactly what spec 10.1's give-up
+path exists to prevent. Every method in `postgres.py` now wraps its
+cursor block in `self._conn.transaction()` (writes) or
+`self._conn.transaction(force_rollback=True)` (reads) instead of a bare
+`commit()`/`rollback()` call placed after the `with cur` block --
+psycopg3's transaction context manager commits or rolls back on a clean
+exit *and* on any exception raised inside it, so a failed query can no
+longer leave the shared connection aborted for the rest of the process's
+life. Confirmed live against the running dev `python-worker`: after the
+fix landed, the poison entry was logged, its failure caught, and the
+entry removed on the very next reclaim; the container has stayed up
+since, with `analyses:run` empty.
+
+**Prevention:** any repository method that ends with a bare `commit()`/
+`rollback()` call *after* its cursor block skips that call on the
+exception path -- use `conn.transaction()` (`force_rollback=True` for a
+read) instead, so the transaction always closes regardless of outcome.
+Any consumer-side "give up on this job" path must treat recording that
+give-up as best-effort: if a job cannot even be marked failed, it must
+still be removed from the queue rather than left to block forever or
+crash-loop the whole worker.
