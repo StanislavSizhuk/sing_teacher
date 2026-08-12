@@ -239,7 +239,22 @@ class Consumer:
                     "giving up on job after max claim attempts",
                     extra={"stream": self._stream_name, "job_id": job_id},
                 )
-                self._handler.mark_permanently_failed(job_id)
+                try:
+                    self._handler.mark_permanently_failed(job_id)
+                except Exception:
+                    # Recording the give-up must never block removing the
+                    # entry below: this runs inside reclaim_stuck_jobs, at
+                    # startup, before the main loop even begins, so letting
+                    # anything escape here (a job_id that was never a real
+                    # UUID because it reached the stream outside the normal
+                    # producer path, or any other DB failure) crashes the
+                    # whole process -- restart policy then repeats the exact
+                    # same reclaim on the exact same entry forever, which is
+                    # the "retrying forever" this method exists to prevent.
+                    logger.exception(
+                        "failed to record permanent failure, removing entry anyway",
+                        extra={"stream": self._stream_name, "job_id": job_id},
+                    )
         self._ack_and_remove(entry_id)
 
     def _ack_and_remove(self, entry_id: str) -> None:

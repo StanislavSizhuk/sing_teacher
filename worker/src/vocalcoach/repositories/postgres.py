@@ -76,10 +76,17 @@ class PostgresSongRepository:
         # user-controlled input -- the only variable part of this
         # statement is the parameterized %s (spec 11.5, 12.5).
         query = f"SELECT {_SONG_COLUMNS} FROM songs WHERE id = %s"  # noqa: S608
-        with self._conn.cursor() as cur:
+        # transaction(force_rollback=True) always closes the implicit
+        # transaction a read still opens, exception path included -- a bare
+        # `self._conn.rollback()` placed after the `with cur` block never
+        # runs if execute() itself raises (e.g. song_id that isn't a real
+        # UUID), leaving this long-lived, one-per-process connection's
+        # transaction open/aborted for every later call until the process
+        # restarts (see the 2026-08-02 RUNBOOK incident this pattern
+        # originally fixed for the non-exception case).
+        with self._conn.transaction(force_rollback=True), self._conn.cursor() as cur:
             cur.execute(query, (song_id,))
             row = cur.fetchone()
-        self._conn.rollback()  # closes the implicit transaction a read still opens
         if row is None:
             raise LookupError(f"song {song_id} not found")
         return _row_to_song_record(row)
@@ -93,12 +100,16 @@ class PostgresSongRepository:
         has no live UI consumer for that granularity yet, only FR-14's
         prep_status/prep_stage.
         """
-        with self._conn.cursor() as cur:
+        # transaction(): commits on a clean exit, rolls back on any
+        # exception (execute() itself included) -- a bare `self._conn.
+        # commit()` after the `with cur` block would silently skip on that
+        # exception path, leaving the connection's transaction open/aborted
+        # for the rest of the process (see get_by_id above).
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 "UPDATE songs SET prep_status = 'processing', prep_stage = %s WHERE id = %s",
                 (first_stage, song_id),
             )
-        self._conn.commit()
 
     def save_prep_stage_progress(
         self,
@@ -108,7 +119,7 @@ class PostgresSongRepository:
         _next_stage_index: int | None,
         _total_stages: int,
     ) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE songs
@@ -118,7 +129,6 @@ class PostgresSongRepository:
                 """,
                 (Jsonb({result.stage: result.model_dump(mode="json")}), next_stage, song_id),
             )
-        self._conn.commit()
 
     def mark_prep_ready(
         self,
@@ -135,7 +145,7 @@ class PostgresSongRepository:
         when P3 was skipped.
         """
         data, meta = reference_pitch.to_bytes()
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE songs
@@ -153,10 +163,9 @@ class PostgresSongRepository:
                     song_id,
                 ),
             )
-        self._conn.commit()
 
     def mark_prep_failed(self, song_id: str, error_code: str) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE songs
@@ -165,7 +174,6 @@ class PostgresSongRepository:
                 """,
                 (error_code, song_id),
             )
-        self._conn.commit()
 
 
 class PostgresAnalysisRepository:
@@ -175,7 +183,10 @@ class PostgresAnalysisRepository:
         self._conn = conn
 
     def get_by_id(self, analysis_id: str) -> AnalysisRecord:
-        with self._conn.cursor() as cur:
+        # force_rollback=True: see PostgresSongRepository.get_by_id for why
+        # this must run on the exception path too, not just a bare
+        # rollback() placed after the `with cur` block.
+        with self._conn.transaction(force_rollback=True), self._conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, user_id, song_id, status, stages_json, mode, allow_transposition, locale
@@ -184,7 +195,6 @@ class PostgresAnalysisRepository:
                 (analysis_id,),
             )
             row = cur.fetchone()
-        self._conn.rollback()  # closes the implicit transaction a read still opens
         if row is None:
             raise LookupError(f"analysis {analysis_id} not found")
         id_, user_id, song_id, status, stages_json, mode, allow_transposition, locale = row
@@ -207,7 +217,9 @@ class PostgresAnalysisRepository:
     def mark_processing(
         self, analysis_id: str, first_stage: str, stage_index: int, total_stages: int
     ) -> None:
-        with self._conn.cursor() as cur:
+        # transaction(): see PostgresSongRepository.mark_prep_processing for
+        # why this replaces a bare commit() after the `with cur` block.
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -217,7 +229,6 @@ class PostgresAnalysisRepository:
                 """,
                 (first_stage, stage_index, total_stages, analysis_id),
             )
-        self._conn.commit()
 
     def save_stage_progress(
         self,
@@ -227,7 +238,7 @@ class PostgresAnalysisRepository:
         next_stage_index: int | None,
         total_stages: int,
     ) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -247,7 +258,6 @@ class PostgresAnalysisRepository:
                     analysis_id,
                 ),
             )
-        self._conn.commit()
 
     def save_aspect_score(self, analysis_id: str, aspect: str, score: float) -> None:
         if aspect not in ASPECTS:
@@ -256,29 +266,26 @@ class PostgresAnalysisRepository:
         query = psycopg.sql.SQL("UPDATE analyses SET {column} = %s WHERE id = %s").format(
             column=column
         )
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(query, (score, analysis_id))
-        self._conn.commit()
 
     def save_piano_roll(self, analysis_id: str, data: PianoRollData) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 "UPDATE analyses SET pitch_curve_json = %s WHERE id = %s",
                 (Jsonb(data.model_dump(mode="json")), analysis_id),
             )
-        self._conn.commit()
 
     def save_user_pitch_curve(self, analysis_id: str, curve: PitchCurve) -> None:
         data, meta = curve.to_bytes()
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 "UPDATE analyses SET user_pitch = %s, user_pitch_meta = %s WHERE id = %s",
                 (data, Jsonb(meta), analysis_id),
             )
-        self._conn.commit()
 
     def prune_dense_stage_fields(self, analysis_id: str) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -290,7 +297,6 @@ class PostgresAnalysisRepository:
                 """,
                 (analysis_id,),
             )
-        self._conn.commit()
 
     def save_scoring_result(
         self,
@@ -317,7 +323,7 @@ class PostgresAnalysisRepository:
         not directly comparable), the rest is the confidence model and its
         diagnostic inputs (spec 6.15, FR-47).
         """
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -345,12 +351,11 @@ class PostgresAnalysisRepository:
                     analysis_id,
                 ),
             )
-        self._conn.commit()
 
     def record_progress_snapshot(
         self, analysis_id: str, user_id: str, overall_score: float, *, mode: str, confidence: str
     ) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO progress_snapshots
@@ -362,10 +367,9 @@ class PostgresAnalysisRepository:
                 """,
                 (user_id, analysis_id, overall_score, mode, confidence),
             )
-        self._conn.commit()
 
     def mark_done(self, analysis_id: str, model_versions: dict[str, str]) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -376,10 +380,9 @@ class PostgresAnalysisRepository:
                 """,
                 (Jsonb(model_versions), analysis_id),
             )
-        self._conn.commit()
 
     def mark_failed(self, analysis_id: str, error_code: str) -> None:
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -390,7 +393,6 @@ class PostgresAnalysisRepository:
                 """,
                 (error_code, analysis_id),
             )
-        self._conn.commit()
 
     def wake_waiting_for_reference(self, song_id: str) -> tuple[list[str], dict[str, int]]:
         """Transitions every `waiting_for_reference` analysis of song_id to
@@ -414,7 +416,7 @@ class PostgresAnalysisRepository:
         queue_seq pushed back -- those still get a `queued` WS event with
         their new position, just no fresh stream entry.
         """
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses SET status = 'queued'
@@ -440,7 +442,6 @@ class PostgresAnalysisRepository:
                 """
             )
             changed_positions = {str(row[0]): int(row[1]) for row in cur.fetchall()}
-        self._conn.commit()
         return newly_queued, changed_positions
 
     def fail_waiting_for_reference(self, song_id: str, error_code: str) -> list[str]:
@@ -450,7 +451,7 @@ class PostgresAnalysisRepository:
         retries the analysis (FR-26). Returns the ids failed, so the caller
         can publish a `failed` event for each over WS.
         """
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE analyses
@@ -461,7 +462,6 @@ class PostgresAnalysisRepository:
                 (error_code, song_id),
             )
             rows = cur.fetchall()
-        self._conn.commit()
         return [str(row[0]) for row in rows]
 
     def oldest_waiting_song_id(self) -> str | None:
@@ -479,9 +479,13 @@ class PostgresAnalysisRepository:
         waiting) and held a lock that blocked every later `ALTER TABLE
         analyses` from the API, including its own migrations, until
         something else happened to commit on this same connection.
-        `rollback()`, not `commit()`, since nothing here writes.
+        `rollback()`, not `commit()`, since nothing here writes -- and
+        `force_rollback=True` so it still runs even if execute() itself
+        raises, unlike the plain `self._conn.rollback()` this used to be
+        (which the exception path skipped, poisoning this same long-lived
+        connection's transaction for every later call instead).
         """
-        with self._conn.cursor() as cur:
+        with self._conn.transaction(force_rollback=True), self._conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT song_id FROM analyses
@@ -490,5 +494,4 @@ class PostgresAnalysisRepository:
                 """
             )
             row = cur.fetchone()
-        self._conn.rollback()
         return str(row[0]) if row is not None else None
